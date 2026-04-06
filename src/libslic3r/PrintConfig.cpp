@@ -531,7 +531,9 @@ CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(ExtruderType)
 
 static const t_config_enum_values s_keys_map_NozzleVolumeType = {
     { "Standard",  nvtStandard },
-    { "High Flow", nvtHighFlow }
+    { "High Flow", nvtHighFlow },
+    { "Hybrid", nvtHybrid },
+    { "TPU High Flow", nvtTPUHighFlow }
 };
 CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(NozzleVolumeType)
 

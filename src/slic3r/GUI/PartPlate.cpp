@@ -6116,7 +6116,7 @@ int PartPlateList::store_to_3mf_structure(PlateDataPtrs& plate_data_list, bool w
 						BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format("print is null!");
 					}
 					//parse filament info
-					plate_data_item->parse_filament_info(m_plate_list[i]->get_slice_result());
+					plate_data_item->parse_filament_info(m_plate_list[i]->get_slice_result(), print ? &print->full_print_config() : nullptr);
 				} else {
 					BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << "slice result = " << m_plate_list[i]->get_slice_result()
 										<< ", result valid = " << m_plate_list[i]->is_slice_result_valid();
