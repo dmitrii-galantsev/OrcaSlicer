@@ -5369,7 +5369,7 @@ void GCodeProcessor::process_M1020(const GCodeReader::GCodeLine &line)
 
 void GCodeProcessor::process_T(const std::string_view command)
 {
-    unsigned int eid = 0;
+    int eid = 0;
     auto         ret          = std::from_chars(command.data() + 1, command.data()+command.size(), eid);
     if (std::errc::invalid_argument == ret.ec)
         return;
@@ -5379,9 +5379,9 @@ void GCodeProcessor::process_T(const std::string_view command)
     //TODO: multi switch
     if (command.length() > 1) {
         if (eid < 0 || eid > 254) {
-            //BBS: T255, T1000 and T1100 is used as special command for BBL machine and does not cost time. return directly
+            //BBS: T255, T1000, T1001, T1100 are special commands for BBL machine and do not cost time. return directly
             if ((m_flavor == gcfMarlinLegacy || m_flavor == gcfMarlinFirmware) && (command == "Tx" || command == "Tc" || command == "T?" ||
-                 eid == 1000 || eid == 1100 || eid == 255))
+                 eid == 1000 || eid == 1001 || eid == 1100 || eid == 255))
                 return;
 
             // T-1 is a valid gcode line for RepRap Firmwares (used to deselects all tools)
