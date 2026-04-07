@@ -5464,9 +5464,8 @@ void Plater::priv::update(unsigned int flags)
     unsigned int update_status = 0;
     const bool force_background_processing_restart = this->printer_technology == ptSLA || (flags & (unsigned int)UpdateParams::FORCE_BACKGROUND_PROCESSING_UPDATE);
     if (force_background_processing_restart)
-        // Update the SLAPrint from the current Model, so that the reload_scene()
-        // pulls the correct data.
         update_status = this->update_background_process(false, flags & (unsigned int)UpdateParams::POSTPONE_VALIDATION_ERROR_MESSAGE);
+
     //BBS TODO reload_scene
     this->view3D->reload_scene(false, flags & (unsigned int)UpdateParams::FORCE_FULL_SCREEN_REFRESH);
     if (is_preview_shown()) this->preview->reload_print();
@@ -17765,22 +17764,28 @@ void Plater::open_filament_map_setting_dialog(wxCommandEvent &evt)
 
     if (filament_dlg.ShowModal() == wxID_OK) {
         std::vector<int> new_filament_maps = filament_dlg.get_filament_maps();
+        BOOST_LOG_TRIVIAL(info) << "filament_map_dialog: OK pressed, new_filament_maps size=" << new_filament_maps.size();
         std::vector<int> old_filament_maps = curr_plate->get_real_filament_maps(project_config);
+        BOOST_LOG_TRIVIAL(info) << "filament_map_dialog: old_filament_maps size=" << old_filament_maps.size();
 
         FilamentMapMode  old_map_mode = curr_plate->get_filament_map_mode();
         FilamentMapMode  new_map_mode = filament_dlg.get_mode();
+        BOOST_LOG_TRIVIAL(info) << "filament_map_dialog: old_mode=" << (int)old_map_mode << " new_mode=" << (int)new_map_mode;
 
         if (new_map_mode != old_map_mode) {
+            BOOST_LOG_TRIVIAL(info) << "filament_map_dialog: setting filament_map_mode";
             curr_plate->set_filament_map_mode(new_map_mode);
         }
 
         if (new_map_mode == fmmManual){
+            BOOST_LOG_TRIVIAL(info) << "filament_map_dialog: setting filament_maps for manual mode";
             curr_plate->set_filament_maps(new_filament_maps);
         }
 
         bool need_invalidate = (old_map_mode != new_map_mode ||
                                 old_filament_maps != new_filament_maps);
 
+        BOOST_LOG_TRIVIAL(info) << "filament_map_dialog: need_invalidate=" << need_invalidate << " need_slice=" << need_slice;
         if (need_invalidate) {
             if (need_slice) {
                 wxPostEvent(this, SimpleEvent(EVT_GLTOOLBAR_SLICE_PLATE));
@@ -17788,7 +17793,14 @@ void Plater::open_filament_map_setting_dialog(wxCommandEvent &evt)
             else {
                 curr_plate->update_slice_result_valid_state(false);
                 set_plater_dirty(true);
-                update();
+                BOOST_LOG_TRIVIAL(info) << "filament_map_dialog: calling update()";
+                try {
+                    update();
+                    BOOST_LOG_TRIVIAL(info) << "filament_map_dialog: update() completed OK";
+                } catch (const std::exception& ex) {
+                    BOOST_LOG_TRIVIAL(error) << "filament_map_dialog: update() threw: " << ex.what();
+                    throw;
+                }
             }
         }
     }

@@ -1297,6 +1297,7 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionInts,                physical_extruder_map))
     ((ConfigOptionFloatsNullable,      hotend_cooling_rate))
     ((ConfigOptionFloatsNullable,      hotend_heating_rate))
+    ((ConfigOptionBool,                enable_pre_heating))
     ((ConfigOptionIntsNullable,        filament_pre_cooling_temperature_nc))
     ((ConfigOptionIntsNullable,        nozzle_flush_dataset))
     ((ConfigOptionFloatsNullable,      filament_flush_volumetric_speed))

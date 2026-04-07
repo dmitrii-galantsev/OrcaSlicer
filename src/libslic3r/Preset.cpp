@@ -1306,7 +1306,9 @@ static std::vector<std::string> s_Preset_filament_options {/*"filament_colour", 
     "filament_long_retractions_when_cut","filament_retraction_distances_when_cut", "idle_temperature",
     //BBS filament change length while the extruder color
     "filament_change_length","filament_flush_volumetric_speed","filament_flush_temp",
-    "long_retractions_when_ec", "retraction_distances_when_ec"
+    "long_retractions_when_ec", "retraction_distances_when_ec",
+    // BBL H2C filament cooling
+    "filament_cooling_before_tower", "filament_pre_cooling_temperature_nc"
     };
 
 static std::vector<std::string> s_Preset_machine_limits_options {
@@ -1339,6 +1341,7 @@ static std::vector<std::string> s_Preset_printer_options {
     "printhost_user", "printhost_password", "printhost_ssl_ignore_revoke", "thumbnails", "thumbnails_format",
     "use_relative_e_distances", "extruder_type", "use_firmware_retraction", "printer_notes",
     "grab_length", "support_object_skip_flush", "physical_extruder_map",
+    "hotend_cooling_rate", "hotend_heating_rate", "enable_pre_heating",
     "cooling_tube_retraction",
     "cooling_tube_length", "high_current_on_filament_swap", "parking_pos_retraction", "extra_loading_move", "wipe_tower_type", "purge_in_prime_tower", "enable_filament_ramming",
     "z_offset",

@@ -1853,12 +1853,34 @@ bool PartPlate::check_filament_printable(const DynamicPrintConfig &config, wxStr
 
     std::vector<int> used_filaments = get_extruders(true);  // 1 base
     if (!used_filaments.empty()) {
+        auto *filament_type_opt = config.option<ConfigOptionStrings>("filament_type");
+        auto *filament_printable_opt = config.option<ConfigOptionInts>("filament_printable");
+        if (!filament_type_opt || !filament_printable_opt)
+            return true;
+
+        const auto &filament_types = filament_type_opt->values;
+        const auto &filament_printable_values = filament_printable_opt->values;
+        std::vector<int> filament_map = get_real_filament_maps(config);
+
         for (auto filament_idx : used_filaments) {
             int filament_id = filament_idx - 1;
-            std::string filament_type = config.option<ConfigOptionStrings>("filament_type")->values.at(filament_id);
-            int filament_printable_status = config.option<ConfigOptionInts>("filament_printable")->values.at(filament_id);
-            std::vector<int> filament_map  = get_real_filament_maps(config);
+            if (filament_id < 0)
+                continue;
+            // On multi-extruder printers full_config(apply_extruder=true) may compress
+            // filament vectors to the number of extruders, which is smaller than the
+            // number of filament slots.  Skip indices that are out of range.
+            if (static_cast<size_t>(filament_id) >= filament_types.size() ||
+                static_cast<size_t>(filament_id) >= filament_printable_values.size())
+                continue;
+
+            std::string filament_type = filament_types[filament_id];
+            int filament_printable_status = filament_printable_values[filament_id];
+
+            if (static_cast<size_t>(filament_id) >= filament_map.size())
+                continue;
             int extruder_idx = filament_map[filament_id] - 1;
+            if (extruder_idx < 0)
+                continue;
             if (!(filament_printable_status >> extruder_idx & 1)) {
                 wxString extruder_name = extruder_idx == 0 ? _L("left") : _L("right");
                 error_message  = wxString::Format(_L("The %s nozzle can not print %s."), extruder_name, filament_type);

@@ -2448,6 +2448,9 @@ void PrintConfigDef::init_fff_params()
     def->mode = comDevelop;
     def->set_default_value(new ConfigOptionFloatsNullable{2});
 
+    def = this->add("enable_pre_heating", coBool);
+    def->set_default_value(new ConfigOptionBool(false));
+
     def = this->add("machine_load_filament_time", coFloat);
     def->label = L("Filament load time");
     def->tooltip = L("Time to load new filament when switch filament. It's usually applicable for single-extruder multi-material machines. "
