@@ -1160,6 +1160,10 @@ void GCodeProcessor::run_post_process()
     for (const auto& machine : m_time_processor.machines)
         g1_times_cache_it.emplace_back(machine.g1_times_cache.begin());
 
+    // Track elapsed time of last forced M73 output per mode, to ensure periodic updates
+    std::array<float, static_cast<size_t>(PrintEstimatedStatistics::ETimeMode::Count)> last_forced_m73_time;
+    last_forced_m73_time.fill(0.0f);
+
     // add lines M73 to exported gcode
     auto process_line_move = [
         // Lambdas, mostly for string formatting, all with an empty capture block.
@@ -1167,6 +1171,7 @@ void GCodeProcessor::run_post_process()
         &self = std::as_const(m_time_processor),
         // Caches, to be modified
         &g1_times_cache_it, &last_exported_main, &last_exported_stop,
+        &last_forced_m73_time,
         // String output
         &export_line]
         (const size_t g1_lines_counter) {
@@ -1182,10 +1187,17 @@ void GCodeProcessor::run_post_process()
                     std::pair<int, int> to_export_main = { int(100.0f * it->elapsed_time / machine.time),
                                                             time_in_minutes(machine.time - it->elapsed_time) };
 
-                    if (last_exported_main[i] != to_export_main) {
+                    // Force M73 output at least every 10 seconds of estimated time
+                    // to prevent firmware from showing stale progress on fast sections.
+                    // Even if the integer-rounded (percent, remaining_minutes) pair hasn't
+                    // changed, firmware needs regular M73 to update its internal timer.
+                    bool force_update = (it->elapsed_time - last_forced_m73_time[i]) >= 10.0f;
+
+                    if (last_exported_main[i] != to_export_main || force_update) {
                         export_line.append_line(format_line_M73_main(machine.line_m73_main_mask.c_str(),
                             to_export_main.first, to_export_main.second), true);
                         last_exported_main[i] = to_export_main;
+                        last_forced_m73_time[i] = it->elapsed_time;
                     }
                     // export remaining time to next printer stop
                     auto it_stop = std::upper_bound(machine.stop_times.begin(), machine.stop_times.end(), it->elapsed_time,
