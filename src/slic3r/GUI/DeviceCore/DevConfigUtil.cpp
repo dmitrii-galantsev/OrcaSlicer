@@ -1,5 +1,8 @@
 #include "DevConfigUtil.h"
 
+#include <algorithm>
+#include <cctype>
+
 #include <wx/dir.h>
 #include <boost/filesystem/operations.hpp>
 #include "../I18N.hpp"

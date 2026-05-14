@@ -155,11 +155,6 @@ class Print;
                 return key;
             }
         };
-        ConflictResultOpt conflict_result;
-        GCodeCheckResult  gcode_check_result;
-        FilamentPrintableResult filament_printable_reuslt;
-        float initial_layer_time;
-        std::shared_ptr<MultiNozzleUtils::LayeredNozzleGroupResult> nozzle_group_result;
 
         struct SettingsIds
         {
@@ -216,6 +211,11 @@ class Print;
             std::string error_code;             // error code for studio
             std::vector<std::string> params;    // extra msg info
         };
+        ConflictResultOpt conflict_result;
+        GCodeCheckResult  gcode_check_result;
+        FilamentPrintableResult filament_printable_reuslt;
+        float initial_layer_time;
+        std::shared_ptr<MultiNozzleUtils::LayeredNozzleGroupResult> nozzle_group_result;
 
         std::string filename;
         unsigned int id;
@@ -259,6 +259,8 @@ class Print;
         // first key stores filaments, second keys stores the layer ranges(enclosed) that use the filaments
         std::unordered_map<std::vector<unsigned int>, std::vector<std::pair<int, int>>,FilamentSequenceHash> layer_filaments;
         std::vector<unsigned int> filament_change_sequence;
+        std::vector<unsigned int> nozzle_change_sequence;
+        std::vector<int> optimal_assignment;
         // first key stores `from` filament, second keys stores the `to` filament
         std::map<std::pair<int,int>, int > filament_change_count_map;
 
@@ -296,6 +298,9 @@ class Print;
             limit_filament_maps = other.limit_filament_maps;
             filament_printable_reuslt = other.filament_printable_reuslt;
             layer_filaments = other.layer_filaments;
+            filament_change_sequence = other.filament_change_sequence;
+            nozzle_change_sequence = other.nozzle_change_sequence;
+            optimal_assignment = other.optimal_assignment;
             filament_change_count_map = other.filament_change_count_map;
             filament_change_sequence = other.filament_change_sequence;
             initial_layer_time = other.initial_layer_time;

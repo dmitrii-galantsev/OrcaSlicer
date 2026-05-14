@@ -30,7 +30,9 @@ static std::map<int, std::string> error_messages = {{1, L("The device cannot han
                                                     {100, L("The player is not loaded, please click \"play\" button to retry.")},
                                                     {101, L("The player is not loaded, please click \"play\" button to retry.")},
                                                     {102, L("The player is not loaded, please click \"play\" button to retry.")},
-                                                    {103, L("The player is not loaded, please click \"play\" button to retry.")}};
+                                                    {103, L("The player is not loaded, please click \"play\" button to retry.")},
+    {104, L("The player is not loaded because the GStreamer GTK video sink is missing or failed to initialize.")}
+};
 
 namespace Slic3r { namespace GUI {
 
@@ -849,6 +851,12 @@ void wxMediaCtrl2::DoSetSize(int x, int y, int width, int height, int sizeFlags)
     wxWindow::DoSetSize(x, y, width, height, sizeFlags);
 #else
     wxMediaCtrl::DoSetSize(x, y, width, height, sizeFlags);
+#endif
+#if defined(__LINUX__) && defined(__WXGTK__)
+    if (m_gtk_video_window) {
+        const wxSize client_size = GetClientSize();
+        m_gtk_video_window->SetSize(0, 0, client_size.GetWidth(), client_size.GetHeight());
+    }
 #endif
     if (sizeFlags & wxSIZE_USE_EXISTING)
         return;
