@@ -1741,7 +1741,7 @@ void WipeTower::set_extruder(size_t idx, const PrintConfig& config)
         };
         if (is_need_precooling(true)) {
             for (int i = 0; i < m_filpar[idx].precool_t.first.size(); i++) {
-                if (config.hotend_cooling_rate.is_nil(i) || i >= hotend_cooling_rates.size()) continue;
+                if (i >= hotend_cooling_rates.size() || config.hotend_cooling_rate.is_nil(i)) continue;
                 m_filpar[idx].precool_t.first[i] = std::max(0.f, nozzle_temp_other_layer - float(config.filament_pre_cooling_temperature_nc.get_at(idx))) / float(hotend_cooling_rates[i]);
                 m_filpar[idx].precool_t_first_layer.first[i] = std::max(0.f, nozzle_temp_first_layer -float(config.filament_pre_cooling_temperature_nc.get_at(idx))) /float(hotend_cooling_rates[i]);
             }
@@ -1750,7 +1750,7 @@ void WipeTower::set_extruder(size_t idx, const PrintConfig& config)
 
         if (is_need_precooling(false)) {
             for (int i = 0; i < m_filpar[idx].precool_t.second.size(); i++) {
-                if (config.hotend_cooling_rate.is_nil(i) || i >= hotend_cooling_rates.size()) continue;
+                if (i >= hotend_cooling_rates.size() || config.hotend_cooling_rate.is_nil(i)) continue;
                 m_filpar[idx].precool_t.second[i] = std::max(0.f, nozzle_temp_other_layer - float(config.filament_pre_cooling_temperature_nc.get_at(idx))) / float(hotend_cooling_rates[i]);
                 m_filpar[idx].precool_t_first_layer.second[i] = std::max(0.f, nozzle_temp_first_layer -float(config.filament_pre_cooling_temperature_nc.get_at(idx))) /float(hotend_cooling_rates[i]);
             }
