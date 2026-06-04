@@ -1337,8 +1337,16 @@ MultiNozzleUtils::LayeredNozzleGroupResult ToolOrdering::get_recommended_filamen
             context.group_info.mode = fg_mode;
             context.group_info.ignore_ext_filament = ignore_ext_filament;
 
-            if(mode == FilamentMapMode::fmmManual)
+            if(mode == FilamentMapMode::fmmManual) {
                 context.group_info.filament_volume_map = print_config.filament_volume_map.values;
+                // Defensive: the config's volume map can be shorter than the filament count
+                // (e.g. manual mapping set before every filament got a volume type). It is later
+                // indexed by filament id in rebuild_nozzle_unprintables (filament_volume_map[
+                // used_filaments[fidx]]), so an undersized map causes an out-of-bounds abort.
+                // Pad missing entries with nvtHybrid (no volume constraint), matching the auto branch.
+                if (context.group_info.filament_volume_map.size() < (size_t)filament_nums)
+                    context.group_info.filament_volume_map.resize(filament_nums, (int)(NozzleVolumeType::nvtHybrid));
+            }
             else    // hrybid flow means no special request
                 context.group_info.filament_volume_map = std::vector<int>(filament_nums,(int)(NozzleVolumeType::nvtHybrid));
         }

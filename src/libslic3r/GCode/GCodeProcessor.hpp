@@ -801,6 +801,10 @@ class Print;
 
         private:
             std::vector<ExtruderFreeBlock> m_extruder_free_blocks;
+            // Prefix sum of per-move times for valid_machine_id. Orca stores per-move
+            // delta in MoveVertex::time (unlike BBL's cumulative), so the injector
+            // builds its own cumulative timeline to measure free-window durations.
+            std::vector<float> m_cumulative_time;
             const std::vector<GCodeProcessorResult::MoveVertex>& moves;
             const std::vector<std::string>& filament_types;
             const MultiNozzleUtils::LayeredNozzleGroupResult& nozzle_group_result;

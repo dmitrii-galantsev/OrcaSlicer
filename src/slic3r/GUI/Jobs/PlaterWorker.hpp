@@ -117,6 +117,22 @@ class PlaterWorker: public Worker {
     EventGuard on_idle_evt;
     EventGuard on_paint_evt;
 
+    // Re-entrancy guard for process_events(). Draining the worker output queue
+    // calls ProgressIndicator::set_progress()/set_status_text(), which run
+    // wxSizer::Layout()/wxWindow::Update() on the status bar widgets. When
+    // process_events() is invoked from a wxEVT_PAINT handler (see the binding
+    // below, added by OrcaSlicer PR #3237), those Layout()/Update() calls can
+    // synchronously dispatch another paint, re-entering process_events() while a
+    // GTK/cairo paint is already in flight. That nested paint corrupts the
+    // pixman/cairo draw state and crashes (SIGSEGV) -- observed when sending a
+    // print job (SelectMachineDialog runs ShowModal() while the worker posts
+    // progress). BambuStudio never hits this because it marshals progress via an
+    // async wxQueueEvent(wxEVT_THREAD) handler (BambuStudio Job.cpp:24-30, 47-60)
+    // that runs at the top of the event loop, not inside a paint. Guarding
+    // against re-entry preserves PR #3237's "update progress on paint" intent for
+    // the outer call while preventing the nested paint re-entry.
+    bool m_processing_events = false;
+
 public:
 
     template<class... WorkerArgs>
@@ -139,7 +155,23 @@ public:
     bool is_idle() const override { return m_w.is_idle(); }
     void cancel() override { m_w.cancel(); }
     void cancel_all() override { m_w.cancel_all(); }
-    void process_events() override { m_w.process_events(); }
+    void process_events() override
+    {
+        // Prevent re-entrant draining of the worker queue from inside a paint
+        // (see m_processing_events comment above). A nested call is a no-op; the
+        // outer call already delivers all pending messages.
+        if (m_processing_events)
+            return;
+
+        m_processing_events = true;
+        try {
+            m_w.process_events();
+        } catch (...) {
+            m_processing_events = false;
+            throw;
+        }
+        m_processing_events = false;
+    }
     bool wait_for_current_job(unsigned timeout_ms = 0) override
     {
         return m_w.wait_for_current_job(timeout_ms);

@@ -8,6 +8,7 @@
 #include "slic3r/GUI/DeviceTab/uiAmsHumidityPopup.h"
 
 #include "slic3r/GUI/DeviceCore/DevFilaSystem.h"
+#include "slic3r/GUI/DeviceCore/DevFilaSwitch.h"
 #include "slic3r/GUI/DeviceCore/DevConfig.h"
 #include "slic3r/GUI/DeviceCore/DevManager.h"
 
@@ -64,6 +65,11 @@ bool AMSinfo::parse_ams_info(MachineObject *obj, DevAms *ams, bool remain_flag, 
     this->ams_type = AMSModel(ams->GetAmsType());
 
     nozzle_id = ams->GetExtruderId();
+    // BBL-port (AMSItem.cpp:62-63): keep the full binding set + switcher position so a shared
+    // (Filament-Track-Switch) AMS, bound to BOTH extruders, can be bucketed into the correct
+    // nozzle panel instead of always collapsing to the main extruder via nozzle_id.
+    binded_extruder_set = ams->GetBindedExtruderSet();
+    binded_switcher_pos = ams->GetSwitcherPos();
     cans.clear();
     for (int i = 0; i < ams->GetTrays().size(); i++) {
         auto    it = ams->GetTrays().find(std::to_string(i));
@@ -144,6 +150,9 @@ void AMSinfo::parse_ext_info(MachineObject* obj, DevAmsTray tray) {
         this->nozzle_id = 0;
     else if (tray.id == std::to_string(VIRTUAL_TRAY_DEPUTY_ID))
         this->nozzle_id = 1;
+    // External/virtual slots feed exactly one fixed nozzle; mirror nozzle_id into the set so
+    // GetDefaultPanelPos() (single-binded branch) reproduces the legacy nozzle_id mapping.
+    this->binded_extruder_set = { this->nozzle_id };
 
     if (tray.is_tray_info_ready()) {
         info.ctype = tray.ctype;
@@ -180,6 +189,44 @@ void AMSinfo::parse_ext_info(MachineObject* obj, DevAmsTray tray) {
         info.n = tray.n;
     }
     this->cans.push_back(info);
+}
+
+// BBL-port (AMSItem.cpp:234 GetDefaultPanelPos): decide which nozzle panel this AMS belongs to.
+// Orca's AMSPanelPos is {SINGLE_PANEL, LEFT_PANEL, RIGHT_PANEL} with RIGHT==main(0) / LEFT==deputy(1).
+// For a single-binded AMS this reproduces the legacy "nozzle_id==MAIN ? RIGHT : LEFT" mapping
+// exactly, so non-FTS single- and dual-nozzle layout is unchanged. For a shared FTS AMS (binded
+// set size 2) the switcher position picks the single feeding nozzle; with no switcher info it
+// falls back to RIGHT_PANEL (same default as BBL).
+AMSPanelPos AMSinfo::GetDefaultPanelPos(int total_extruder_count) const
+{
+    // Use >= 2 (BBL hard-codes == 2) so any dual+ setup keeps the legacy
+    // "nozzle_id == MAIN ? RIGHT : LEFT" mapping for non-shared AMS instead of collapsing to RIGHT.
+    if (total_extruder_count >= 2) {
+        // A shared AMS is currently routed by the filament switcher to one nozzle.
+        // BBL ref: AMSItem.cpp:245-251. POS_IN_A -> deputy/LEFT, POS_IN_B -> main/RIGHT.
+        if (binded_switcher_pos.has_value()) {
+            if (binded_switcher_pos.value() == DevFilaSwitch::POS_IN_A) {
+                return AMSPanelPos::LEFT_PANEL;
+            } else if (binded_switcher_pos.value() == DevFilaSwitch::POS_IN_B) {
+                return AMSPanelPos::RIGHT_PANEL;
+            }
+        }
+
+        // Normal (non-shared) AMS: exactly one binded extruder -> same mapping as old nozzle_id.
+        // BBL ref: AMSItem.cpp:253-260.
+        if (binded_extruder_set.size() == 1) {
+            const int the_extruder_id = *binded_extruder_set.begin();
+            if (the_extruder_id == MAIN_EXTRUDER_ID) {
+                return AMSPanelPos::RIGHT_PANEL;
+            } else if (the_extruder_id == DEPUTY_EXTRUDER_ID) {
+                return AMSPanelPos::LEFT_PANEL;
+            }
+        }
+
+        return AMSPanelPos::RIGHT_PANEL;
+    }
+
+    return AMSPanelPos::RIGHT_PANEL;
 }
 
 Caninfo AMSinfo::get_caninfo(const std::string& can_id, bool& found) const

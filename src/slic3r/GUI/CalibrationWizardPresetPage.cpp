@@ -2248,12 +2248,16 @@ void CalibrationPresetPage::sync_ams_info(MachineObject* obj)
         if (obj->is_multi_extruders()) {
             bool main_done   = false;
             bool deputy_done = false;
+            // An FTS-shared AMS is bound to both extruders; credit both comboboxes from
+            // the binded set instead of the collapsed GetExtruderId() (which is MAIN only).
             for (auto &ams_item : obj->GetFilaSystem()->GetAmsList()) {
-                if (ams_item.second->GetExtruderId() == 0 && !main_done) {
-                    update_multi_extruder_filament_combobox(ams_item.second->GetAmsId(), ams_item.second->GetExtruderId());
+                const std::set<int>& binded_set = ams_item.second->GetBindedExtruderSet();
+                if (!main_done && binded_set.count(MAIN_EXTRUDER_ID) != 0) {
+                    update_multi_extruder_filament_combobox(ams_item.second->GetAmsId(), MAIN_EXTRUDER_ID);
                     main_done = true;
-                } else if (ams_item.second->GetExtruderId() == 1 && !deputy_done) {
-                    update_multi_extruder_filament_combobox(ams_item.second->GetAmsId(), ams_item.second->GetExtruderId());
+                }
+                if (!deputy_done && binded_set.count(DEPUTY_EXTRUDER_ID) != 0) {
+                    update_multi_extruder_filament_combobox(ams_item.second->GetAmsId(), DEPUTY_EXTRUDER_ID);
                     deputy_done = true;
                 }
             }

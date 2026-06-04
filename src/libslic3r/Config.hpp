@@ -1919,7 +1919,10 @@ public:
     }
 
     //FIXME this smells, the parent class has the method declared returning (unsigned char&).
-    bool get_at(size_t i) const { return ((i < this->values.size()) ? this->values[i] : this->values.front()) != 0; }
+    // Guard against an empty values vector: front() on empty aborts under _GLIBCXX_ASSERTIONS
+    // (hit via opt_bool() on a present-but-empty option, e.g. filament_slot_placeholder during
+    // AMS sync). An empty bool option reads as false.
+    bool get_at(size_t i) const { return this->values.empty() ? false : (((i < this->values.size()) ? this->values[i] : this->values.front()) != 0); }
 
     std::string serialize() const override
     {

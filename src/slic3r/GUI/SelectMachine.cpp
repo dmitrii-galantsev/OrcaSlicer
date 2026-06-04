@@ -1052,20 +1052,15 @@ bool SelectMachineDialog::do_ams_mapping(MachineObject *obj_,bool use_ams)
                 }
             }
 
+            // An FTS-shared AMS is bound to BOTH extruders, so query the binded set
+            // (not the collapsed single GetExtruderId()) to credit both nozzles.
             bool has_left_ams = false, has_right_ams = false;
             for (auto ams_item : obj_->GetFilaSystem()->GetAmsList()) {
-                if (ams_item.second->GetExtruderId() == 0) {
-                    if (obj_->is_main_extruder_on_left())
-                        has_left_ams = true;
-                    else
-                        has_right_ams = true;
-                }
-                else if (ams_item.second->GetExtruderId() == 1) {
-                    if (obj_->is_main_extruder_on_left())
-                        has_right_ams = true;
-                    else
-                        has_left_ams = true;
-                }
+                const auto& binded_set = ams_item.second->GetBindedExtruderSet();
+                if (binded_set.count(MAIN_EXTRUDER_ID) != 0)
+                    has_right_ams = true;
+                if (binded_set.count(DEPUTY_EXTRUDER_ID) != 0)
+                    has_left_ams = true;
 
                 if (has_left_ams && has_right_ams)
                     break;

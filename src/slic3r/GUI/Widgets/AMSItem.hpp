@@ -12,6 +12,8 @@
 #include <wx/hyperlink.h>
 #include <wx/animate.h>
 #include <wx/dynarray.h>
+#include <set>
+#include <optional>
 
 
 #define AMS_CONTROL_BRAND_COLOUR wxColour(0, 150, 136)
@@ -213,7 +215,18 @@ struct AMSinfo
 public:
     std::string             ams_id;
     std::vector<Caninfo>    cans;
+    // nozzle_id is kept for non-bucketing display use (== *binded_extruder_set.begin()).
+    // For panel bucketing use GetDefaultPanelPos() / binded_extruder_set instead, because a
+    // shared (Filament-Track-Switch) AMS is bound to BOTH extruders and nozzle_id collapses
+    // that to the main extruder only. BBL ref: AMSItem.hpp:214-216.
     int                     nozzle_id = 0;
+    // BBL-port: full set of extruders this AMS feeds. Size 1 for normal AMS, size 2 for a
+    // shared FTS AMS. BBL ref: AMSItem.hpp:214.
+    std::set<int>           binded_extruder_set;
+    // BBL-port: filament-switcher position (only set when a switcher feeds this AMS); decides
+    // which single nozzle a shared AMS currently feeds. Value is a DevFilaSwitch::SwitchPos
+    // (POS_IN_A / POS_IN_B). BBL ref: AMSItem.hpp:216.
+    std::optional<int>      binded_switcher_pos;
     std::string             current_can_id;
     AMSPassRoadSTEP         current_step = AMSPassRoadSTEP::AMS_ROAD_STEP_NONE;
     AMSAction               current_action;
@@ -231,6 +244,8 @@ public:
         if (ams_id == other.ams_id &&
             cans == other.cans &&
             nozzle_id == other.nozzle_id &&
+            binded_extruder_set == other.binded_extruder_set &&
+            binded_switcher_pos == other.binded_switcher_pos &&
             current_can_id == other.current_can_id &&
             current_step == other.current_step &&
             current_action == other.current_action &&
@@ -265,6 +280,12 @@ public:
     Caninfo get_caninfo(const std::string& can_id, bool& found) const;
 
     int  get_humidity_display_idx() const;
+
+    // BBL-port: which panel (RIGHT==main / LEFT==deputy) this AMS belongs to.
+    // For a shared FTS AMS the switcher position decides the single feeding nozzle;
+    // for a normal single-binded AMS this reproduces the old nozzle_id mapping exactly.
+    // BBL ref: AMSItem.cpp:234 GetDefaultPanelPos.
+    AMSPanelPos GetDefaultPanelPos(int total_extruder_count) const;
 };
 
 /*************************************************

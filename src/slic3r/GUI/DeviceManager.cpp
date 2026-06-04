@@ -3735,6 +3735,8 @@ int MachineObject::parse_json(std::string tunnel, std::string payload, bool key_
                     }
                     update_printer_preset_name();
                     update_filament_list();
+                    // Must run before the AMS parse: 0xE-encoded AMS binding depends on switch state.
+                    if (m_fila_switch) { m_fila_switch->ParseFilaSwitchInfo(jj); }
                     if (jj.contains("ams")) {
                         DevFilaSystemParser::ParseV1_0(jj, this, m_fila_system, key_field_only);
                     }

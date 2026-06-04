@@ -5548,9 +5548,19 @@ void GCodeProcessor::process_SYNC(const GCodeReader::GCodeLine& line)
         time_role_int = 1; // Compatible with older G-code: no 'R' → flush
     }
     if (line.has_value('T', time)) {
-        // BBL parity: role 1 = flush time, role 0 = prepare time (none)
+        // BBL parity: role 1 = flush time, role 0 = prepare time (none).
+        // BBL tags flush time with the dedicated ExtrusionRole::erFlush so that, in
+        // calculate_time(), it can only ever be attributed to the synthetic filament-change
+        // TimeBlock (which is also erFlush) and never to a real extrusion move. Orca's
+        // ExtrusionRole enum has no erFlush, so we use erMixed as the isolation role:
+        // erMixed is never assigned to a real TimeBlock (block.role is always either a
+        // concrete extrusion role or erNone), so it behaves exactly like BBL's erFlush.
+        // Using erWipeTower here was wrong: it collides with the real wipe-tower extrusion
+        // moves (which carry erWipeTower), so the buffered flush time gets attached to a
+        // wipe-tower move that BBL would never match — inflating the estimate by the flush
+        // time on every toolchange (~17 s/toolchange observed on H2C).
         if (time_role_int == 1)
-            simulate_st_synchronize(time, ExtrusionRole::erWipeTower);
+            simulate_st_synchronize(time, ExtrusionRole::erMixed);
         else
             simulate_st_synchronize(time, ExtrusionRole::erNone);
     }
@@ -5817,7 +5827,11 @@ void GCodeProcessor::process_filament_change(int id, int nozzle_id)
                 continue;
             TimeBlock block;
             block.move_id = m_result.moves.size() - 1;
-            block.role = ExtrusionRole::erWipeTower;
+            // BBL parity: BBL tags this synthetic filament-change block with erFlush so the
+            // load/unload/switch additional time attaches here and nowhere else. Orca has no
+            // erFlush; erMixed is the isolation role (never used by a real TimeBlock), matching
+            // BBL's behaviour. Must stay in sync with the SYNC handler and the simulate call below.
+            block.role = ExtrusionRole::erMixed;
             block.move_type = EMoveType::Tool_change;
             block.layer_id = std::max<unsigned int>(1, m_layer_id);
             block.g1_line_id = m_g1_line_id;
@@ -5827,7 +5841,10 @@ void GCodeProcessor::process_filament_change(int id, int nozzle_id)
             machine.blocks.push_back(block);
         }
 
-        simulate_st_synchronize(extra_time, ExtrusionRole::erWipeTower);
+        // BBL parity: erFlush in BBL -> erMixed isolation role in Orca (see comment on
+        // block.role above and in process_SYNC). This guarantees extra_time is attributed
+        // only to the synthetic erMixed block, never to a real erWipeTower extrusion move.
+        simulate_st_synchronize(extra_time, ExtrusionRole::erMixed);
     }
 }
 

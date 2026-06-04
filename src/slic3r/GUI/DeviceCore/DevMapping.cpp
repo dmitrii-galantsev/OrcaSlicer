@@ -149,8 +149,11 @@ namespace Slic3r
                 }
 
                 //first: left,nozzle=1,map=1   second: right,nozzle=0,map=2
-                bool right_ams_valid = ams->second->GetExtruderId() == 0 && map_opt[MappingOption::USE_RIGHT_AMS];
-                bool left_ams_valid = ams->second->GetExtruderId() == 1 && map_opt[MappingOption::USE_LEFT_AMS];
+                // An FTS-shared AMS is bound to both extruders, so test the binded set
+                // (not the collapsed GetExtruderId()) — it must be offerable to both nozzles.
+                const std::set<int>& ams_binded_set = ams->second->GetBindedExtruderSet();
+                bool right_ams_valid = ams_binded_set.count(MAIN_EXTRUDER_ID) != 0 && map_opt[MappingOption::USE_RIGHT_AMS];
+                bool left_ams_valid = ams_binded_set.count(DEPUTY_EXTRUDER_ID) != 0 && map_opt[MappingOption::USE_LEFT_AMS];
                 if (right_ams_valid || left_ams_valid)
                 {
                     tray_filaments.emplace(std::make_pair(tray_index, info));

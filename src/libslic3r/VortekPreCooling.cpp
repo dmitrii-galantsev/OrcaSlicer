@@ -31,6 +31,17 @@ namespace Slic3r {
 // BBL ref: BambuStudio GCodeProcessor.cpp:6412-6458
 void GCodeProcessor::PreCoolingInjector::process_pre_cooling_and_heating(TimeProcessor::InsertedLinesMap& inserted_operation_lines)
 {
+    // Orca stores per-move delta time in MoveVertex::time; accumulate into a cumulative
+    // timeline so free-window durations can be measured by subtracting two move times.
+    m_cumulative_time.assign(moves.size(), 0.f);
+    {
+        float acc = 0.f;
+        for (size_t i = 0; i < moves.size(); ++i) {
+            acc += moves[i].time[valid_machine_id];
+            m_cumulative_time[i] = acc;
+        }
+    }
+
     bool is_multiple_nozzle = std::any_of(extruder_max_nozzle_count.begin(), extruder_max_nozzle_count.end(), [](auto& elem) {return elem > 1; });
     auto get_nozzle_temp = [this, is_multiple_nozzle](int filament_id, bool is_first_layer, bool from_or_to, bool consider_preheat_temperature_delta) {
         if (filament_id == -1)
@@ -167,6 +178,11 @@ void GCodeProcessor::PreCoolingInjector::inject_cooling_heating_command(TimeProc
         return iter;
     };
 
+    // Cumulative time at a move iterator (Orca's MoveVertex::time is per-move delta).
+    auto cumulative_time = [this](std::vector<GCodeProcessorResult::MoveVertex>::const_iterator it) -> float {
+        return m_cumulative_time[std::distance(moves.begin(), it)];
+    };
+
     if (!pre_cooling && !pre_heating && block.free_upper_gcode_id <= block.free_lower_gcode_id)
         return;
 
@@ -178,9 +194,9 @@ void GCodeProcessor::PreCoolingInjector::inject_cooling_heating_command(TimeProc
     --move_iter_upper;
     float complete_free_time_gap = 0;
     if (move_iter_lower == moves.begin())
-        complete_free_time_gap = move_iter_upper->time[valid_machine_id];
+        complete_free_time_gap = cumulative_time(move_iter_upper);
     else
-        complete_free_time_gap = move_iter_upper->time[valid_machine_id] - std::prev(move_iter_lower)->time[valid_machine_id];
+        complete_free_time_gap = cumulative_time(move_iter_upper) - cumulative_time(std::prev(move_iter_lower));
 
     auto partial_free_move_lower = std::lower_bound(moves.begin(), moves.end(), block.partial_free_lower_id, gcode_move_comp);
     auto partial_free_move_upper = std::lower_bound(moves.begin(), moves.end(), block.partial_free_upper_id, gcode_move_comp);
@@ -189,9 +205,9 @@ void GCodeProcessor::PreCoolingInjector::inject_cooling_heating_command(TimeProc
     --partial_free_move_upper;
     float partial_free_time_gap = 0;
     if (partial_free_move_lower == moves.begin())
-        partial_free_time_gap = partial_free_move_upper->time[valid_machine_id];
+        partial_free_time_gap = cumulative_time(partial_free_move_upper);
     else
-        partial_free_time_gap = partial_free_move_upper->time[valid_machine_id] - std::prev(partial_free_move_lower)->time[valid_machine_id];
+        partial_free_time_gap = cumulative_time(partial_free_move_upper) - cumulative_time(std::prev(partial_free_move_lower));
 
     if (move_iter_lower >= move_iter_upper)
         return;
@@ -271,8 +287,8 @@ void GCodeProcessor::PreCoolingInjector::inject_cooling_heating_command(TimeProc
     if (!pre_cooling && pre_heating) {
         if (target_temp <= curr_temp)
             return;
-        float heating_start_time = move_iter_upper->time[valid_machine_id] - (target_temp - curr_temp) / ext_heating_rate;
-        auto heating_move_iter = std::upper_bound(move_iter_lower, move_iter_upper + 1, heating_start_time, [valid_machine_id = this->valid_machine_id](float time, const GCodeProcessorResult::MoveVertex& a) {return time < a.time[valid_machine_id]; });
+        float heating_start_time = cumulative_time(move_iter_upper) - (target_temp - curr_temp) / ext_heating_rate;
+        auto heating_move_iter = std::upper_bound(move_iter_lower, move_iter_upper + 1, heating_start_time, [this](float time, const GCodeProcessorResult::MoveVertex& a) {return time < m_cumulative_time[&a - moves.data()]; });
         if (heating_move_iter == move_iter_lower) {
             add_M104_lines(block.free_lower_gcode_id, extruder_id, target_temp, block.next_filament_id, true, block.next_filament_id, block.next_nozzle_id, TimeProcessor::InsertLineType::PreHeating, "Multi extruder pre heating");
         }
@@ -286,15 +302,15 @@ void GCodeProcessor::PreCoolingInjector::inject_cooling_heating_command(TimeProc
     // perform cooling first and then perform heating
     float mid_temp = std::max(room_temperature, (curr_temp * ext_heating_rate + target_temp * ext_cooling_rate - complete_free_time_gap * ext_cooling_rate * ext_heating_rate) / (ext_cooling_rate + ext_heating_rate));
     float heating_temp = target_temp - mid_temp;
-    float heating_start_time = move_iter_upper->time[valid_machine_id] - heating_temp / ext_heating_rate;
-    auto heating_move_iter = std::upper_bound(move_iter_lower, move_iter_upper + 1, heating_start_time, [valid_machine_id = this->valid_machine_id](float time, const GCodeProcessorResult::MoveVertex& a) {return time < a.time[valid_machine_id]; });
+    float heating_start_time = cumulative_time(move_iter_upper) - heating_temp / ext_heating_rate;
+    auto heating_move_iter = std::upper_bound(move_iter_lower, move_iter_upper + 1, heating_start_time, [this](float time, const GCodeProcessorResult::MoveVertex& a) {return time < m_cumulative_time[&a - moves.data()]; });
     if (heating_move_iter == move_iter_lower)
         return;
     --heating_move_iter;
     heating_move_iter = adjust_iter(heating_move_iter, move_iter_lower, move_iter_upper, false);
 
     // get the insert pos of heat cmd and recalculate time gap and delta temp
-    float real_cooling_time = heating_move_iter->time[valid_machine_id] - move_iter_lower->time[valid_machine_id];
+    float real_cooling_time = cumulative_time(heating_move_iter) - cumulative_time(move_iter_lower);
     int real_delta_temp = std::min((int)(real_cooling_time * ext_cooling_rate), (int)curr_temp);
     if (real_delta_temp == 0)
         return;

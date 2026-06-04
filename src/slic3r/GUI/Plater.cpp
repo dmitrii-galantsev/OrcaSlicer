@@ -3742,11 +3742,19 @@ std::map<int, DynamicPrintConfig> Sidebar::build_filament_ams_list(MachineObject
     auto list = obj->GetFilaSystem()->GetAmsList();
     for (auto ams : list) {
         int ams_id   = std::stoi(ams.first);
-        int extruder = ams.second->GetExtruderId() ? 0 : 0x10000; // Main (first) extruder at right
-        for (auto tray : ams.second->GetTrays()) {
-            int  slot_id = std::stoi(tray.first);
-            filament_ams_list.emplace(extruder + (ams_id * 4 + slot_id),
-                                      build_tray_config(*tray.second, get_ams_name(ams_id, slot_id), std::to_string(ams_id), std::to_string(slot_id)));
+        // An FTS-shared AMS is bound to BOTH nozzles; list its trays under EACH binded extruder
+        // so the prepare/preview filament mapping offers it to the correct nozzle(s). Using the
+        // collapsed GetExtruderId() listed a shared AMS under the right nozzle only.
+        // BBL ref: Plater.cpp (iterate GetBindedExtruderSet()).
+        std::set<int> binded_set = ams.second->GetBindedExtruderSet();
+        if (binded_set.empty()) binded_set.insert(ams.second->GetExtruderId());
+        for (int binded_ext : binded_set) {
+            int extruder = (binded_ext == MAIN_EXTRUDER_ID) ? 0x10000 : 0; // main=right=0x10000, deputy=left=0
+            for (auto tray : ams.second->GetTrays()) {
+                int  slot_id = std::stoi(tray.first);
+                filament_ams_list.emplace(extruder + (ams_id * 4 + slot_id),
+                                          build_tray_config(*tray.second, get_ams_name(ams_id, slot_id), std::to_string(ams_id), std::to_string(slot_id)));
+            }
         }
     }
     return filament_ams_list;
