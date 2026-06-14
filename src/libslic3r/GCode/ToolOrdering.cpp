@@ -1217,9 +1217,7 @@ MultiNozzleUtils::LayeredNozzleGroupResult ToolOrdering::get_recommended_filamen
     const std::vector<std::vector<unsigned int>>& layer_filaments,
     const FilamentMapMode mode,
     const std::vector<std::set<int>>& physical_unprintables,
-    const std::vector<std::set<int>>& geometric_unprintables,
-    const std::map<int, std::set<NozzleVolumeType>>& unprintable_volumes,
-    const std::unordered_map<int, int>& nozzle_status)
+    const std::vector<std::set<int>>& geometric_unprintables)
 {
     using namespace FilamentGroupUtils;
     using namespace MultiNozzleUtils;
@@ -1468,50 +1466,11 @@ MultiNozzleUtils::LayeredNozzleGroupResult ToolOrdering::get_recommended_filamen
                 FilamentGroupMultiNozzle fg(context);
                 ret = fg.calc_filament_group_by_pam();
             }
-            {
-                auto fmt_vec = [](const std::vector<int>& v) {
-                    std::string s = "[";
-                    for (size_t i = 0; i < v.size(); ++i) {
-                        if (i)
-                            s += ",";
-                        s += std::to_string(v[i]);
-                    }
-                    return s + "]";
-                };
-                BOOST_LOG_TRIVIAL(warning) << "[H2C-PAM] mode=" << (int) mode << " ret.sz=" << ret.size() << "=" << fmt_vec(ret)
-                                           << " nozzle_list.sz=" << context.nozzle_info.nozzle_list.size()
-                                           << " used_filaments.sz=" << used_filaments.size() << " filament_nums=" << filament_nums;
-                std::string nl_dump = "[";
-                for (size_t i = 0; i < context.nozzle_info.nozzle_list.size(); ++i) {
-                    auto& n = context.nozzle_info.nozzle_list[i];
-                    if (i)
-                        nl_dump += ",";
-                    nl_dump += "(ext=" + std::to_string(n.extruder_id) + ",gid=" + std::to_string(n.group_id) +
-                               ",vt=" + std::to_string((int) n.volume_type) + ")";
-                }
-                nl_dump += "]";
-                BOOST_LOG_TRIVIAL(warning) << "[H2C-PAM] nozzle_list=" << nl_dump;
-            }
             auto result_opt = LayeredNozzleGroupResult::create(ret, context.nozzle_info.nozzle_list, used_filaments);
             if (!result_opt) {
-                BOOST_LOG_TRIVIAL(warning) << "[H2C-PAM] LayeredNozzleGroupResult::create returned nullopt -> default LNGR";
                 return LayeredNozzleGroupResult();
             }
             auto result = *result_opt;
-            {
-                auto fmt_vec = [](const std::vector<int>& v) {
-                    std::string s = "[";
-                    for (size_t i = 0; i < v.size(); ++i) {
-                        if (i)
-                            s += ",";
-                        s += std::to_string(v[i]);
-                    }
-                    return s + "]";
-                };
-                BOOST_LOG_TRIVIAL(warning) << "[H2C-PAM] result.get_extruder_map(false)=" << fmt_vec(result.get_extruder_map(false))
-                                           << " result.get_nozzle_map()=" << fmt_vec(result.get_nozzle_map())
-                                           << " result.get_volume_map()=" << fmt_vec(result.get_volume_map());
-            }
             if (mode == FilamentMapMode::fmmManual) {
                 auto result_map = result.get_extruder_map();
                 for (auto fid : used_filaments) {
@@ -1663,15 +1622,10 @@ void ToolOrdering::reorder_extruders_for_minimum_flush_volume(bool reorder_first
             // Reuse existing nozzle group result if already computed (e.g., by a
             // previous slice), otherwise compute fresh from filament maps
             if (auto existing = m_print->get_layered_nozzle_group_result()) {
-                BOOST_LOG_TRIVIAL(warning) << "[H2C-APL] reusing existing LayeredNozzleGroupResult: extruder_map.sz="
-                                           << existing->get_extruder_map().size() << " nozzle_map.sz=" << existing->get_nozzle_map().size();
                 filament_maps = existing->get_extruder_map();
             } else {
-                BOOST_LOG_TRIVIAL(warning) << "[H2C-APL] no existing LNGR, computing fresh via get_recommended_filament_maps mode="
-                                           << (int) map_mode;
-                auto device_nozzle_status = Vortek::NozzleState::resolve_for_print(m_print);
                 auto group_result = ToolOrdering::get_recommended_filament_maps(m_print, layer_filaments, map_mode, physical_unprintables,
-                                                                                geometric_unprintables, {}, device_nozzle_status);
+                                                                                geometric_unprintables);
                 // Store result so bbs_3mf serialization can access it for
                 // <nozzle> tag and group_id generation
                 m_print->set_nozzle_group_result(std::make_shared<MultiNozzleUtils::LayeredNozzleGroupResult>(group_result));
