@@ -57,6 +57,9 @@ wxDEFINE_EVENT(EVT_CLEAR_IPADDRESS, wxCommandEvent);
 
 static wxString task_canceled_text = _L("Task canceled");
 
+// H2C: rate-limit the auto nozzle-mapping request (mirror BBL's s_nozzle_mapping_last_request_time)
+static int s_nozzle_mapping_last_request_time = 0;
+
 std::string get_nozzle_volume_type_cloud_string(NozzleVolumeType nozzle_volume_type)
 {
     if (nozzle_volume_type == NozzleVolumeType::nvtStandard) {
@@ -1019,6 +1022,97 @@ bool SelectMachineDialog::use_dynamic_nozzle_map() const
     return false;
 }
 
+// H2C / Vortek carousel: perform BambuStudio's auto nozzle-mapping handshake so the printer is told
+// which physical rack nozzle each filament uses. Returns true when the mapping is ready (or when the
+// printer/slice does not need it, so non-H2C jobs are unaffected). Ported from BBL
+// SelectMachineDialog::CheckErrorSyncNozzleMappingResultV0. We always use V0 here because
+// use_dynamic_nozzle_map() is stubbed to false (V1 is a later add-on).
+bool SelectMachineDialog::CheckErrorSyncNozzleMappingResultV0(MachineObject* obj_)
+{
+    if (!obj_) {
+        return true;
+    }
+
+    if (!obj_->GetNozzleRack() || !obj_->GetNozzleRack()->IsSupported()) {
+        return true; // no need to check if the printer has no nozzle rack (non-H2C)
+    }
+
+    if (m_print_type != FROM_NORMAL) {
+        return true; // there is no slicing data when printing from sdcard
+    }
+
+    if (use_dynamic_nozzle_map()) {
+        return true; // would use V1 nozzle mapping
+    }
+
+    auto nozzle_group_res = DevUtilBackend::GetNozzleGroupResult(m_plater);
+    if (nozzle_group_res && nozzle_group_res->get_used_nozzles_in_extruder(LOGIC_R_EXTRUDER_ID).empty()) {
+        return true; // no need to check if the slice uses no carousel/right nozzles
+    }
+
+    const auto& obj_nozzle_mapping_ptr = obj_->get_nozzle_mapping_result();
+    if (!obj_nozzle_mapping_ptr->HasResult()) {
+        if (time(nullptr) - s_nozzle_mapping_last_request_time > 10) { // avoid too many requests
+            // Orca has no flow-cali/PA switches dedicated to this dialog: reuse the flow_cali checkbox and
+            // pass the safe PA default (1 == manual mode off), matching BBL's command builder.
+            int rtn = obj_nozzle_mapping_ptr->CtrlGetAutoNozzleMappingV0(m_plater, m_ams_mapping_result,
+                                                                         m_checkbox_list["flow_cali"]->getValueInt(), 1);
+            if (rtn == 0) {
+                s_nozzle_mapping_last_request_time = time(nullptr);
+            } else {
+                const auto& err_msg = wxString::Format(_L("Failed to send nozzle auto-mapping request to printer { code: %d }. "
+                                                          "Please try to refresh the printer information. "
+                                                          "If it still does not recover, you can try to rebind the printer and check the network connection."), rtn);
+                show_status(PrintDialogStatus::PrintStatusRackNozzleMappingWaiting, { err_msg });
+                return false;
+            }
+        }
+
+        show_status(PrintDialogStatus::PrintStatusRackNozzleMappingWaiting,
+                    { _L("The printer is calculating nozzle mapping.") + " " + _L("Please wait a moment...") });
+        return false;
+    }
+
+    if (obj_nozzle_mapping_ptr->GetResultStr() == "failed") {
+        const auto& err_msg = wxString::Format(_L("Failed to receive nozzle auto-mapping table from printer { msg: %s }. Please refresh the printer information."),
+                                               obj_nozzle_mapping_ptr->GetMqttReason());
+        show_status(PrintDialogStatus::PrintStatusRackNozzleMappingError, { err_msg });
+        return false;
+    }
+
+    if (obj_nozzle_mapping_ptr->GetResultStr() == "fail") {
+        const wxString& err_msg = wxString::Format(_L("The printer failed to build the nozzle auto-mapping table { code: %d }. Please refresh nozzle information."),
+                                                   obj_nozzle_mapping_ptr->GetErrno());
+        show_status(PrintDialogStatus::PrintStatusRackNozzleMappingError, { err_msg });
+        return false;
+    }
+
+    const auto& mapping_map = obj_nozzle_mapping_ptr->GetNozzleMappingMap();
+    if (!mapping_map.empty()) {
+        // mapping result changed, refresh the related gui
+        if (m_nozzle_mapping_result != mapping_map) {
+            m_nozzle_mapping_result = mapping_map;
+            sync_ams_mapping_result(m_ams_mapping_result);
+            BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ": sync_ams_mapping_result done.";
+        }
+
+        float flush_waste_base    = obj_nozzle_mapping_ptr->GetFlushWeightBase();
+        float flush_waste_current = obj_nozzle_mapping_ptr->GetFlushWeightCurrent();
+        if ((flush_waste_base != -1) && (flush_waste_current != -1) && flush_waste_current > flush_waste_base) {
+            float val = flush_waste_current - flush_waste_base;
+            const wxString& warning_msg = wxString::Format(_L("The current nozzle mapping may produce an extra %0.2f g of waste."), val);
+            show_status(PrintDialogStatus::PrintStatusRackNozzleMappingWarning, { warning_msg });
+        }
+
+        return true;
+    }
+
+    BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ": empty mapping table";
+    const wxString& err_msg = wxString::Format(_L("Failed to receive nozzle auto-mapping table from printer { msg: %s }. Please refresh the printer information."), "empty table");
+    show_status(PrintDialogStatus::PrintStatusRackNozzleMappingError, { err_msg });
+    return true;
+}
+
 bool SelectMachineDialog::do_ams_mapping(MachineObject *obj_,bool use_ams)
 {
     if (!obj_) return false;
@@ -1704,6 +1798,17 @@ void SelectMachineDialog::show_status(PrintDialogStatus status, std::vector<wxSt
         Enable_Refresh_Button(true);
         Enable_Send_Button(true);
     } else if (status == PrintStatusWarningExtFilamentNotMatch) {
+        Enable_Refresh_Button(true);
+        Enable_Send_Button(true);
+    } else if (status == PrintDialogStatus::PrintStatusRackNozzleMappingWaiting) {
+        // H2C: block sending while the printer computes the nozzle rack mapping
+        Enable_Refresh_Button(true);
+        Enable_Send_Button(false);
+    } else if (status == PrintDialogStatus::PrintStatusRackNozzleMappingError) {
+        Enable_Refresh_Button(true);
+        Enable_Send_Button(false);
+    } else if (status == PrintDialogStatus::PrintStatusRackNozzleMappingWarning) {
+        // H2C: non-blocking warning (e.g. extra flush waste)
         Enable_Refresh_Button(true);
         Enable_Send_Button(true);
     }
@@ -3071,9 +3176,11 @@ void SelectMachineDialog::on_selection_changed(wxCommandEvent &event)
     /* reset timeout and reading printer info */
     m_status_bar->reset();
     m_timeout_count      = 0;
+    s_nozzle_mapping_last_request_time = 0; // H2C: re-request nozzle mapping promptly for the newly selected printer
     m_ams_mapping_res  = false;
     m_ams_mapping_valid  = false;
     m_ams_mapping_result.clear();
+    m_nozzle_mapping_result.clear();
     m_pre_print_checker.clear();
 
     m_link_edit_nozzle->Show(false);
@@ -3689,6 +3796,10 @@ void SelectMachineDialog::update_show_status(MachineObject* obj_)
 
     // check extension tool warning
     UpdateStatusCheckWarning_ExtensionTool(obj_);
+
+    // H2C: request/sync the nozzle rack mapping; blocks "Ready to go" until the printer replies.
+    // No-ops (returns true) for non-H2C printers and slices that use no carousel nozzles.
+    if (!CheckErrorSyncNozzleMappingResultV0(obj_)) return;
 
     /** normal check **/
     show_status(PrintDialogStatus::PrintStatusReadyToGo);

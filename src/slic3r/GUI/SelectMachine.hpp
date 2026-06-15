@@ -512,6 +512,7 @@ public:
 
     PrintFromType get_print_type() {return m_print_type;};
     bool        use_dynamic_nozzle_map() const;
+    bool        CheckErrorSyncNozzleMappingResultV0(MachineObject* obj_); // H2C: request/sync nozzle rack mapping; returns true when ready (no errors)
     wxString    format_steel_name(NozzleType type);
     PrintDialogStatus  get_status() { return m_print_status; }
 

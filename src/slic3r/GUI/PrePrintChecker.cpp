@@ -36,6 +36,9 @@ std::string PrePrintChecker::get_print_status_info(PrintDialogStatus status)
     case PrintStatusNotSupportedPrintAll: return "PrintStatusNotSupportedPrintAll";
     case PrintStatusBlankPlate: return "PrintStatusBlankPlate";
     case PrintStatusUnsupportedPrinter: return "PrintStatusUnsupportedPrinter";
+    case PrintStatusRackNozzleMappingWaiting: return "PrintStatusRackNozzleMappingWaiting";
+    case PrintStatusRackNozzleMappingError: return "PrintStatusRackNozzleMappingError";
+    case PrintStatusRackNozzleMappingWarning: return "PrintStatusRackNozzleMappingWarning";
     case PrintStatusColorQuantityExceed: return "PrintStatusColorQuantityExceed";
     // Handle filament errors
     case PrintStatusAmsOnSettingup: return "PrintStatusAmsOnSettingup";
