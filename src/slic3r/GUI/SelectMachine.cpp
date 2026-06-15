@@ -62,6 +62,12 @@ std::string get_nozzle_volume_type_cloud_string(NozzleVolumeType nozzle_volume_t
     else if (nozzle_volume_type == NozzleVolumeType::nvtHighFlow) {
         return "high_flow";
     }
+    else if (nozzle_volume_type == NozzleVolumeType::nvtTPUHighFlow) {
+        return "tpu_high_flow";
+    }
+    else if (nozzle_volume_type == NozzleVolumeType::nvtHybrid) {
+        return "hybrid_flow";
+    }
     else {
         assert(false);
         return "";
@@ -725,6 +731,7 @@ SelectMachineDialog::SelectMachineDialog(Plater *plater)
 
     m_scroll_area->SetSizer(m_scroll_sizer);
 
+
     wxBoxSizer *sizer_main = new wxBoxSizer(wxVERTICAL);
     sizer_main->Add(m_scroll_area, 1, wxEXPAND, 0);
     sizer_main->Add(m_simplebook, 0, wxALIGN_CENTER, 0);
@@ -997,6 +1004,16 @@ void print_ams_mapping_result(std::vector<FilamentInfo>& result)
         ::sprintf(buffer, "print_ams_mapping: F(%02d) -> A(%02d)", result[i].id+1, result[i].tray_id+1);
         BOOST_LOG_TRIVIAL(info) << std::string(buffer);
     }
+}
+
+bool SelectMachineDialog::use_dynamic_nozzle_map() const
+{
+    // Stub: BBL gates this on enable_filament_dynamic_map config +
+    // is_support_dynamic_nozzle_map() on the slicing result. Neither is
+    // ported in Orca yet — return false so the rack picker still shows
+    // for H2C (gated separately on GetNozzleRack()->IsSupported()) but
+    // the dynamic-map fast path stays off.
+    return false;
 }
 
 bool SelectMachineDialog::do_ams_mapping(MachineObject *obj_,bool use_ams)
@@ -1377,52 +1394,53 @@ bool SelectMachineDialog::is_nozzle_type_match(DevExtderSystem data, wxString& e
     for (auto i = 0; i < used_extruders.size(); i++) {
         if (nozzle_volume_type_opt) {
             NozzleVolumeType nozzle_volume_type = (NozzleVolumeType) (nozzle_volume_type_opt->get_at(used_extruders[i]));
-            if (nozzle_volume_type == NozzleVolumeType::nvtStandard) { used_extruders_flow[used_extruders[i]] = "Standard";}
-            else {used_extruders_flow[used_extruders[i]] = "High Flow";}
+            if (nozzle_volume_type == NozzleVolumeType::nvtStandard) { 
+                used_extruders_flow[used_extruders[i]] = "Standard";
+            } else if (nozzle_volume_type == NozzleVolumeType::nvtTPUHighFlow) {
+                used_extruders_flow[used_extruders[i]] = "TPU High Flow";
+            } else {
+                used_extruders_flow[used_extruders[i]] = "High Flow";
+            }
         }
     }
 
     vector<int> map_extruders = {1, 0};
 
-
-    // The default two extruders are left, right, but the order of the extruders on the machine is right, left.
-    std::vector<std::string> flow_type_of_machine;
-    for (const auto& it : data.GetExtruders())
-    {
-        if (it.GetNozzleFlowType() == NozzleFlowType::H_FLOW)
-        {
-            flow_type_of_machine.push_back(L("High Flow"));
-        }
-        else if (it.GetNozzleFlowType() == NozzleFlowType::S_FLOW)
-        {
-            flow_type_of_machine.push_back(L("Standard"));
-        }
-    }
-
+    // Query nozzle flow type directly by target machine index to avoid index-shifting/sizing bugs.
+    // Compare non-localized English strings ("Standard" / "High Flow" / "TPU High Flow") to avoid false mismatches in localized UI.
     //Only when all preset nozzle types and machine nozzle types are exactly the same, return true.
     for (std::map<int, std::string>::iterator it = used_extruders_flow.begin(); it!= used_extruders_flow.end(); it++) {
         int target_machine_nozzle_id = map_extruders[it->first];
 
-        if (target_machine_nozzle_id < flow_type_of_machine.size()) {
-            if (flow_type_of_machine[target_machine_nozzle_id] != used_extruders_flow[it->first]) {
+        std::string machine_flow;
+        NozzleFlowType machine_flow_type = data.GetNozzleFlowType(target_machine_nozzle_id);
+        if (machine_flow_type == NozzleFlowType::S_FLOW) {
+            machine_flow = "Standard";
+        } else if (machine_flow_type == NozzleFlowType::U_FLOW) {
+            machine_flow = "TPU High Flow";
+        } else if (machine_flow_type == NozzleFlowType::H_FLOW) {
+            machine_flow = "High Flow";
+        } else {
+            machine_flow = "Unknown";
+        }
 
-                wxString pos;
-                if (target_machine_nozzle_id == DEPUTY_EXTRUDER_ID)
-                {
-                    pos = _L("left nozzle");
-                }
-                else if(target_machine_nozzle_id == MAIN_EXTRUDER_ID)
-                {
-                    pos = _L("right nozzle");
-                }
-
-                error_message = wxString::Format(_L("The nozzle flow setting of %s(%s) doesn't match with the slicing file(%s). "
-                                                    "Please make sure the nozzle installed matches with settings in printer, "
-                                                    "then set the corresponding printer preset while slicing."), pos,
-                                                    _L(flow_type_of_machine[target_machine_nozzle_id]),
-                                                    _L(used_extruders_flow[it->first]));
-                return false;
+        if (machine_flow != it->second) {
+            wxString pos;
+            if (target_machine_nozzle_id == DEPUTY_EXTRUDER_ID)
+            {
+                pos = _L("left nozzle");
             }
+            else if(target_machine_nozzle_id == MAIN_EXTRUDER_ID)
+            {
+                pos = _L("right nozzle");
+            }
+
+            error_message = wxString::Format(_L("The nozzle flow setting of %s(%s) doesn't match with the slicing file(%s). "
+                                                "Please make sure the nozzle installed matches with settings in printer, "
+                                                "then set the corresponding printer preset while slicing."), pos,
+                                                _L(machine_flow),
+                                                _L(it->second));
+            return false;
         }
     }
     return true;
@@ -1546,7 +1564,8 @@ void SelectMachineDialog::show_status(PrintDialogStatus status, std::vector<wxSt
         Enable_Send_Button(false);
     } else if (status == PrintDialogStatus::PrintStatusNozzleMatchInvalid) {
         Enable_Refresh_Button(true);
-        Enable_Send_Button(false);
+        // Orca: allow send despite nozzle flow-type mismatch (BBL hard-blocks; we downgrade to a warning)
+        Enable_Send_Button(true);
     } else if (status == PrintStatusNozzleDiameterMismatch) {
         Enable_Refresh_Button(true);
         Enable_Send_Button(false);
@@ -1689,7 +1708,6 @@ void SelectMachineDialog::show_status(PrintDialogStatus status, std::vector<wxSt
     /*enter perpare mode*/
     prepare_mode(false);
     m_pre_print_checker.add(status, msg, tips, wiki_url);
-
 }
 
 void SelectMachineDialog::init_timer()
@@ -2515,10 +2533,8 @@ void SelectMachineDialog::on_send_print()
     m_print_job->task_ams_mapping2     = ams_mapping_array2;
     m_print_job->task_ams_mapping_info = ams_mapping_info;
 
-    /* build nozzles info for multi extruders printers */
-    if (build_nozzles_info(m_print_job->task_nozzles_info)) {
-        BOOST_LOG_TRIVIAL(error) << "build_nozzle_info errors";
-    }
+    /* build nozzles info for multi extruders printers (single-nozzle printers no-op and return false) */
+    build_nozzles_info(m_print_job->task_nozzles_info);
 
     m_print_job->sdcard_state = obj_->GetStorage()->get_sdcard_state();    
     m_print_job->has_sdcard =  wxGetApp().app_config->get("allow_abnormal_storage") == "true"
@@ -3372,7 +3388,7 @@ void SelectMachineDialog::update_show_status(MachineObject* obj_)
             std::vector<wxString> params{error_message};
             params.emplace_back(_L("Tips: If you changed your nozzle of your printer lately, Please go to 'Device -> Printer parts' to change your nozzle setting."));
             show_status(PrintDialogStatus::PrintStatusNozzleMatchInvalid, params);
-            return;
+            // Orca: do not abort on flow-type mismatch; downgraded to a warning.
         }
     }
 
@@ -3968,7 +3984,7 @@ void SelectMachineDialog::reset_and_sync_ams_list()
                     m_mapping_popup.set_current_filament_id(extruder);
                     m_mapping_popup.set_tag_texture(materials[extruder]);
                     m_mapping_popup.set_send_win(this);//fix bug:fisrt click is not valid
-                    m_mapping_popup.update(obj_, m_ams_mapping_result);
+                    m_mapping_popup.update(obj_, m_ams_mapping_result, use_dynamic_nozzle_map(), m_print_type);
                     m_mapping_popup.Popup();
                 }
             }
@@ -5183,9 +5199,22 @@ static wxString _get_tips(MachineObject* obj_)
     if (obj_->GetExtderSystem()->GetTotalExtderCount() == 1) {
         ext_diameter += format_nozzle_diameter(obj_->GetExtderSystem()->GetNozzleDiameter(0));
     } else if (obj_->GetExtderSystem()->GetTotalExtderCount() == 2) {
-        ext_diameter += format_nozzle_diameter(obj_->GetExtderSystem()->GetNozzleDiameter(1));//Left
+        // Orca: append flow-type labels next to nozzle diameters.
+        // Left nozzle (extruder id 1 = DEPUTY)
+        ext_diameter += format_nozzle_diameter(obj_->GetExtderSystem()->GetNozzleDiameter(1));
+        auto left_flow = obj_->GetExtderSystem()->GetNozzleFlowType(1);
+        if (left_flow != NozzleFlowType::NONE_FLOWTYPE) {
+            ext_diameter += " ";
+            ext_diameter += DevNozzle::ToNozzleVolumeShortString(DevNozzle::ToNozzleVolumeType(left_flow));
+        }
         ext_diameter += "/";
+        // Right nozzle (extruder id 0 = MAIN)
         ext_diameter += format_nozzle_diameter(obj_->GetExtderSystem()->GetNozzleDiameter(0));
+        auto right_flow = obj_->GetExtderSystem()->GetNozzleFlowType(0);
+        if (right_flow != NozzleFlowType::NONE_FLOWTYPE) {
+            ext_diameter += " ";
+            ext_diameter += DevNozzle::ToNozzleVolumeShortString(DevNozzle::ToNozzleVolumeType(right_flow));
+        }
     } else {
         assert(0);
     }

@@ -49,6 +49,7 @@ class Print;
 class SLAPrint;
 //BBS: add partplatelist and SlicingStatusEvent
 class PartPlateList;
+class BackgroundSlicingProcess;
 class SlicingStatusEvent;
 enum SLAPrintObjectStep : unsigned int;
 enum class ConversionType : int;
@@ -194,7 +195,8 @@ public:
     void load_ams_list(MachineObject* obj);
     std::map<int, DynamicPrintConfig> build_filament_ams_list(MachineObject* obj);
     void sync_ams_list(bool is_from_big_sync_btn = false);
-    bool sync_extruder_list();
+    bool sync_extruder_list(bool skip_nozzle_type = false); // EXPERIMENTAL: skip-nozzle-type-sync
+    /* ORIGINAL: bool sync_extruder_list(); */
     bool need_auto_sync_extruder_list_after_connect_priner(const MachineObject* obj);
     void update_sync_status(const MachineObject* obj);
     int get_sidebar_pos_right_x();
@@ -208,6 +210,8 @@ public:
     void update_dynamic_filament_list();
 
     PlaterPresetComboBox *  printer_combox();
+    // BBL-port: invoked from MultiNozzleSync after the Sync dialog confirms a count.
+    void set_extruder_nozzle_count(int extruder_id, int nozzle_count);
     ObjectList*             obj_list();
     ObjectSettings*         obj_settings();
     ObjectLayers*           obj_layers();
@@ -305,6 +309,7 @@ public:
     Print& fff_print();
     const SLAPrint& sla_print() const;
     SLAPrint& sla_print();
+    BackgroundSlicingProcess& background_process();
 
     int new_project(bool skip_confirm = false, bool silent = false, const wxString& project_name = wxString());
     // BBS: save & backup

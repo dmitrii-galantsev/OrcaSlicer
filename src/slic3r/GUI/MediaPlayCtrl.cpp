@@ -84,6 +84,35 @@ MediaPlayCtrl::MediaPlayCtrl(wxWindow *parent, wxMediaCtrl2 *media_ctrl, const w
             }
             m_stat.push_back(value);
         }
+        // Freeze watchdog: if FPS ≈ 0 for 3+ consecutive stat ticks while PLAYING,
+        // the stream is silently frozen — gentle retry once, then stop.
+        if (m_last_state == wxMEDIASTATE_PLAYING || m_last_state == wxMEDIASTATE_PAUSED) {
+            double fps = m_stat.empty() ? -1.0 : m_stat[0];
+            if (fps >= 0 && fps < 0.5) {
+                ++m_zero_fps_count;
+                BOOST_LOG_TRIVIAL(warning) << "MediaPlayCtrl: zero FPS detected (" << m_zero_fps_count << "/3)";
+                if (m_zero_fps_count >= 3) {
+                    m_zero_fps_count = 0;
+                    if (m_failed_retry < 2) {
+                        BOOST_LOG_TRIVIAL(warning) << "MediaPlayCtrl: stream frozen, retry " << (m_failed_retry + 1);
+                        m_failed_code = 0;
+                        Stop(_L("Stream frozen, reconnecting..."));
+                        ++m_failed_retry;
+                        m_next_retry = wxDateTime::Now() + wxTimeSpan::Seconds(3);
+                    } else {
+                        BOOST_LOG_TRIVIAL(warning) << "MediaPlayCtrl: stream frozen after " << m_failed_retry << " retries, stopping";
+                        m_failed_code = 2;
+                        Stop(_L("Stream frozen. Please click play to retry."));
+                    }
+                }
+            } else {
+                m_zero_fps_count = 0;
+                // Stream is alive — reset retry counter
+                if (m_failed_retry > 0) m_failed_retry = 0;
+            }
+        } else {
+            m_zero_fps_count = 0;
+        }
     });
 
     m_button_play->Bind(wxEVT_COMMAND_BUTTON_CLICKED, [this](auto &e) { TogglePlay(); });
@@ -180,12 +209,16 @@ void MediaPlayCtrl::SetMachineObject(MachineObject* obj)
     if (machine == m_machine) {
         if (m_last_state == MEDIASTATE_IDLE && IsEnabled())
             Play();
-        else if (m_last_state == MEDIASTATE_LOADING && m_tutk_state == "disable"
-                && m_last_user_play + wxTimeSpan::Seconds(3) < wxDateTime::Now()) {
-            // resend ttcode to printer
-            if (auto agent = wxGetApp().getAgent())
-                agent->get_camera_url(machine, [](auto) {}, wxGetApp().get_printer_cloud_provider());
-            m_last_user_play = wxDateTime::Now();
+        if (m_last_state == MEDIASTATE_LOADING || m_last_state == MEDIASTATE_INITIALIZING) {
+            auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
+                std::chrono::system_clock::now() - m_play_timer).count();
+            if (elapsed >= 15) {
+                BOOST_LOG_TRIVIAL(error) << "MediaPlayCtrl: loading/initializing timeout after " << elapsed
+                                         << "s, forcing stop";
+                m_failed_code = 2;
+                Stop(_L("Loading failed. Please check the network and try again."));
+                return;
+            }
         }
         return;
     }
@@ -283,6 +316,7 @@ void MediaPlayCtrl::Play()
         return;
     }
 
+    m_play_timer = std::chrono::system_clock::now();
     BOOST_LOG_TRIVIAL(info) << "MediaPlayCtrl::Play: " << m_lan_proto << m_remote_proto << m_disable_lan;
     NetworkAgent *agent = wxGetApp().getAgent();
     std::string  agent_version = agent ? agent->get_version() : "";

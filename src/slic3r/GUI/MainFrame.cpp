@@ -1026,7 +1026,9 @@ void MainFrame::update_layout()
                 Sidebar& sidebar = GUI::wxGetApp().sidebar();
                 if (sidebar.need_auto_sync_after_connect_printer()) {
                     sidebar.set_need_auto_sync_after_connect_printer(false);
-                    sidebar.sync_extruder_list();
+                    // EXPERIMENTAL: skip-nozzle-type-sync
+                    // Pass true to keep the user's current preset nozzle volume type (don't overwrite it silently on auto-sync)
+                    sidebar.sync_extruder_list(true);
                 }
 
                 m_plater->update(true);
@@ -3269,7 +3271,7 @@ void MainFrame::init_menubar_as_editor()
         },
         "", nullptr, []() { return true; }, this);
 
-        append_menu_item(
+    append_menu_item(
         m_topbar->GetTopMenu(), wxID_ANY, _L("Preset Bundle") + "\t", "",
         [this](wxCommandEvent &) {
             // Orca: Use GUI_App::open_preferences instead of direct call so windows associations are updated on exit

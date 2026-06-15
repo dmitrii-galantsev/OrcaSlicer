@@ -26,6 +26,9 @@
 #include "DeviceCore/DevExtensionTool.h"
 #include "DeviceCore/DevExtruderSystem.h"
 #include "DeviceCore/DevNozzleSystem.h"
+#include "DeviceCore/DevNozzleRack.h"
+#include "DeviceCore/DevMappingNozzle.h"
+#include "DeviceCore/DevFilaSwitch.h"
 #include "DeviceCore/DevBed.h"
 #include "DeviceCore/DevLamp.h"
 #include "DeviceCore/DevFan.h"
@@ -566,6 +569,8 @@ MachineObject::MachineObject(DeviceManager* manager, NetworkAgent* agent, std::s
         m_extder_system = new DevExtderSystem(this);
         m_extension_tool = DevExtensionTool::Create(this);
         m_nozzle_system = new DevNozzleSystem(this);
+        m_nozzle_mapping_ptr = std::make_shared<DevNozzleMappingCtrl>(this);
+        m_fila_switch = std::make_shared<DevFilaSwitch>(this);
         m_fila_system   = new DevFilaSystem(this);
         m_hms_system    = new DevHMS(this);
         m_config = new DevConfig(this);
@@ -861,6 +866,9 @@ void MachineObject::clear_version_info()
     laser_version_info = DevFirmwareVersionInfo();
     cutting_module_version_info = DevFirmwareVersionInfo();
     extinguish_version_info = DevFirmwareVersionInfo();
+    if (m_nozzle_system) {
+        m_nozzle_system->ClearFirmwareInfoWTM();
+    }
     module_vers.clear();
 }
 
@@ -874,6 +882,11 @@ void MachineObject::store_version_info(const DevFirmwareVersionInfo& info)
         cutting_module_version_info = info;
     } else if (info.isExtinguishSystem()) {
         extinguish_version_info = info;
+    }
+
+    // Route WTM (nozzle) firmware info to the nozzle system
+    if (m_nozzle_system && (info.name == "wtm" || info.name.rfind("wtm/", 0) == 0)) {
+        m_nozzle_system->AddFirmwareInfoWTM(info);
     }
 
     module_vers.emplace(info.name, info);
@@ -2896,6 +2909,7 @@ int MachineObject::parse_json(std::string tunnel, std::string payload, bool key_
                 }
 
               m_fan->ParseV2_0(jj);
+                m_fila_switch->ParseFilaSwitchInfo(jj);
 
                 if (jj.contains("support_filament_backup")) {
                     if (jj["support_filament_backup"].is_boolean()) {
@@ -5019,6 +5033,7 @@ void MachineObject::parse_new_info(json print)
         is_support_ext_change_assist = get_flag_bits(fun, 48);
         is_support_partskip = get_flag_bits(fun, 49);
         is_support_idelheadingprotect_detection = get_flag_bits(fun, 62);
+        if (m_nozzle_system) m_nozzle_system->SetSupportNozzleRack(get_flag_bits(fun, 60));
     }
 
     /*fun2*/
@@ -5066,7 +5081,12 @@ void MachineObject::parse_new_info(json print)
 
         DevBed::ParseV2_0(device,m_bed);
 
-        if (device.contains("nozzle")) {  DevNozzleSystemParser::ParseV2_0(device["nozzle"], m_nozzle_system); }
+        DevNozzleSystemParser::ParseV2_0(device, m_nozzle_system);
+        // Auto-sync: propagate freshly-parsed nozzle inventory into the preset
+        // bundle so get_recommended_filament_maps() can use live nozzle counts.
+        // Gated on rack support + !force_kept + matching printer model.
+        if (PresetBundle* pb = GUI::wxGetApp().preset_bundle)
+            sync_machine_nozzle_inventory_to_preset(this, *pb);
         if (device.contains("extruder")) { ExtderSystemParser::ParseV2_0(device["extruder"], m_extder_system);}
         if (device.contains("ext_tool")) { DevExtensionToolParser::ParseV2_0(device["ext_tool"], m_extension_tool); }
 
@@ -5545,6 +5565,11 @@ int MachineObject::get_extruder_id_by_ams_id(const std::string& ams_id)
 Slic3r::DevPrintingSpeedLevel MachineObject::GetPrintingSpeedLevel() const
 {
     return m_print_options->GetPrintingSpeedLevel();
+}
+
+std::shared_ptr<Slic3r::DevNozzleRack> MachineObject::GetNozzleRack() const
+{
+    return m_nozzle_system ? m_nozzle_system->GetNozzleRack() : nullptr;
 }
 
 bool MachineObject::is_target_slot_unload() const

@@ -36,6 +36,7 @@
 //#include "RemovableDriveManager.hpp"
 
 #include "slic3r/GUI/Plater.hpp"
+#include "libslic3r/VortekPlateMapping.hpp"
 
 namespace Slic3r {
 
@@ -229,10 +230,10 @@ void BackgroundSlicingProcess::process_fff()
 		BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(" %1%: gcode_result reseted, will start print::process")%__LINE__;
 		m_print->process();
 		BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(" %1%: after print::process, send slicing complete event to gui...")%__LINE__;
-        if (m_current_plate->get_real_filament_map_mode(preset_bundle.project_config) < FilamentMapMode::fmmManual) {
-            std::vector<int> f_maps = m_fff_print->get_filament_maps();
-            m_current_plate->set_filament_maps(f_maps);
-		}
+        Vortek::PlateMapping::sync_after_slicing(
+            *m_current_plate->config(),
+            m_current_plate->get_real_filament_map_mode(preset_bundle.project_config),
+            m_fff_print, preset_bundle);
 		wxCommandEvent evt(m_event_slicing_completed_id);
 		// Post the Slicing Finished message for the G-code viewer to update.
 		// Passing the timestamp
@@ -449,9 +450,12 @@ void BackgroundSlicingProcess::call_process(std::exception_ptr &ex) throw()
 		assert(m_print->canceled());
 		ex = std::current_exception();
 		BOOST_LOG_TRIVIAL(error) <<__FUNCTION__ << ":got cancelled exception" << std::endl;
+	} catch (const std::exception &e) {
+		ex = std::current_exception();
+		BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ":got std::exception type=" << typeid(e).name() << " what=\"" << e.what() << "\"" << std::endl;
 	} catch (...) {
 		ex = std::current_exception();
-		BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ":got other exception" << std::endl;
+		BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ":got non-std exception" << std::endl;
 	}
 }
 

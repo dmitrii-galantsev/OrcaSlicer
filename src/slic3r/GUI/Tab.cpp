@@ -48,6 +48,7 @@
 #include "Widgets/Label.hpp"
 #include "Widgets/SwitchButton.hpp"
 #include "Widgets/TabCtrl.hpp"
+#include "Widgets/MultiNozzleSync.hpp"
 #include "Widgets/ComboBox.hpp"
 #include "MarkdownTip.hpp"
 #include "Search.hpp"
@@ -489,21 +490,19 @@ void Tab::create_preset_tab()
 
     m_main_sizer->Add(m_tabctrl, 0, wxEXPAND | wxALL, 0 );
 
-    // Orca: don't show extruder switch for now
-#if 0
-    if (dynamic_cast<TabPrinter *>(this) || dynamic_cast<TabPrint *>(this)) {
+    // H2C: re-enable extruder switch for Process tab (dual-extruder BBL printers)
+    if (dynamic_cast<TabPrint *>(this)) {
         m_extruder_switch = new SwitchButton(panel);
         m_extruder_switch->SetMaxSize({em_unit(this) * 24, -1});
         m_extruder_switch->SetLabels(_L("Left"), _L("Right"));
         m_extruder_switch->Bind(wxEVT_TOGGLEBUTTON, [this] (auto & evt) {
             evt.Skip();
-            dynamic_cast<TabPrint *>(this)->switch_excluder(evt.GetInt());
+            switch_excluder(evt.GetInt());
             reload_config();
             update_changed_ui();
         });
         m_main_sizer->Add(m_extruder_switch, 0, wxALIGN_CENTER | wxTOP, m_em_unit);
     }
-#endif
 
     if (dynamic_cast<TabFilament *>(this)) {
         m_variant_combo = new MultiSwitchButton(panel);
@@ -1904,6 +1903,17 @@ void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
             tab->update_extruder_variants(extruder_idx);
             tab->reload_config();
         }
+
+        // H2C: VariantOverrides are now applied in switch_excluder()
+        // which is called via update_extruder_variants() above for each tab.
+        // This ensures each tab shows the correct variant for its currently
+        // displayed extruder (Left or Right), not the extruder that was changed.
+
+        // Reload all tabs to reflect updated scalar values
+        for (auto tab : wxGetApp().tabs_list) {
+            tab->reload_config();
+        }
+
         if (wxGetApp().app_config->get("auto_calculate_flush") == "all") {
             wxGetApp().plater()->sidebar().auto_calc_flushing_volumes(-1,extruder_idx);
         }
@@ -4354,6 +4364,18 @@ void TabFilament::toggle_options()
                         "filament_cooling_initial_speed", "filament_cooling_final_speed"})
             toggle_option(el, !is_BBL_printer);
 
+        // BBL: tower-interface filament params only apply to H2C/H2D/X2D-class printers.
+        // Hide the four lines on every other printer so the controls don't appear unused.
+        const std::string printer_model = printer_cfg.opt_string("printer_model");
+        const bool is_tower_interface_supported = printer_model.find("H2C") != std::string::npos
+                                                  || printer_model.find("H2D") != std::string::npos
+                                                  || printer_model.find("X2D") != std::string::npos;
+        for (auto el : {"filament_tower_interface_pre_extrusion_dist",
+                        "filament_tower_interface_pre_extrusion_length",
+                        "filament_tower_interface_purge_volume",
+                        "filament_tower_interface_print_temp"})
+            toggle_line(el, is_tower_interface_supported);
+
         bool multitool_ramming = m_config->opt_bool("filament_multitool_ramming", 0);
         toggle_option("filament_multitool_ramming_volume", multitool_ramming);
         toggle_option("filament_multitool_ramming_flow", multitool_ramming);
@@ -5240,6 +5262,19 @@ void TabPrinter::on_preset_loaded()
             m_preset_bundle->project_config.option<ConfigOptionEnumsGeneric>("nozzle_volume_type")->values = current_printer.config.option<ConfigOptionEnumsGeneric>("default_nozzle_volume_type")->values;
         }
     }
+
+    // BBL parity (port from BambuStudio Tab.cpp:5565): re-derive extruder_nozzle_stat
+    // from the printer's extruder_max_nozzle_count whenever a printer profile is
+    // loaded. Without this, the stat carries whatever was in the saved 3MF (or the
+    // default `1`) regardless of the printer's actual rack capacity, causing the
+    // firmware to reject the print on a hotend-quantity mismatch. Skipped when
+    // a manual override is active or when MQTT sync already populated it.
+    if (auto* max_nc = m_config->option<ConfigOptionIntsNullable>("extruder_max_nozzle_count");
+        max_nc && !max_nc->values.empty() &&
+        m_preset_bundle->extruder_nozzle_stat.get_nozzle_data_flag() != ExtruderNozzleStat::ndfMachine &&
+        !m_preset_bundle->extruder_nozzle_stat.is_force_kept()) {
+        m_preset_bundle->extruder_nozzle_stat.on_printer_model_change(m_preset_bundle);
+    }
 }
 
 void TabPrinter::update_pages()
@@ -5694,6 +5729,9 @@ void Tab::reactive_preset_combo_box()
 void Tab::load_current_preset()
 {
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__<<boost::format(": enter, m_type %1%")%Preset::get_type_string(m_type);
+    // H2C: Reset variant tracking — new preset = fresh VariantOverrides,
+    // don't let a stale index from the previous preset corrupt the new one.
+    m_last_variant_index = -1;
     const Preset& preset = m_presets->get_edited_preset();
     std::vector<std::string> prev_variant_list;
     int prev_extruder_count = 0;
@@ -7106,6 +7144,9 @@ void TabPrinter::set_extruder_volume_type(int extruder_id, NozzleVolumeType type
     auto nozzle_volumes = m_preset_bundle->project_config.option<ConfigOptionEnumsGeneric>("nozzle_volume_type");
     assert(nozzle_volumes->values.size() > (size_t)extruder_id);
     nozzle_volumes->values[extruder_id] = type;
+
+    m_preset_bundle->extruder_nozzle_stat.on_volume_type_switch(extruder_id, type);
+
     on_value_change((boost::format("nozzle_volume_type#%1%") % extruder_id).str(), int(type));
 
     //save to app config
@@ -7426,8 +7467,9 @@ void Tab::switch_excluder(int extruder_id)
         int current_extruder = m_extruder_switch->GetValue() ? 1 : 0;
         if (extruder_id == -1)
             extruder_id = current_extruder;
-        else if (extruder_id != current_extruder)
+        else if (extruder_id != current_extruder) {
             return;
+        }
     } else if (m_variant_combo) {
         int current_variant = m_variant_combo->GetSelection();
         if (current_variant < 0)
@@ -7474,7 +7516,58 @@ void Tab::switch_excluder(int extruder_id)
                     const_cast<int &>(opt.second.second) = index;
                     page->m_opt_id_map.insert({opt.second.first + "#" + std::to_string(index), opt.first});
                 }
+                // H2C: promote variant-aware process options (added with idx=-1)
+                // so they participate in Left/Right nozzle switching
+                else if (m_extruder_switch && m_type == Preset::TYPE_PRINT &&
+                         print_options_with_variant.count(opt.second.first)) {
+                    const_cast<int &>(opt.second.second) = index;
+                    page->m_opt_id_map.insert({opt.second.first + "#" + std::to_string(index), opt.first});
+                }
             }
+        }
+    }
+
+    // H2C: When switching between Left/Right nozzle tabs, apply the correct
+    // variant overrides so scalar values reflect this extruder's nozzle type.
+    //
+    // CRITICAL: Before applying the new variant, SAVE current scalar values
+    // back into edited_cfg's VariantOverrides for the PREVIOUS variant index.
+    // This preserves user edits across Left↔Right tab switches.
+    //
+    // We save only to edited_cfg — selected_cfg always keeps the original
+    // system values, so dirty detection correctly flags user modifications.
+    if (m_extruder_switch && extruder_id >= 0 && extruder_id < (int)nozzle_volumes->size()) {
+        auto& edited_cfg   = m_presets->get_edited_preset().config;
+        auto& selected_cfg = m_presets->get_selected_preset().config;
+
+        // H2C: Determine if this is a multi-variant config.
+        // Check existing overrides first, then fallback to variant list options
+        // (handles edge case where ALL variant-aware fields are scalar).
+        bool is_multi_variant = !edited_cfg.variant_overrides().empty();
+        if (!is_multi_variant) {
+            for (const char* vkey : {"print_extruder_variant", "filament_extruder_variant", "printer_extruder_variant"}) {
+                const auto* opt = dynamic_cast<const ConfigOptionStrings*>(edited_cfg.option(vkey, false));
+                if (opt && (int)opt->size() > 1) {
+                    is_multi_variant = true;
+                    break;
+                }
+            }
+        }
+
+        if (is_multi_variant) {
+            const auto& keys = (m_type == Preset::TYPE_PRINT)
+                ? print_options_with_variant : filament_options_with_variant;
+
+            // Save current values to the PREVIOUS variant slot (edited only)
+            if (m_last_variant_index >= 0) {
+                edited_cfg.save_variant_overrides(m_last_variant_index, keys);
+            }
+
+            // Apply new variant's values
+            edited_cfg.apply_variant_overrides(index, keys);
+            selected_cfg.apply_variant_overrides(index, keys);
+
+            m_last_variant_index = index;
         }
     }
 }

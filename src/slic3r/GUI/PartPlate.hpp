@@ -23,6 +23,7 @@
 #include "3DBed.hpp"
 #include "MeshUtils.hpp"
 #include "libslic3r/ParameterUtils.hpp"
+#include "libslic3r/VortekPlateMapping.hpp"
 
 class GLUquadric;
 typedef class GLUquadric GLUquadricObject;
@@ -261,6 +262,15 @@ public:
     // get filament map, 0 based filament ids, 1 based extruder ids
     std::vector<int> get_filament_maps() const;
     void set_filament_maps(const std::vector<int>& f_maps);
+
+    // H2C Vortek: Get/set/clear nozzle and volume mapping tables per-plate
+    std::vector<int> get_filament_nozzle_maps() const;
+    void set_filament_nozzle_maps(const std::vector<int>& f_maps);
+    void clear_filament_nozzle_map();
+
+    std::vector<int> get_filament_volume_maps() const;
+    void set_filament_volume_maps(const std::vector<int>& f_maps);
+    void clear_filament_volume_map();
 
     void clear_filament_map();
     void clear_filament_map_mode();
