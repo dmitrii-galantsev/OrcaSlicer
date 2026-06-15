@@ -2569,6 +2569,11 @@ void SelectMachineDialog::on_send_print()
     m_print_job->task_ams_mapping2     = ams_mapping_array2;
     m_print_job->task_ams_mapping_info = ams_mapping_info;
 
+    // H2C/multi-nozzle: forward the per-filament nozzle mapping; if empty the firmware uses defaults.
+    if (!obj_->get_nozzle_mapping_result()->GetNozzleMappingJson().empty()) {
+        m_print_job->task_nozzle_mapping = obj_->get_nozzle_mapping_result()->GetNozzleMappingJson().dump();
+    }
+
     /* build nozzles info for multi extruders printers (single-nozzle printers no-op and return false) */
     build_nozzles_info(m_print_job->task_nozzles_info);
 
