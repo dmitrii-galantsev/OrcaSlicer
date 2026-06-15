@@ -317,6 +317,7 @@ private:
     std::vector<MachineObject*>         m_list;
     std::vector<FilamentInfo>           m_filaments;
     std::vector<FilamentInfo>           m_ams_mapping_result;
+    std::unordered_map<int, int>        m_nozzle_mapping_result; // H2C: fila_id -> physical nozzle pos, from the printer's auto nozzle-mapping
     std::vector<int>                    m_filaments_map;
     std::shared_ptr<BBLStatusBarPrint>  m_status_bar;
     std::unique_ptr<Worker>             m_worker;
@@ -507,6 +508,7 @@ public:
 
     PrintFromType get_print_type() {return m_print_type;};
     bool        use_dynamic_nozzle_map() const;
+    bool        CheckErrorSyncNozzleMappingResultV0(MachineObject* obj_); // H2C: request/sync nozzle rack mapping; returns true when ready (no errors)
     wxString    format_steel_name(NozzleType type);
     PrintDialogStatus  get_status() { return m_print_status; }
 

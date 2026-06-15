@@ -66,6 +66,8 @@ enum PrintDialogStatus : unsigned int {
     PrintStatusNotSupportedPrintAll,
     PrintStatusBlankPlate,
     PrintStatusUnsupportedPrinter,
+    PrintStatusRackNozzleMappingWaiting, // H2C: blocking while the printer computes the nozzle rack mapping
+    PrintStatusRackNozzleMappingError,   // H2C: nozzle rack mapping handshake failed
     PrintStatusPrinterErrorEnd,
 
     // Errors for filament, Block Print
@@ -92,6 +94,7 @@ enum PrintDialogStatus : unsigned int {
     PrintStatusToolHeadCoolingFanWarning,
     PrintStatusNozzleMatchInvalid,      // EXPERIMENTAL: skip-nozzle-type-sync - downgraded to warning (was in error block before PrintStatusNozzleDataInvalid)
     /* ORIGINAL: PrintStatusNozzleMatchInvalid was between PrintStatusInPrinting and PrintStatusNozzleDataInvalid (error block, line ~54) */
+    PrintStatusRackNozzleMappingWarning, // H2C: non-blocking warning, e.g. nozzle mapping adds extra flush waste
     PrintStatusPrinterWarningEnd,
 
     // Warnings for filament

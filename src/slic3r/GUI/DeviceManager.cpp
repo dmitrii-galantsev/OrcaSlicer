@@ -3014,6 +3014,11 @@ int MachineObject::parse_json(std::string tunnel, std::string payload, bool key_
 
 
             if (jj.contains("command")) {
+                // H2C: parse the printer's auto nozzle-mapping reply (no-ops unless command/sequence_id match)
+                if (m_nozzle_mapping_ptr) {
+                    m_nozzle_mapping_ptr->ParseAutoNozzleMapping(jj);
+                }
+
                 if (jj["command"].get<std::string>() == "ams_change_filament") {
                     if (jj.contains("errno")) {
                         if (jj["errno"].is_number()) {
