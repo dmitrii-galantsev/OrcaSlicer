@@ -20,6 +20,7 @@
 
 #include "DeviceCore/DevConfig.h"
 #include "DeviceCore/DevNozzleSystem.h"
+#include "DeviceCore/DevNozzleRack.h"
 #include "DeviceCore/DevExtensionTool.h"
 #include "DeviceCore/DevExtruderSystem.h"
 #include "DeviceCore/DevFilaBlackList.h"
@@ -1836,6 +1837,26 @@ static bool _is_same_nozzle_diameters(MachineObject* obj, float &tag_nozzle_diam
             }
 
             tag_nozzle_diameter = float(opt_nozzle_diameters->get_at(used_nozzle_idx));
+
+            // H2C carousel: the required nozzle may be parked in the rack (firmware racks it in at
+            // print start), so accept it if the diameter is on the head or anywhere in the rack.
+            // Diameter only; flow-type mismatch stays a warning. Other extruders use the strict check.
+            DevNozzleSystem* nozzle_sys = obj->GetNozzleSystem();
+            if (used_nozzle_idx == MAIN_EXTRUDER_ID && nozzle_sys && nozzle_sys->GetNozzleRack() &&
+                nozzle_sys->GetNozzleRack()->IsSupported())
+            {
+                float head_diameter = obj->GetExtderSystem()->GetNozzleDiameter(used_nozzle_idx);
+                bool diameter_available = (head_diameter == 0.0f) || (head_diameter == tag_nozzle_diameter);
+                for (auto it = nozzle_sys->GetRackNozzles().begin(); !diameter_available && it != nozzle_sys->GetRackNozzles().end(); ++it)
+                    diameter_available = (it->second.GetNozzleDiameter() == tag_nozzle_diameter);
+                if (!diameter_available)
+                {
+                    mismatch_nozzle_id = used_nozzle_idx;
+                    return false;
+                }
+                continue;
+            }
+
             auto machine_nozzle_diameter = obj->GetExtderSystem()->GetNozzleDiameter(used_nozzle_idx);
 
             // Assume matching if diameter is unknown
