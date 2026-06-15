@@ -66,13 +66,15 @@ struct PlateData
         objects_and_instances.clear();
     }
 
-    void parse_filament_info(GCodeProcessorResult *result);
+    void parse_filament_info(GCodeProcessorResult *result, const DynamicPrintConfig *config = nullptr);
 
     int plate_index;
     std::vector<std::pair<int, int>> objects_and_instances;
     std::map<int, std::pair<int, int>> obj_inst_map;
     std::string     printer_model_id;
     std::string     nozzle_diameters;
+    // H2C Vortek: String representation of nozzle volume types on plate
+    std::string     nozzle_volume_types;
     std::string     gcode_file;
     std::string     gcode_file_md5;
     std::string     thumbnail_file;
@@ -110,6 +112,9 @@ struct PlateData
     std::vector<int>          limit_filament_maps;
 
     std::vector<GCodeProcessorResult::SliceWarning> warnings;
+    std::optional<MultiNozzleUtils::LayeredNozzleGroupResult> nozzle_group_result;
+    // H2C Vortek: Detailed information about carousel nozzles
+    std::vector<MultiNozzleUtils::NozzleInfo> nozzles_info;
 
     std::string get_gcode_prediction_str() {
         return gcode_prediction;

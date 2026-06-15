@@ -468,10 +468,26 @@ set(lisbslic3r_sources
     Zipper.hpp
     FilamentGroup.hpp
     FilamentGroup.cpp
+    MultiNozzleUtils.hpp
+    MultiNozzleUtils.cpp
     FilamentGroupUtils.hpp
     FilamentGroupUtils.cpp
     GCode/ToolOrderUtils.hpp
     GCode/ToolOrderUtils.cpp
+    # Vortek: H2C-specific logic extracted from core Orca files
+    VortekGroupReorder.hpp
+    VortekGroupReorder.cpp
+    VortekPreCooling.hpp
+    VortekPreCooling.cpp
+    VortekWipeTower.hpp
+    VortekWipeTower.cpp
+    VortekGCode.hpp
+    VortekGCode.cpp
+    VortekPlateMapping.hpp
+    VortekPlateMapping.cpp
+    VortekNozzleState.hpp
+    VortekNozzleState.cpp
+    GCode/WipeTowerWriter.hpp
     FlushVolPredictor.hpp
     FlushVolPredictor.cpp
 )

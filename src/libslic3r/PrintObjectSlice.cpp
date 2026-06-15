@@ -821,7 +821,12 @@ void PrintObject::slice()
     //BBS: add flag to reload scene for shell rendering
     m_print->set_status(5, L("Slicing mesh"), PrintBase::SlicingStatus::RELOAD_SCENE);
     std::vector<coordf_t> layer_height_profile;
-    this->update_layer_height_profile(*this->model_object(), m_slicing_params, layer_height_profile);
+    bool nozzle_range_reset = false;
+    this->update_layer_height_profile(*this->model_object(), m_slicing_params, layer_height_profile, nozzle_range_reset);
+    if (nozzle_range_reset)
+        this->active_step_add_warning(PrintStateBase::WarningLevel::NON_CRITICAL,
+            L("The variable layer height profile has been reset because some layer heights "
+              "exceed the allowed range of the current nozzle."));
     m_print->throw_if_canceled();
     m_typed_slices = false;
     this->clear_layers();
@@ -906,9 +911,11 @@ static inline void apply_mm_segmentation(PrintObject &print_object, ThrowOnCance
                 by_extruder.assign(num_extruders, ByExtruder());
                 by_region.assign(layer.region_count(), ByRegion());
                 bool layer_split = false;
+                const size_t seg_count = segmentation[layer_id].size();
                 for (size_t extruder_id = 0; extruder_id < num_extruders; ++ extruder_id) {
                     ByExtruder &region = by_extruder[extruder_id];
-                    append(region.expolygons, std::move(segmentation[layer_id][extruder_id]));
+                    if (extruder_id < seg_count)
+                        append(region.expolygons, std::move(segmentation[layer_id][extruder_id]));
                     if (! region.expolygons.empty()) {
                         region.bbox = get_extents(region.expolygons);
                         layer_split = true;
@@ -1208,7 +1215,10 @@ void PrintObject::slice_volumes()
     // Is any ModelVolume multi-material painted?
     if (const auto& volumes = this->model_object()->volumes;
         m_print->config().filament_diameter.size() > 1 && // BBS
-        std::find_if(volumes.begin(), volumes.end(), [](const ModelVolume* v) { return !v->mmu_segmentation_facets.empty(); }) != volumes.end()) {
+    // H2C TODO
+    // InterlockingGenerator::generate_embedding_wall(this);
+    // m_print->throw_if_canceled();
+        std::find_if(volumes.begin(), volumes.end(), [](const ModelVolume* v) { return v->is_model_part() && !v->mmu_segmentation_facets.empty(); }) != volumes.end()) {
 
         // If XY Size compensation is also enabled, notify the user that XY Size compensation
         // would not be used because the object is multi-material painted.

@@ -226,7 +226,7 @@ static const std::unordered_map<std::string, std::string> pre_family_model_map {
 
 
 // 中间版本兼容性处理，如果是nil值，先改成default值，再进行扩展
-void extend_default_config_length(DynamicPrintConfig& config, const bool set_nil_to_default, const DynamicPrintConfig& defaults)
+void extend_default_config_length(DynamicPrintConfig& config, const DynamicPrintConfig& inherit_config, const bool set_nil_to_default, const DynamicPrintConfig& defaults)
 {
     constexpr int default_param_length = 1;
     int filament_variant_length = default_param_length;
@@ -240,15 +240,38 @@ void extend_default_config_length(DynamicPrintConfig& config, const bool set_nil
         machine_variant_length = nozzle_diameter->values.size();
     }
 
-    if(config.has("filament_extruder_variant"))
-        filament_variant_length = config.option<ConfigOptionStrings>("filament_extruder_variant")->size();
-    if(config.has("print_extruder_variant"))
-        process_variant_length = config.option<ConfigOptionStrings>("print_extruder_variant")->size();
-    if(config.has("printer_extruder_variant"))  // Use existing variant list if specified, so BBL's multi-variant profiles still works
-        machine_variant_length = config.option<ConfigOptionStrings>("printer_extruder_variant")->size();
+    // BBL parity (port from BambuStudio Preset.cpp:156): when the leaf preset
+    // doesn't carry the variant key, inherit it from the parent. Filament JSONs
+    // typically omit `filament_extruder_variant`, so without this fallback
+    // `filament_variant_length` stayed at 1 and every filament array got
+    // resized down to a single entry on load — collapsing N×variants worth of
+    // per-filament data and tripping the H2C firmware's hotend-mismatch check.
+    auto ensure_variant_and_get_len = [&](const std::string& variant_key, const std::string& id_key = "") -> int {
+        if (!config.has(variant_key) && inherit_config.has(variant_key))
+            config.set_key_value(variant_key, inherit_config.option(variant_key)->clone());
+
+        if (!id_key.empty() && !config.has(id_key) && inherit_config.has(id_key))
+            config.set_key_value(id_key, inherit_config.option(id_key)->clone());
+
+        if (!id_key.empty() && (!config.has(variant_key) || !config.has(id_key))) {
+            config.erase(variant_key);
+            config.erase(id_key);
+        }
+
+        if (auto* opt = config.option<ConfigOptionStrings>(variant_key))
+            return (int)opt->size();
+        return default_param_length;
+    };
+
+    filament_variant_length = ensure_variant_and_get_len("filament_extruder_variant");
+    process_variant_length  = ensure_variant_and_get_len("print_extruder_variant", "print_extruder_id");
+    if (auto inherited = ensure_variant_and_get_len("printer_extruder_variant", "printer_extruder_id"); inherited > default_param_length)
+        machine_variant_length = inherited;  // prefer BBL multi-variant list over the nozzle_diameter fallback above
 
     auto replace_nil_and_resize = [&](const std::string & key, int length){
         ConfigOption* raw_ptr = config.option(key);
+        if (!raw_ptr || !raw_ptr->is_vector())
+            return;  // H2C: skip scalar options (e.g. single-extruder presets)
         ConfigOptionVectorBase* opt_vec = static_cast<ConfigOptionVectorBase *>(raw_ptr);
         if(set_nil_to_default && raw_ptr->is_nil() && defaults.has(key) && std::find(filament_extruder_override_keys.begin(), filament_extruder_override_keys.end(), key) == filament_extruder_override_keys.end()){
             opt_vec->clear();
@@ -719,8 +742,13 @@ void Preset::reload(Preset const &parent)
     ForwardCompatibilitySubstitutionRule substitution_rule    = ForwardCompatibilitySubstitutionRule::Disable;
     try {
         ConfigSubstitutions                config_substitutions = config.load_from_json(file, substitution_rule, key_values, reason);
+        // H2C: save variant overrides before std::move destroys source config
+        auto saved_overrides = config.variant_overrides();
         this->config = parent.config;
         this->config.apply(std::move(config));
+        // H2C: transfer variant overrides from loaded config
+        if (!saved_overrides.empty())
+            this->config.variant_overrides() = std::move(saved_overrides);
     } catch (const std::exception &err) {
         BOOST_LOG_TRIVIAL(error) << boost::format("Failed loading the user-config file: %1%. Reason: %2%") % file % err.what();
     }
@@ -1308,7 +1336,13 @@ static std::vector<std::string> s_Preset_filament_options {/*"filament_colour", 
     "filament_long_retractions_when_cut","filament_retraction_distances_when_cut", "idle_temperature",
     //BBS filament change length while the extruder color
     "filament_change_length","filament_flush_volumetric_speed","filament_flush_temp", "filament_cooling_before_tower",
-    "long_retractions_when_ec", "retraction_distances_when_ec"
+    "long_retractions_when_ec", "retraction_distances_when_ec",
+    // Orca H2C port: per-filament Vortek nozzle-swap parameters
+    "filament_pre_cooling_temperature_nc", "filament_retract_length_nc",
+    "filament_ramming_volumetric_speed_nc", "filament_ramming_travel_time_nc",
+    "filament_preheat_temperature_delta",
+    // Orca H2C port: per-filament prime volumes (EC = extruder-change, NC = nozzle-change)
+    "filament_prime_volume", "filament_prime_volume_nc"
     };
 
 static std::vector<std::string> s_Preset_machine_limits_options {
@@ -1334,7 +1368,7 @@ static std::vector<std::string> s_Preset_printer_options {
     "nozzle_height", "master_extruder_id",
     "default_print_profile", "inherits",
     "silent_mode",
-    "scan_first_layer", "enable_power_loss_recovery", "wrapping_detection_layers", "wrapping_exclude_area", "machine_load_filament_time", "machine_unload_filament_time", "machine_tool_change_time", "time_cost", "machine_pause_gcode", "template_custom_gcode",
+    "scan_first_layer", "enable_power_loss_recovery", "wrapping_detection_layers", "wrapping_exclude_area", "machine_load_filament_time", "machine_unload_filament_time", "machine_tool_change_time", "machine_prepare_compensation_time", "time_cost", "machine_pause_gcode", "template_custom_gcode",
     "nozzle_type", "nozzle_hrc","auxiliary_fan", "nozzle_volume","upward_compatible_machine", "z_hop_types", "travel_slope", "retract_lift_enforce","support_chamber_temp_control","support_air_filtration","printer_structure",
     "best_object_pos", "head_wrap_detect_zone",
     "host_type", "print_host", "printhost_apikey", "flashforge_serial_number", "bbl_use_printhost", "printer_agent",
@@ -1343,11 +1377,15 @@ static std::vector<std::string> s_Preset_printer_options {
     "printhost_user", "printhost_password", "printhost_ssl_ignore_revoke", "thumbnails", "thumbnails_format",
     "use_relative_e_distances", "extruder_type", "use_firmware_retraction", "printer_notes",
     "grab_length", "support_object_skip_flush", "physical_extruder_map",
+    "hotend_cooling_rate", "hotend_heating_rate", "enable_pre_heating",
     "cooling_tube_retraction",
     "cooling_tube_length", "high_current_on_filament_swap", "parking_pos_retraction", "extra_loading_move", "wipe_tower_type", "purge_in_prime_tower", "enable_filament_ramming", "tool_change_on_wipe_tower",
     "z_offset",
     "disable_m73", "preferred_orientation", "emit_machine_limits_to_gcode", "pellet_modded_printer", "support_multi_bed_types", "default_bed_type", "bed_mesh_min","bed_mesh_max","bed_mesh_probe_distance", "adaptive_bed_mesh_margin", "enable_long_retraction_when_cut","long_retractions_when_cut","retraction_distances_when_cut",
-    "bed_temperature_formula", "nozzle_flush_dataset"
+    "bed_temperature_formula", "nozzle_flush_dataset",
+    // Orca H2C port: dual-nozzle / nozzle-change machine keys (only those with ConfigOptionDef in PrintConfig.cpp)
+    "extruder_max_nozzle_count", "machine_hotend_change_time",
+    "hotend_cooling_rate", "hotend_heating_rate", "group_algo_with_time"
     };
 
 static std::vector<std::string> s_Preset_sla_print_options {
@@ -1641,10 +1679,12 @@ void PresetCollection::load_presets(
                         ;
                     }
                     const Preset& default_preset = this->default_preset_for(config);
+                    // H2C: save variant overrides before config is consumed
+                    auto saved_overrides = config.variant_overrides();
                     if (inherit_preset) {
                         preset.config = inherit_preset->config;
                         preset.filament_id = inherit_preset->filament_id;
-                        extend_default_config_length(config, false, {});
+                        extend_default_config_length(config, inherit_preset->config, false, {});
                         preset.config.update_diff_values_to_child_config(config, extruder_id_name, extruder_variant_name, *key_set1, *key_set2);
                     }
                     else {
@@ -1658,7 +1698,24 @@ void PresetCollection::load_presets(
                         // Find a default preset for the config. The PrintPresetCollection provides different default preset based on the "printer_technology" field.
                         preset.config = default_preset.config;
                         preset.config.apply(std::move(config));
-                        extend_default_config_length(preset.config, true, default_preset.config);
+                        extend_default_config_length(preset.config, {}, true, default_preset.config);
+                    }
+                    // H2C: merge variant overrides — parent overrides survive, child overrides win
+                    {
+                        auto& parent_vo = preset.config.variant_overrides();
+                        if (!saved_overrides.empty()) {
+                            // Overlay child's overrides on top of parent's
+                            for (auto& [key, vals] : saved_overrides.floats)
+                                parent_vo.floats[key] = std::move(vals);
+                            for (auto& [key, vals] : saved_overrides.strings)
+                                parent_vo.strings[key] = std::move(vals);
+                            BOOST_LOG_TRIVIAL(info) << "H2C: merged VariantOverrides for preset " << preset.name
+                                << " (child: " << saved_overrides.floats.size()
+                                << " keys, total: " << parent_vo.floats.size() << " keys)";
+                        } else if (!parent_vo.empty()) {
+                            BOOST_LOG_TRIVIAL(info) << "H2C: inherited VariantOverrides for preset " << preset.name
+                                << " (" << parent_vo.floats.size() << " float keys from parent)";
+                        }
                     }
                     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << " load preset: " << name << " and filament_id: " << preset.filament_id << " and base_id: " << preset.base_id;
 
@@ -2245,7 +2302,7 @@ bool PresetCollection::load_user_preset(std::string name, std::map<std::string, 
             new_config = default_preset.config;
         }
 
-        extend_default_config_length(cloud_config, false, {});
+        extend_default_config_length(cloud_config, inherit_preset ? inherit_preset->config : DynamicPrintConfig{}, false, {});
 
         if (inherit_preset) {
             std::string extruder_id_name, extruder_variant_name;
@@ -2256,7 +2313,7 @@ bool PresetCollection::load_user_preset(std::string name, std::map<std::string, 
         }
         else{
             new_config.apply(std::move(cloud_config));
-            extend_default_config_length(new_config, true, default_preset.config);
+            extend_default_config_length(new_config, {}, true, default_preset.config);
         }
         Preset::normalize(new_config);
         // Report configuration fields, which are misplaced into a wrong group.
@@ -2649,8 +2706,10 @@ std::pair<Preset*, bool> PresetCollection::load_external_preset(
         //we can not reach here
         preset.save(nullptr);
     }
-    if (&this->get_selected_preset() == &preset)
+    if (&this->get_selected_preset() == &preset) {
         this->get_edited_preset().is_external = true;
+        this->get_edited_preset().is_project_embedded = preset.is_project_embedded;
+    }
 
     //BBS: add config related logs
     BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << boost::format(", type %1% added a preset, name %2%, path %3%, is_system %4%, is_default %5% is_external %6%")%Preset::get_type_string(m_type) %preset.name %preset.file %preset.is_system %preset.is_default %preset.is_external;
@@ -3729,6 +3788,26 @@ void PresetCollection::set_printer_hold_alias(const std::string &alias, Preset &
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << " " << " preset name : " << preset.name << " remove action: " << remove << " insert success: "
                                 << insert_success << " remove success: " << remove_success << " alias: " << alias;
     }
+}
+
+std::string PresetCollection::get_preset_alias(Preset &preset, bool force)
+{
+    if (!preset.alias.empty())
+        return preset.alias;
+    else
+        set_custom_preset_alias(preset);
+
+    if (!preset.alias.empty() || !force)
+        return preset.alias;
+
+    std::string alias_name;
+    std::string preset_name = preset.name;
+    size_t      end_pos     = preset_name.find_first_of("@");
+    if (end_pos != std::string::npos) {
+        alias_name = preset_name.substr(0, end_pos);
+        boost::trim_right(alias_name);
+    }
+    return alias_name;
 }
 
 std::string PresetCollection::name() const

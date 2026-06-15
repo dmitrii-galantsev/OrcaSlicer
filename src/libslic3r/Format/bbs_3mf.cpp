@@ -676,7 +676,7 @@ bool bbs_is_valid_object_type(const std::string& type)
 
 namespace Slic3r {
 
-void PlateData::parse_filament_info(GCodeProcessorResult *result)
+void PlateData::parse_filament_info(GCodeProcessorResult *result, const DynamicPrintConfig *config)
 {
     if (!result) return;
 
@@ -698,12 +698,39 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
         info.id = it->first;
         info.used_g = used_filament_g;
         info.used_m = used_filament_m;
+
+        if (result && result->nozzle_group_result) {
+            auto nozzles_for_filament = result->nozzle_group_result->get_nozzles_for_filament(it->first);
+            if (!nozzles_for_filament.empty()) {
+                info.group_id.reserve(nozzles_for_filament.size());
+                std::set<double> diameters;
+                std::set<NozzleVolumeType> volume_types;
+                for (const auto& nozzle : nozzles_for_filament) {
+                    info.group_id.emplace_back(nozzle.group_id);
+                    diameters.insert(string_to_double_decimal_point(nozzle.diameter.c_str()));
+                    volume_types.insert(nozzle.volume_type);
+                }
+                std::sort(info.group_id.begin(), info.group_id.end());
+                info.group_id.erase(std::unique(info.group_id.begin(), info.group_id.end()), info.group_id.end());
+                if (!diameters.empty())
+                    info.nozzle_diameter = *diameters.begin();
+                if (volume_types.size() > 1)
+                    info.nozzle_volume_type = get_nozzle_volume_type_string(nvtHybrid);
+                else if (!volume_types.empty())
+                    info.nozzle_volume_type = get_nozzle_volume_type_string(*volume_types.begin());
+            }
+        }
+
         auto model_volume_it = ps.model_volumes_per_extruder.find(it->first);
         auto support_volume_it = ps.support_volumes_per_extruder.find(it->first);
         info.used_for_object = model_volume_it != ps.model_volumes_per_extruder.end() && model_volume_it->second > EPSILON;
         info.used_for_support = support_volume_it != ps.support_volumes_per_extruder.end() && support_volume_it->second > EPSILON;
         slice_filaments_info.push_back(info);
     }
+
+    auto layered_group_result = std::dynamic_pointer_cast<MultiNozzleUtils::LayeredNozzleGroupResult>(result->nozzle_group_result);
+    if (layered_group_result)
+        nozzle_group_result = *layered_group_result;
 
     /* only for test
     GCodeProcessorResult::SliceWarning sw;
@@ -1282,6 +1309,9 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
         bool _handle_start_config_warning(const char** attributes, unsigned int num_attributes);
         bool _handle_end_config_warning();
 
+        bool _handle_start_config_nozzle(const char** attributes, unsigned int num_attributes);
+        bool _handle_end_config_nozzle();
+
         //BBS: add plater config parse functions
         bool _handle_start_config_plater(const char** attributes, unsigned int num_attributes);
         bool _handle_end_config_plater();
@@ -1619,6 +1649,9 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
             plate->slice_filaments_info = it->second->slice_filaments_info;
             plate->printer_model_id = it->second->printer_model_id;
             plate->nozzle_diameters = it->second->nozzle_diameters;
+            // H2C Vortek: Copy detailed nozzle info and volume types when updating plate data
+            plate->nozzles_info = it->second->nozzles_info;
+            plate->nozzle_volume_types = it->second->nozzle_volume_types;
             plate->filament_maps = it->second->filament_maps;
             plate->filament_change_sequence = it->second->filament_change_sequence;
             plate->nozzle_change_sequence = it->second->nozzle_change_sequence;
@@ -2291,6 +2324,9 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
             plate_data_list[it->first-1]->skipped_objects = it->second->skipped_objects;
             plate_data_list[it->first-1]->printer_model_id = it->second->printer_model_id;
             plate_data_list[it->first-1]->nozzle_diameters = it->second->nozzle_diameters;
+            // H2C Vortek: Copy detailed nozzle info and volume types for plate data list
+            plate_data_list[it->first-1]->nozzles_info = it->second->nozzles_info;
+            plate_data_list[it->first-1]->nozzle_volume_types = it->second->nozzle_volume_types;
             plate_data_list[it->first-1]->filament_maps = it->second->filament_maps;
             plate_data_list[it->first-1]->filament_change_sequence = it->second->filament_change_sequence;
             plate_data_list[it->first-1]->nozzle_change_sequence = it->second->nozzle_change_sequence;
@@ -3468,6 +3504,8 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
             res = _handle_start_config_filament(attributes, num_attributes);
         else if (::strcmp(SLICE_WARNING_TAG, name) == 0)
             res = _handle_start_config_warning(attributes, num_attributes);
+        else if (::strcmp(NOZZLE_TAG, name) == 0)
+            res = _handle_start_config_nozzle(attributes, num_attributes);
         else if (::strcmp(ASSEMBLE_TAG, name) == 0)
             res = _handle_start_assemble(attributes, num_attributes);
         else if (::strcmp(ASSEMBLE_ITEM_TAG, name) == 0)
@@ -3502,6 +3540,8 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
             res = _handle_end_config_plater();
         else if (::strcmp(FILAMENT_TAG, name) == 0)
             res = _handle_end_config_filament();
+        else if (::strcmp(NOZZLE_TAG, name) == 0)
+            res = _handle_end_config_nozzle();
         else if (::strcmp(INSTANCE_TAG, name) == 0)
             res = _handle_end_config_plater_instance();
         else if (::strcmp(ASSEMBLE_TAG, name) == 0)
@@ -4573,6 +4613,12 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
                 if (m_curr_plater)
                     m_curr_plater->nozzle_diameters = value;
             }
+            // H2C Vortek: Parse nozzle volume types from 3MF metadata
+            else if (key == NOZZLE_VOLUME_TYPE_ATTR)
+            {
+                if (m_curr_plater)
+                    m_curr_plater->nozzle_volume_types = value;
+            }
         }
 
         return true;
@@ -4640,6 +4686,41 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
     }
 
     bool _BBS_3MF_Importer::_handle_end_config_warning()
+    {
+        // do nothing
+        return true;
+    }
+
+    // H2C Vortek: Start processing <nozzle> tag during 3MF import. Extracts carousel nozzle parameters.
+    bool _BBS_3MF_Importer::_handle_start_config_nozzle(const char** attributes, unsigned int num_attributes)
+    {
+        if (m_curr_plater) {
+            // id="0" extruder_id="1" nozzle_diameter="0.4" volume_type="nvtNormal"
+            std::string id = bbs_get_attribute_value_string(attributes, num_attributes, "id");
+            std::string extruder_id = bbs_get_attribute_value_string(attributes, num_attributes, "extruder_id");
+            std::string nozzle_diameter = bbs_get_attribute_value_string(attributes, num_attributes, "nozzle_diameter");
+            std::string volume_type = bbs_get_attribute_value_string(attributes, num_attributes, "volume_type");
+
+            auto volume_type_str_to_enum = ConfigOptionEnum<NozzleVolumeType>::get_enum_values();
+
+            MultiNozzleUtils::NozzleInfo nozzle_info;
+            nozzle_info.group_id = atoi(id.c_str());
+            nozzle_info.extruder_id = atoi(extruder_id.c_str()) - 1;
+            nozzle_info.diameter = nozzle_diameter;
+
+            if (volume_type_str_to_enum.count(volume_type))
+                nozzle_info.volume_type = NozzleVolumeType(volume_type_str_to_enum.at(volume_type));
+            else {
+                nozzle_info.volume_type = NozzleVolumeType::nvtStandard;
+            }
+
+            m_curr_plater->nozzles_info.push_back(nozzle_info);
+        }
+        return true;
+    }
+
+    // H2C Vortek: End processing <nozzle> tag. No action required.
+    bool _BBS_3MF_Importer::_handle_end_config_nozzle()
     {
         // do nothing
         return true;
@@ -8118,7 +8199,14 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
                 [](unsigned int filament_id) { return filament_id + 1; });
 
             const std::string plate_key = "plate_" + std::to_string(idx + 1);
-            sequence_json[plate_key]["sequence"] = filament_sequence;
+
+            bool enable_dynamic_map = plate_data->nozzle_group_result && plate_data->nozzle_group_result->is_support_dynamic_nozzle_map();
+            std::string seq_key;
+            if (enable_dynamic_map)
+                seq_key = "filament_sequence";
+            else
+                seq_key = "sequence";
+            sequence_json[plate_key][seq_key] = filament_sequence;
             sequence_json[plate_key]["nozzle_sequence"] = plate_data->nozzle_change_sequence;
             sequence_json[plate_key]["optimal_assignment"] = plate_data->optimal_assignment;
         }
@@ -8198,7 +8286,10 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
                 stream << "    <" << METADATA_TAG << " " << KEY_ATTR << "=\"" << OUTSIDE_ATTR      << "\" " << VALUE_ATTR << "=\"" << std::boolalpha<< plate_data->toolpath_outside << "\"/>\n";
                 stream << "    <" << METADATA_TAG << " " << KEY_ATTR << "=\"" << SUPPORT_USED_ATTR << "\" " << VALUE_ATTR << "=\"" << std::boolalpha<< plate_data->is_support_used << "\"/>\n";
                 stream << "    <" << METADATA_TAG << " " << KEY_ATTR << "=\"" << LABEL_OBJECT_ENABLED_ATTR << "\" " << VALUE_ATTR << "=\"" << std::boolalpha<< plate_data->is_label_object_enabled << "\"/>\n";
-                stream << "    <" << METADATA_TAG << " " << KEY_ATTR << "=\"" << ENABLE_FILAMENT_DYNAMIC_MAP_ATTR << "\" " << VALUE_ATTR << "=\"" << std::boolalpha << false << "\"/>\n";
+                if (plate_data && plate_data->nozzle_group_result)
+                    stream << "    <" << METADATA_TAG << " " << KEY_ATTR << "=\"" << ENABLE_FILAMENT_DYNAMIC_MAP_ATTR << "\" " << VALUE_ATTR << "=\"" << std::boolalpha << plate_data->nozzle_group_result->is_support_dynamic_nozzle_map() << "\"/>\n";
+                else
+                    stream << "    <" << METADATA_TAG << " " << KEY_ATTR << "=\"" << ENABLE_FILAMENT_DYNAMIC_MAP_ATTR << "\" " << VALUE_ATTR << "=\"" << std::boolalpha << false << "\"/>\n";
                 {
                     bool has_filament_switcher = config.has("has_filament_switcher") ? config.opt_bool("has_filament_switcher") : false;
                     stream << "    <" << METADATA_TAG << " " << KEY_ATTR << "=\"" << HAS_FILAMENT_SWITCHER_ATTR << "\" " << VALUE_ATTR << "=\"" << std::boolalpha << has_filament_switcher << "\"/>\n";
@@ -8301,12 +8392,30 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
                     stream << "    <" << SLICE_WARNING_TAG << " msg=\"" << it->msg << "\" level=\"" << std::to_string(it->level) << "\" error_code =\"" << it->error_code << "\"  />\n";
                 }
 
-                for (int nozzle_group_id : used_nozzle_groups) {
-                    stream << "    <" << NOZZLE_TAG << " "
-                           << "id=\"" << nozzle_group_id << "\" "
-                           << "extruder_id=\"" << nozzle_group_id + 1 << "\" "
-                           << "nozzle_diameter=\"" << get_nozzle_diameter_str(nozzle_group_id) << "\" "
-                           << "volume_type=\"" << get_nozzle_volume_type(nozzle_group_id) << "\"/>\n";
+                if (plate_data->nozzle_group_result) {
+                    auto used_nozzle_list = plate_data->nozzle_group_result->get_used_nozzles_in_extruder();
+                    if(!used_nozzle_list.empty()){
+                        for(auto& used_nozzle: used_nozzle_list){
+                            stream <<"    <"<< NOZZLE_TAG <<" "<< used_nozzle.serialize() <<"/>\n";
+                        }
+                    }
+                } else if (!plate_data->nozzles_info.empty()) {
+                    // H2C Vortek: Write saved nozzle info to 3MF config file
+                    for (const auto& nozzle : plate_data->nozzles_info) {
+                        // extruder_id in nozzle struct is 0-indexed, serialize() prints extruder_id + 1.
+                        stream << "    <" << NOZZLE_TAG << " " << nozzle.serialize() << "/>\n";
+                    }
+                } else {
+                    for (int nozzle_group_id : used_nozzle_groups) {
+                        // H2C Vortek: Vortek/H2C carousel supports up to 6 nozzles, but has at most 2 physical extruders (carriages).
+                        // Clamp extruder_id to 2 to avoid generating incorrect IDs (3, 4, etc.).
+                        int ext_id = std::min(nozzle_group_id + 1, 2);
+                        stream << "    <" << NOZZLE_TAG << " "
+                               << "id=\"" << nozzle_group_id << "\" "
+                               << "extruder_id=\"" << ext_id << "\" "
+                               << "nozzle_diameter=\"" << get_nozzle_diameter_str(nozzle_group_id) << "\" "
+                               << "volume_type=\"" << get_nozzle_volume_type(nozzle_group_id) << "\"/>\n";
+                    }
                 }
 
                 if (!plate_data->layer_filaments.empty()) {

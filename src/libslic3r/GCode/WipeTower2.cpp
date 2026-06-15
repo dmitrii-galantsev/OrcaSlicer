@@ -1330,8 +1330,8 @@ WipeTower2::WipeTower2(const PrintConfig& config, const PrintRegionConfig& defau
 
 void WipeTower2::set_extruder(size_t idx, const PrintConfig& config)
 {
-    //while (m_filpar.size() < idx+1)   // makes sure the required element is in the vector
-    m_filpar.push_back(FilamentParameters());
+    if (m_filpar.size() < idx+1)   // makes sure the required element is in the vector
+        m_filpar.resize(idx+1);
 
     m_filpar[idx].material = config.filament_type.get_at(idx);
     if (m_wipe_tower_filament > 0)
@@ -1920,7 +1920,7 @@ void WipeTower2::toolchange_Wipe(
 {
 	// Increase flow on first layer, slow down print.
     writer.set_extrusion_flow(m_extrusion_flow * (is_first_layer() ? 1.18f : 1.f))
-		  .append("; CP TOOLCHANGE WIPE\n");
+		  .append("; CP_TOOLCHANGE_WIPE CT0 FL" + std::to_string(is_first_layer() ? 1 : 0) + "\n");
 	const float& xl = cleaning_box.ld.x();
 	const float& xr = cleaning_box.rd.x();
 
@@ -2044,8 +2044,6 @@ WipeTower::ToolChangeResult WipeTower2::finish_layer()
     if (dy > m_perimeter_width)
     {
         writer.travel(fill_box.ld + Vec2f(m_perimeter_width * 2, 0.f))
-            .append(";--------------------\n"
-                    "; CP EMPTY GRID START\n")
             .comment_with_value(" layer #", m_num_layer_changes + 1);
 
         // Is there a soluble filament wiped/rammed at the next layer?
@@ -2090,8 +2088,7 @@ WipeTower::ToolChangeResult WipeTower2::finish_layer()
             }
         }
 
-        writer.append("; CP EMPTY GRID END\n"
-                      ";------------------\n\n\n\n\n\n\n");
+        writer.append("\n\n\n\n\n\n\n");
     }
 
     const float spacing = m_perimeter_width - m_layer_height*float(1.-M_PI_4);

@@ -1,3 +1,15 @@
+
+            // context.filament_nozzle_temp,
+            // context.extruder_max_nozzle_count,
+            // context.filament_cooling_before_tower,
+
+            //    float complete_free_time_gap = 0; // time of complete free
+    // if (move_iter_lower == moves.begin())
+    //     complete_free_time_gap = move_iter_upper->time[valid_machine_id];
+    // else
+    //     complete_free_time_gap = move_iter_upper->time[valid_machine_id] - std::prev(move_iter_lower)->time[valid_machine_id];
+
+
 #include "ExtrusionEntity.hpp"
 #include "GCodeWriter.hpp"
 #include "PrintConfig.hpp"
@@ -8,6 +20,7 @@
 #include "libslic3r/LocalesUtils.hpp"
 #include "libslic3r/format.hpp"
 #include "GCodeProcessor.hpp"
+#include "libslic3r/VortekPreCooling.hpp"
 
 #include <boost/log/trivial.hpp>
 #include <boost/algorithm/string/predicate.hpp>
@@ -21,6 +34,7 @@
 #include <float.h>
 #include <assert.h>
 #include <regex>
+#include <sstream>
 #include <charconv>
 #include <string>
 #include <system_error>
@@ -75,7 +89,15 @@ const std::vector<std::string> GCodeProcessor::Reserved_Tags = {
     " WIPE_TOWER_END",
     " PA_CHANGE:",
     "@PRINT_TIME_SEC@",
-    "@USED_FILAMENT_LENGTH@"
+    "@USED_FILAMENT_LENGTH@",
+    // H2C FIX: Tag strings for NozzleChangeStart/End. These MUST match the ETags enum
+    // order exactly (index 20, 21). WipeTower emits them as:
+    //   "; NOZZLE_CHANGE_START OF{old_filament} NF{new_filament}\n"
+    //   "; NOZZLE_CHANGE_END   OF{old_filament} NF{new_filament}\n"
+    // BBL's ramming() also adds ON{old_nozzle} NN{new_nozzle} (not yet ported).
+    // Ref: BambuStudio GCodeProcessor.cpp:70-71 (commit 3f2570c)
+    " NOZZLE_CHANGE_START",
+    " NOZZLE_CHANGE_END"
 };
 
 const std::vector<std::string> GCodeProcessor::Reserved_Tags_compatible = {
@@ -98,7 +120,11 @@ const std::vector<std::string> GCodeProcessor::Reserved_Tags_compatible = {
     " WIPE_TOWER_END",
     " PA_CHANGE:",
     "@PRINT_TIME_SEC@",
-    "@USED_FILAMENT_LENGTH@"
+    "@USED_FILAMENT_LENGTH@",
+    // H2C FIX: Same tags for non-BBL (compatible) printers.
+    // Ref: BambuStudio GCodeProcessor.cpp:93-94 (commit 3f2570c)
+    " NOZZLE_CHANGE_START",
+    " NOZZLE_CHANGE_END"
 };
 
 
@@ -310,6 +336,7 @@ void GCodeProcessor::TimeMachine::reset()
     g1_times_cache = std::vector<G1LinesCacheItem>();
     first_layer_time = 0.0f;
     prepare_time = 0.0f;
+    m_additional_time_buffer.clear();
 }
 
 static void planner_forward_pass_kernel(const GCodeProcessor::TimeBlock& prev, GCodeProcessor::TimeBlock& curr)
@@ -395,12 +422,44 @@ static void recalculate_trapezoids(std::vector<GCodeProcessor::TimeBlock>& block
     }
 }
 
-void GCodeProcessor::TimeMachine::calculate_time(GCodeProcessorResult& result, PrintEstimatedStatistics::ETimeMode mode, size_t keep_last_n_blocks, float additional_time)
+GCodeProcessor::TimeMachine::AdditionalBuffer GCodeProcessor::TimeMachine::merge_adjacent_addtional_time_blocks(const AdditionalBuffer& buffer)
 {
-    if (!enabled || blocks.size() < 2)
+    AdditionalBuffer merged;
+    if (buffer.empty())
+        return merged;
+
+    auto current_block = buffer.front();
+    for (size_t idx = 1; idx < buffer.size(); ++idx) {
+        auto next_block = buffer[idx];
+        if (current_block.first == next_block.first) {
+            current_block.second += next_block.second;
+        } else {
+            merged.push_back(current_block);
+            current_block = next_block;
+        }
+    }
+    merged.push_back(current_block);
+    return merged;
+}
+
+void GCodeProcessor::TimeMachine::calculate_time(GCodeProcessorResult& result, PrintEstimatedStatistics::ETimeMode mode, size_t keep_last_n_blocks, float additional_time, ExtrusionRole target_role)
+{
+    if (!enabled)
         return;
 
+    if (blocks.size() < 2) {
+        if (additional_time > 0.0f) {
+            m_additional_time_buffer.emplace_back(target_role, additional_time);
+        }
+        return;
+    }
+
     assert(keep_last_n_blocks <= blocks.size());
+
+    AdditionalBuffer additional_buffer = m_additional_time_buffer;
+    if (additional_time > 0.0f)
+        additional_buffer.emplace_back(target_role, additional_time);
+    additional_buffer = merge_adjacent_addtional_time_blocks(additional_buffer);
 
     // reverse_pass
     for (int i = static_cast<int>(blocks.size()) - 1; i > 0; --i) {
@@ -415,11 +474,22 @@ void GCodeProcessor::TimeMachine::calculate_time(GCodeProcessorResult& result, P
     recalculate_trapezoids(blocks);
 
     const size_t n_blocks_process = blocks.size() - keep_last_n_blocks;
+    size_t additional_buffer_idx = 0;
+
     for (size_t i = 0; i < n_blocks_process; ++i) {
         const TimeBlock& block = blocks[i];
         float block_time = block.time();
-        if (i == 0)
-            block_time += additional_time;
+
+        if (additional_buffer_idx < additional_buffer.size()) {
+            ExtrusionRole buf_role = additional_buffer[additional_buffer_idx].first;
+            float buf_time = additional_buffer[additional_buffer_idx].second;
+            bool is_valid_block = (buf_role == ExtrusionRole::erNone) ||
+                                  (buf_role == block.role);
+            if (is_valid_block) {
+                block_time += buf_time;
+                additional_buffer_idx += 1;
+            }
+        }
 
         time += double(block_time);
         result.moves[block.move_id].time[static_cast<size_t>(mode)] = block_time;
@@ -532,6 +602,11 @@ void GCodeProcessor::TimeMachine::calculate_time(GCodeProcessorResult& result, P
             it_stop_time->elapsed_time = float(time);
     }
 
+    m_additional_time_buffer.clear();
+    if (additional_buffer_idx < additional_buffer.size()) {
+        m_additional_time_buffer.insert(m_additional_time_buffer.end(), additional_buffer.begin() + additional_buffer_idx, additional_buffer.end());
+    }
+
     if (keep_last_n_blocks) {
         blocks.erase(blocks.begin(), blocks.begin() + n_blocks_process);
 
@@ -556,6 +631,9 @@ void GCodeProcessor::TimeProcessor::reset()
     filament_load_times = 0.0f;
     filament_unload_times = 0.0f;
     machine_tool_change_time = 0.0f;
+    hotend_change_times = 0.0f;
+    // Reset G29 bed-leveling compensation time to default
+    machine_prepare_compensation_time = 260.0f;
 
 
     for (size_t i = 0; i < static_cast<size_t>(PrintEstimatedStatistics::ETimeMode::Count); ++i) {
@@ -1160,6 +1238,10 @@ void GCodeProcessor::run_post_process()
     for (const auto& machine : m_time_processor.machines)
         g1_times_cache_it.emplace_back(machine.g1_times_cache.begin());
 
+    // Track elapsed time of last forced M73 output per mode, to ensure periodic updates
+    std::array<float, static_cast<size_t>(PrintEstimatedStatistics::ETimeMode::Count)> last_forced_m73_time;
+    last_forced_m73_time.fill(0.0f);
+
     // add lines M73 to exported gcode
     auto process_line_move = [
         // Lambdas, mostly for string formatting, all with an empty capture block.
@@ -1167,6 +1249,7 @@ void GCodeProcessor::run_post_process()
         &self = std::as_const(m_time_processor),
         // Caches, to be modified
         &g1_times_cache_it, &last_exported_main, &last_exported_stop,
+        &last_forced_m73_time,
         // String output
         &export_line]
         (const size_t g1_lines_counter) {
@@ -1182,10 +1265,17 @@ void GCodeProcessor::run_post_process()
                     std::pair<int, int> to_export_main = { int(100.0f * it->elapsed_time / machine.time),
                                                             time_in_minutes(machine.time - it->elapsed_time) };
 
-                    if (last_exported_main[i] != to_export_main) {
+                    // Force M73 output at least every 10 seconds of estimated time
+                    // to prevent firmware from showing stale progress on fast sections.
+                    // Even if the integer-rounded (percent, remaining_minutes) pair hasn't
+                    // changed, firmware needs regular M73 to update its internal timer.
+                    bool force_update = (it->elapsed_time - last_forced_m73_time[i]) >= 10.0f;
+
+                    if (last_exported_main[i] != to_export_main || force_update) {
                         export_line.append_line(format_line_M73_main(machine.line_m73_main_mask.c_str(),
                             to_export_main.first, to_export_main.second), true);
                         last_exported_main[i] = to_export_main;
+                        last_forced_m73_time[i] = it->elapsed_time;
                     }
                     // export remaining time to next printer stop
                     auto it_stop = std::upper_bound(machine.stop_times.begin(), machine.stop_times.end(), it->elapsed_time,
@@ -1320,6 +1410,20 @@ void GCodeProcessor::run_post_process()
         }
     };
 
+    // =========================================================================
+    // H2C PreCooling: Pre-scan phase using Vortek::PreCooling
+    // Scans gcode to build filament/extruder usage blocks, creates PreCooling,
+    // generates InsertedLinesMap (M104 commands to inject).
+    // BBL parity: BambuStudio GCodeProcessor.cpp:948-1191 (commit 3f2570c)
+    // =========================================================================
+    TimeProcessor::InsertedLinesMap precooling_inserted_lines;
+
+    if (m_enable_pre_heating && m_nozzle_group_result) {
+        precooling_inserted_lines = Vortek::PreCooling::run_pre_scan(*this, in.f);
+    }
+
+    auto precooling_iter = precooling_inserted_lines.begin();
+
     m_result.lines_ends.clear();
     // m_result.lines_ends.emplace_back(std::vector<size_t>());
 
@@ -1410,6 +1514,16 @@ void GCodeProcessor::run_post_process()
 
                     if (!gcode_line.empty())
                         export_line.append_line(gcode_line);
+
+                    // H2C PreCooling: inject M104 using Vortek::PreCooling::inject_lines
+                    Vortek::PreCooling::inject_lines(
+                        precooling_iter,
+                        precooling_inserted_lines,
+                        m_enable_pre_heating,
+                        line_id,
+                        [&export_line](const std::string& line) { export_line.append_line(line); }
+                    );
+
                     export_line.write(out, 1.1f * max_backtrace_time, m_result, out_path);
                     gcode_line.clear();
                 }
@@ -1488,48 +1602,56 @@ void GCodeProcessor::UsedFilaments::process_color_change_cache()
 
 void GCodeProcessor::UsedFilaments::process_total_volume_cache(GCodeProcessor* processor)
 {
-    size_t active_filament_id = processor->get_filament_id();
+    int active_filament_id = processor->get_filament_id();
     if (total_volume_cache!= 0.0f) {
+        if(active_filament_id != -1){
         if (total_volumes_per_filament.find(active_filament_id) != total_volumes_per_filament.end())
             total_volumes_per_filament[active_filament_id] += total_volume_cache;
         else
             total_volumes_per_filament[active_filament_id] = total_volume_cache;
+        }
         total_volume_cache = 0.0f;
     }
 }
 
 void GCodeProcessor::UsedFilaments::process_model_cache(GCodeProcessor* processor)
 {
-    size_t active_filament_id = processor->get_filament_id();
+    int active_filament_id = processor->get_filament_id();
     if (model_extrude_cache != 0.0f) {
+        if(active_filament_id != -1){
         if (model_volumes_per_filament.find(active_filament_id) != model_volumes_per_filament.end())
             model_volumes_per_filament[active_filament_id] += model_extrude_cache;
         else
             model_volumes_per_filament[active_filament_id] = model_extrude_cache;
+        }
         model_extrude_cache = 0.0f;
     }
 }
 
 void GCodeProcessor::UsedFilaments::process_wipe_tower_cache(GCodeProcessor* processor)
 {
-    size_t active_filament_id = processor->get_filament_id();
+    int active_filament_id = processor->get_filament_id();
     if (wipe_tower_cache != 0.0f) {
+        if(active_filament_id != -1){
         if (wipe_tower_volumes_per_filament.find(active_filament_id) != wipe_tower_volumes_per_filament.end())
             wipe_tower_volumes_per_filament[active_filament_id] += wipe_tower_cache;
         else
             wipe_tower_volumes_per_filament[active_filament_id] = wipe_tower_cache;
+        }
         wipe_tower_cache = 0.0f;
     }
 }
 
 void GCodeProcessor::UsedFilaments::process_support_cache(GCodeProcessor* processor)
 {
-    size_t active_filament_id = processor->get_filament_id();
+    int active_filament_id = processor->get_filament_id(false);
     if (support_volume_cache != 0.0f){
+        if(active_filament_id != -1){
         if (support_volumes_per_filament.find(active_filament_id) != support_volumes_per_filament.end())
             support_volumes_per_filament[active_filament_id] += support_volume_cache;
         else
             support_volumes_per_filament[active_filament_id] = support_volume_cache;
+        }
         support_volume_cache = 0.0f;
     }
 }
@@ -1611,6 +1733,7 @@ void GCodeProcessorResult::reset() {
     nozzle_change_sequence.clear();
     optimal_assignment.clear();
     filament_change_count_map.clear();
+    filament_change_sequence.clear();
     warnings.clear();
 
     //BBS: add mutex for protection of gcode result
@@ -1863,7 +1986,9 @@ bool GCodeProcessor::check_multi_extruder_gcode_valid(const int                 
         int                                object_label_id = obj_iter->first;
         const std::map<int, GCodePosInfo> &path_pos        = obj_iter->second;
         for (auto iter = path_pos.begin(); iter != path_pos.end(); ++iter) {
+            if (iter->first < 0 || iter->first >= (int)filament_map.size()) continue;
             int extruder_id = filament_map[iter->first] - 1;
+            if (extruder_id < 0 || extruder_id >= extruder_size) continue;
             Points iter_points;//temp points
             iter_points.insert(iter_points.end(), iter->second.pos.begin(), iter->second.pos.end());// put object/wipetower extrude position in
             Polygon     path_poly(iter_points);
@@ -1926,7 +2051,8 @@ bool GCodeProcessor::check_multi_extruder_gcode_valid(const int                 
                     filament_to_object_id.first  = iter->first;
                     filament_to_object_id.second = object_label_id;
                     m_result.gcode_check_result.print_height_error_infos[extruder_id].push_back(filament_to_object_id);
-                    m_result.limit_filament_maps[iter->first] |= (1 << extruder_id);
+                    if (iter->first >= 0 && iter->first < (int)m_result.limit_filament_maps.size())
+                        m_result.limit_filament_maps[iter->first] |= (1 << extruder_id);
                     valid = false;
                 }
 
@@ -1935,7 +2061,8 @@ bool GCodeProcessor::check_multi_extruder_gcode_valid(const int                 
                         poly.translate(plate_offset);
                         if (!poly.bounding_box().overlap(bbox)) continue;
 
-                        m_result.limit_filament_maps[iter->first] |= (1 << i);
+                        if (iter->first >= 0 && iter->first < (int)m_result.limit_filament_maps.size())
+                            m_result.limit_filament_maps[iter->first] |= (1 << i);
                     }
                 }
             }
@@ -1946,7 +2073,8 @@ bool GCodeProcessor::check_multi_extruder_gcode_valid(const int                 
     for (int extruder_id = 0; extruder_id < unprintable_filament_types.size(); ++extruder_id) {
         const std::set<int> &filament_ids = unprintable_filament_types[extruder_id];
         for (int filament_id : filament_ids) {
-            m_result.limit_filament_maps[filament_id] |= (1 << extruder_id);
+            if (filament_id >= 0 && filament_id < (int)m_result.limit_filament_maps.size())
+                m_result.limit_filament_maps[filament_id] |= (1 << extruder_id);
         }
     };
 
@@ -1955,6 +2083,8 @@ bool GCodeProcessor::check_multi_extruder_gcode_valid(const int                 
 
 void GCodeProcessor::apply_config(const PrintConfig& config)
 {
+    // H2C Vortek: Store printer model name for model-specific G-code processing
+    m_printer_model = config.printer_model.value;
     m_parser.apply_config(config);
 
     m_flavor = config.gcode_flavor;
@@ -1973,12 +2103,17 @@ void GCodeProcessor::apply_config(const PrintConfig& config)
         m_preheat_steps = 1;
     m_result.backtrace_enabled = config.ooze_prevention && m_preheat_time > 0 && (m_is_XL_printer || (!m_single_extruder_multi_material && filament_count > 1));
 
-    assert(config.nozzle_volume.size() == config.nozzle_diameter.size());
+    //assert(config.nozzle_volume.size() == config.nozzle_diameter.size());
     m_nozzle_volume.resize(config.nozzle_volume.size());
     for (size_t idx = 0; idx < config.nozzle_volume.size(); ++idx)
         m_nozzle_volume[idx] = config.nozzle_volume.values[idx];
 
     m_physical_extruder_map = config.physical_extruder_map.values;
+    m_extruder_max_nozzle_count = config.extruder_max_nozzle_count.values;
+    m_filament_cooling_before_tower = config.filament_cooling_before_tower.values;
+
+    // H2C PreCooling config using Vortek::PreCooling::apply_config
+    Vortek::PreCooling::apply_config(config, filament_count, *this);
 
     m_extruder_offsets.resize(filament_count);
     m_extruder_colors.resize(filament_count);
@@ -2021,6 +2156,7 @@ void GCodeProcessor::apply_config(const PrintConfig& config)
         if (m_flavor == gcfMarlinLegacy || m_flavor == gcfKlipper) {
             // Legacy Marlin does not have separate travel acceleration, it uses the 'extruding' value instead.
             m_time_processor.machine_limits.machine_max_acceleration_travel = m_time_processor.machine_limits.machine_max_acceleration_extruding;
+    m_time_processor.hotend_change_times = static_cast<float>(config.machine_hotend_change_time.value);
         }
         if (m_flavor == gcfRepRapFirmware) {
             // RRF does not support setting min feedrates. Set them to zero.
@@ -2035,6 +2171,8 @@ void GCodeProcessor::apply_config(const PrintConfig& config)
     m_time_processor.filament_load_times = static_cast<float>(config.machine_load_filament_time.value);
     m_time_processor.filament_unload_times = static_cast<float>(config.machine_unload_filament_time.value);
     m_time_processor.machine_tool_change_time = static_cast<float>(config.machine_tool_change_time.value);
+    // Read G29 bed-leveling time from machine profile (replaces hardcoded 260s)
+    m_time_processor.machine_prepare_compensation_time = static_cast<float>(config.machine_prepare_compensation_time.value);
 
     for (size_t i = 0; i < static_cast<size_t>(PrintEstimatedStatistics::ETimeMode::Count); ++i) {
         float max_acceleration = get_option_value(m_time_processor.machine_limits.machine_max_acceleration_extruding, i);
@@ -2066,6 +2204,8 @@ void GCodeProcessor::apply_config(const PrintConfig& config)
         m_filament_maps = filament_maps->values;
         std::transform(m_filament_maps.begin(), m_filament_maps.end(), m_filament_maps.begin(), [](int value) {return value - 1; });
     }
+    // H2C TODO
+    // = config.filament_map_2.values;
 
     const ConfigOptionBool* spiral_vase = config.option<ConfigOptionBool>("spiral_mode");
     if (spiral_vase != nullptr) {
@@ -2089,6 +2229,11 @@ void GCodeProcessor::apply_config(const PrintConfig& config)
 
 void GCodeProcessor::apply_config(const DynamicPrintConfig& config)
 {
+    // H2C Vortek: Store printer model name from dynamic configuration
+    const ConfigOptionString* printer_model = config.option<ConfigOptionString>("printer_model");
+    if (printer_model != nullptr) {
+        m_printer_model = printer_model->value;
+    }
     m_parser.apply_config(config);
 
     //BBS
@@ -2101,6 +2246,16 @@ void GCodeProcessor::apply_config(const DynamicPrintConfig& config)
 
     const ConfigOptionInt *nozzle_HRC = config.option<ConfigOptionInt>("nozzle_hrc");
     if (nozzle_HRC != nullptr) m_result.nozzle_hrc = nozzle_HRC->value;
+
+    const ConfigOptionIntsNullable* extruder_max_nozzle_count = config.option<ConfigOptionIntsNullable>("extruder_max_nozzle_count");
+    if(extruder_max_nozzle_count != nullptr){
+        m_extruder_max_nozzle_count = extruder_max_nozzle_count->values;
+    }
+
+    const ConfigOptionFloatsNullable* filament_cooling_before_tower = config.option<ConfigOptionFloatsNullable>("filament_cooling_before_tower");
+    if (filament_cooling_before_tower != nullptr) {
+        m_filament_cooling_before_tower = filament_cooling_before_tower->values;
+    }
 
     const ConfigOptionInts* physical_extruder_map = config.option<ConfigOptionInts>("physical_extruder_map");
     if (physical_extruder_map != nullptr) {
@@ -2195,6 +2350,12 @@ void GCodeProcessor::apply_config(const DynamicPrintConfig& config)
         std::transform(m_filament_maps.begin(), m_filament_maps.end(), m_filament_maps.begin(), [](int value) {return value - 1; });
     }
 
+    auto config_idx_for_filament = config.option<ConfigOptionInts>("filament_map_2");
+    // H2C TODO
+    // if (config_idx_for_filament != nullptr){
+    //     m_config_idx_for_filament = config_idx_for_filament->values;
+    // }
+
     //BBS
     const ConfigOptionFloats* filament_costs = config.option<ConfigOptionFloats>("filament_cost");
     if (filament_costs != nullptr) {
@@ -2287,6 +2448,15 @@ void GCodeProcessor::apply_config(const DynamicPrintConfig& config)
     const ConfigOptionFloat* machine_tool_change_time = config.option<ConfigOptionFloat>("machine_tool_change_time");
     if (machine_tool_change_time != nullptr)
         m_time_processor.machine_tool_change_time = static_cast<float>(machine_tool_change_time->value);
+
+    const ConfigOptionFloat* machine_hotend_change_time = config.option<ConfigOptionFloat>("machine_hotend_change_time");
+    if(machine_hotend_change_time != nullptr)
+        m_time_processor.hotend_change_times = static_cast<float>(machine_hotend_change_time->value);
+
+    // Read G29 bed-leveling time from machine profile (guard for missing key)
+    const ConfigOptionFloat* machine_prepare_compensation_time = config.option<ConfigOptionFloat>("machine_prepare_compensation_time");
+    if (machine_prepare_compensation_time != nullptr)
+        m_time_processor.machine_prepare_compensation_time = static_cast<float>(machine_prepare_compensation_time->value);
 
     if (m_flavor == gcfMarlinLegacy || m_flavor == gcfMarlinFirmware || m_flavor == gcfKlipper) {
         const ConfigOptionFloats* machine_max_acceleration_x = config.option<ConfigOptionFloats>("machine_max_acceleration_x");
@@ -2424,6 +2594,8 @@ void GCodeProcessor::enable_stealth_time_estimator(bool enabled)
 
 void GCodeProcessor::reset()
 {
+    // H2C Vortek: Reset printer model name
+    m_printer_model.clear();
     m_units = EUnits::Millimeters;
     m_global_positioning_type = EPositioningType::Absolute;
     m_e_local_positioning_type = EPositioningType::Absolute;
@@ -2604,6 +2776,14 @@ void GCodeProcessor::initialize(const std::string& filename)
     m_result.filename = filename;
     m_result.id = ++s_result_id;
 }
+
+
+void GCodeProcessor::initialize_from_context(const MultiNozzleUtils::LayeredNozzleGroupResult& nozzle_group_result)
+{
+    m_nozzle_group_result = std::make_shared<MultiNozzleUtils::LayeredNozzleGroupResult>(nozzle_group_result);
+    m_result.nozzle_group_result = m_nozzle_group_result;
+}
+
 
 void GCodeProcessor::process_buffer(const std::string &buffer)
 {
@@ -2813,6 +2993,7 @@ void GCodeProcessor::process_gcode_line(const GCodeReader::GCodeLine& line, bool
 
     ++m_line_id;
 
+
     // update start position
     m_start_position = m_end_position;
 
@@ -2916,7 +3097,8 @@ bool GCodeProcessor::get_last_z_from_gcode(const std::string& gcode_str, double&
             if (line_str.size() > 4 && (line_str.find("G0 ") == 0
                                        || line_str.find("G1 ") == 0
                                        || line_str.find("G2 ") == 0
-                                       || line_str.find("G3 ") == 0))
+                                       || line_str.find("G3 ") == 0
+                                       || line_str.find("M9711 ") == 0))
             {
                 auto z_pos = line_str.find(" Z");
                 double temp_z = 0;
@@ -2949,10 +3131,22 @@ bool GCodeProcessor::get_last_z_from_gcode(const std::string& gcode_str, double&
 
 bool GCodeProcessor::get_last_position_from_gcode(const std::string &gcode_str, Vec3f &pos)
 {
+    auto parse_G387 = [](const std::string &line_str) {
+        if (line_str.find("G387 ") != 0) return 0;
+        if (line_str.find("J1") != std::string::npos) {
+            return -1;//min
+        } else if (line_str.find("J-1") != std::string::npos) {
+            return 1;//max
+        }
+        return 0;
+    };
+
     int  str_size     = gcode_str.size();
     int  start_index  = 0;
     int  end_index    = 0;
     bool is_z_changed = false;
+    Vec3f pre_pos(0, 0, 0);
+    Vec3i32 pre_pos_valid(0,0,0);
     while (end_index < str_size) {
         // find a full line
         if (gcode_str[end_index] != '\n') {
@@ -2967,7 +3161,9 @@ bool GCodeProcessor::get_last_position_from_gcode(const std::string &gcode_str, 
             line_str.erase(line_str.find_last_not_of(" ") + 1);
 
             // command which may have z movement
-            if (line_str.size() > 5 && (line_str.find("G0 ") == 0 || line_str.find("G1 ") == 0 || line_str.find("G2 ") == 0 || line_str.find("G3 ") == 0)) {
+            if (line_str.size() > 5 &&
+                (line_str.find("G0 ") == 0 || line_str.find("G1 ") == 0 || line_str.find("G2 ") == 0 || line_str.find("G3 ") == 0 || line_str.find("G387 ") == 0)) {
+                    int g387_j = parse_G387(line_str);
                 {
                     float &x      = pos.x();
                     auto   z_pos  = line_str.find(" X");
@@ -2985,6 +3181,11 @@ bool GCodeProcessor::get_last_position_from_gcode(const std::string &gcode_str, 
                             // The axis value has been parsed correctly.
                             x            = temp_z;
                             is_z_changed = true;
+                            if (g387_j != 0 && pre_pos_valid.x() != 0) {
+                                x = g387_j ==-1 ? std::min(pre_pos.x(), x) : std::max(pre_pos.x(), x);
+                            }
+                            pre_pos.x() = x;
+                            pre_pos_valid.x() = 1;
                         }
                     }
                 }
@@ -3006,6 +3207,9 @@ bool GCodeProcessor::get_last_position_from_gcode(const std::string &gcode_str, 
                             // The axis value has been parsed correctly.
                             y            = temp_z;
                             is_z_changed = true;
+                            if (g387_j != 0 && pre_pos_valid.y() != 0) { y = g387_j == -1 ? std::min(pre_pos.y(), y) : std::max(pre_pos.y(), y); }
+                            pre_pos.y() = y;
+                            pre_pos_valid.y() = 1;
                         }
                     }
                 }
@@ -3027,6 +3231,9 @@ bool GCodeProcessor::get_last_position_from_gcode(const std::string &gcode_str, 
                             // The axis value has been parsed correctly.
                             z            = temp_z;
                             is_z_changed = true;
+                            if (g387_j != 0 && pre_pos_valid.z()!=0) { z = g387_j == -1 ? std::min(pre_pos.z(), z) : std::max(pre_pos.z(), z); }
+                            pre_pos.z()       = z;
+                            pre_pos_valid.z() = 1;
                         }
                     }
                 }
@@ -3755,7 +3962,7 @@ void GCodeProcessor::process_G1(const std::array<std::optional<double>, 4>& axes
     G1DiscretizationOrigin origin, const std::optional<unsigned int>& remaining_internal_g1_lines)
 {
     int filament_id = get_filament_id();
-    int last_filament_id = get_last_filament_id();
+    int last_filament_id = get_last_filament_id(false);
     float filament_diameter = (static_cast<size_t>(filament_id) < m_result.filament_diameters.size()) ? m_result.filament_diameters[filament_id] : m_result.filament_diameters.back();
     float filament_radius = 0.5f * filament_diameter;
     float area_filament_cross_section = static_cast<float>(M_PI) * sqr(filament_radius);
@@ -3880,10 +4087,12 @@ void GCodeProcessor::process_G1(const std::array<std::optional<double>, 4>& axes
         float volume_flushed_filament = area_filament_cross_section * delta_pos[E];
         if (m_remaining_volume[extruder_id] > volume_flushed_filament)
         {
+            if (last_filament_id != -1)
             m_used_filaments.update_flush_per_filament(last_filament_id, volume_flushed_filament);
             m_remaining_volume[extruder_id] -= volume_flushed_filament;
         }
         else {
+            if (last_filament_id != -1)
             m_used_filaments.update_flush_per_filament(last_filament_id, m_remaining_volume[extruder_id]);
             m_used_filaments.update_flush_per_filament(filament_id, volume_flushed_filament - m_remaining_volume[extruder_id]);
             m_remaining_volume[extruder_id] = 0.f;
@@ -4166,7 +4375,7 @@ void GCodeProcessor::process_G1(const std::array<std::optional<double>, 4>& axes
 void GCodeProcessor::process_VG1(const GCodeReader::GCodeLine& line)
 {
     int filament_id = get_filament_id();
-    int last_filament_id = get_last_filament_id();
+    int last_filament_id = get_last_filament_id(false);
     float filament_diameter = (static_cast<size_t>(filament_id) < m_result.filament_diameters.size()) ? m_result.filament_diameters[filament_id] : m_result.filament_diameters.back();
     float filament_radius = 0.5f * filament_diameter;
     float area_filament_cross_section = static_cast<float>(M_PI) * sqr(filament_radius);
@@ -4237,10 +4446,12 @@ void GCodeProcessor::process_VG1(const GCodeReader::GCodeLine& line)
         float volume_flushed_filament = area_filament_cross_section * delta_pos[E];
         if (m_remaining_volume[extruder_id] > volume_flushed_filament)
         {
+            if (last_filament_id != -1)
             m_used_filaments.update_flush_per_filament(last_filament_id, volume_flushed_filament);
             m_remaining_volume[extruder_id] -= volume_flushed_filament;
         }
         else {
+            if (last_filament_id != -1)
             m_used_filaments.update_flush_per_filament(last_filament_id, m_remaining_volume[extruder_id]);
             m_used_filaments.update_flush_per_filament(filament_id, volume_flushed_filament - m_remaining_volume[extruder_id]);
             m_remaining_volume[extruder_id] = 0.f;
@@ -4787,9 +4998,15 @@ void GCodeProcessor::process_G4(const GCodeReader::GCodeLine& line)
 //BBS
 void GCodeProcessor::process_G29(const GCodeReader::GCodeLine& line)
 {
+    // Use machine_prepare_compensation_time from config instead of hardcoded 260s.
+    // JSON profiles already carry per-machine values (fdm_machine_common=260, P2S=370).
+    // H2C can override with a lower value (~30-60s) for its faster bed leveling.
+    /* ORIGINAL:
     //BBS: hardcode 260 seconds for G29
     //Todo: use a machine related setting when we have second kind of BBL printer
     const float value_s = 260.0;
+    */
+    const float value_s = m_time_processor.machine_prepare_compensation_time;
     if (s_IsBBLPrinter){
         if(m_measure_g29_time)
             simulate_st_synchronize(value_s);
@@ -5359,46 +5576,76 @@ void GCodeProcessor::process_M702(const GCodeReader::GCodeLine& line)
 void GCodeProcessor::process_SYNC(const GCodeReader::GCodeLine& line)
 {
     float time = 0;
-    if (line.has_value('T', time) ) {
-        simulate_st_synchronize(time);
+    float time_role = 0;
+    int   time_role_int = 0;
+    if (line.has_value('R', time_role)) {
+        time_role_int = static_cast<int>(std::round(time_role));
+    } else {
+        time_role_int = 1; // Compatible with older G-code: no 'R' → flush
+    }
+    if (line.has_value('T', time)) {
+        // BBL parity: role 1 = flush time, role 0 = prepare time (none)
+        if (time_role_int == 1)
+            simulate_st_synchronize(time, ExtrusionRole::erWipeTower);
+        else
+            simulate_st_synchronize(time, ExtrusionRole::erNone);
     }
 }
 
 
 void GCodeProcessor::process_T(const GCodeReader::GCodeLine& line)
 {
-    process_T(line.cmd());
+    // BBL parity: extract nozzle_id from H parameter (e.g. "T0 H1")
+    int nozzle_id = -1;
+    float val = 0.f;
+    if (line.has_value('H', val)) {
+        nozzle_id = static_cast<int>(val);
+    }
+    process_T(line.cmd(), nozzle_id);
 }
 
 void GCodeProcessor::process_M1020(const GCodeReader::GCodeLine &line)
 {
     int curr_filament_id = get_filament_id(false);
     int curr_extruder_id = get_extruder_id(false);
-    if (line.raw().length() > 5) {
-        std::string filament_id_str = line.raw().substr(7);
-        if (filament_id_str.empty())
-            return;
 
-        int eid = 0;
-        eid = std::stoi(filament_id_str);
-        if (eid < 0 || eid > 254) {
-            // M1020-1 is a valid gcode line for RepRap Firmwares (used to deselects all tools)
-            if ((m_flavor != gcfRepRapFirmware && m_flavor != gcfRepRapSprinter) || eid != -1)
-                BOOST_LOG_TRIVIAL(error) << "Invalid M1020 command (" << line.raw() << ").";
+    int eid = -1;
+    float val = 0.f;
+    // BBL parity: parse S parameter first (preferred), fallback to raw string
+    if (line.has_value('S', val)) {
+        eid = static_cast<int>(val);
+    } else if (line.raw().length() > 5) {
+        std::string filament_id_str = line.raw().substr(7);
+        if (!filament_id_str.empty()) {
+             try {
+                eid = std::stoi(filament_id_str);
+             } catch(...) {}
         }
-        else {
-            if (eid >= m_result.filaments_count) {
-                BOOST_LOG_TRIVIAL(error) << "Invalid M1020 command (" << line.raw() << ").";
-                return;
-            }
-            process_filament_change(eid);
+    }
+
+    if (eid == -1) return;
+
+    if (eid < 0 || eid > 254) {
+        // M1020-1 is a valid gcode line for RepRap Firmwares (used to deselects all tools)
+        if ((m_flavor != gcfRepRapFirmware && m_flavor != gcfRepRapSprinter) || eid != -1)
+            BOOST_LOG_TRIVIAL(error) << "Invalid M1020 command (" << line.raw() << ").";
+    }
+    else {
+        if (eid >= m_result.filaments_count)
+            BOOST_LOG_TRIVIAL(error) << "Invalid M1020 command (" << line.raw() << ").";
+
+        // BBL parity: extract nozzle_id from H parameter
+        int nozzle_id = -1;
+        if (line.has_value('H', val)) {
+            nozzle_id = static_cast<int>(val);
         }
+        process_filament_change(eid, nozzle_id);
     }
 }
 
-void GCodeProcessor::process_T(const std::string_view command)
+void GCodeProcessor::process_T(const std::string_view command, int nozzle_id)
 {
-    unsigned int eid = 0;
+    int eid = 0;
     auto         ret          = std::from_chars(command.data() + 1, command.data()+command.size(), eid);
     if (std::errc::invalid_argument == ret.ec)
         return;
@@ -5408,9 +5655,13 @@ void GCodeProcessor::process_T(const std::string_view command)
     //TODO: multi switch
     if (command.length() > 1) {
         if (eid < 0 || eid > 254) {
-            //BBS: T255, T1000 and T1100 is used as special command for BBL machine and does not cost time. return directly
+            // BBS: T255, T1000 and T1100 are special command for BBL machine and do not cost time.
+            // T1001, T65279, T65535 are newer BBL protocol commands found in H2S/H2C templates
+            // (machine_end_gcode "pull back filament to AMS" emits T65535 alongside M620/M621 S65535;
+            // the others are paired protocol opcodes). Treat the whole 16-bit-sentinel band as a
+            // BBL no-op so the parser doesn't spam "Invalid T command" warnings.
             if ((m_flavor == gcfMarlinLegacy || m_flavor == gcfMarlinFirmware) && (command == "Tx" || command == "Tc" || command == "T?" ||
-                 eid == 1000 || eid == 1100 || eid == 255))
+                 eid == 1000 || eid == 1001 || eid == 1100 || eid == 255 || eid == 65279 || eid == 65535))
                 return;
 
             // T-1 is a valid gcode line for RepRap Firmwares (used to deselects all tools)
@@ -5422,7 +5673,7 @@ void GCodeProcessor::process_T(const std::string_view command)
                 BOOST_LOG_TRIVIAL(error) << "Invalid T command (" << command << ").";
                 return;
             }
-            process_filament_change(eid);
+            process_filament_change(eid, nozzle_id);
         }
     }
 }
@@ -5438,25 +5689,27 @@ void GCodeProcessor::init_filament_maps_and_nozzle_type_when_import_only_gcode()
     }
 }
 
-void GCodeProcessor::process_filament_change(int id)
+void GCodeProcessor::process_filament_change(int id, int nozzle_id)
 {
     assert(id < m_result.filaments_count);
     int prev_extruder_id = get_extruder_id(false);
     int prev_filament_id = get_filament_id(false);
+    float extra_time = 0;
+
+    if (prev_filament_id == id && nozzle_id == -1)
+        return;
+
+    if (prev_extruder_id != -1)
+        m_last_filament_id[prev_extruder_id] = prev_filament_id;
+
+    if(!m_nozzle_group_result){
     int next_extruder_id = m_filament_maps[id];
     int next_filament_id = id;
-    float extra_time = 0;
     unsigned int filament_changes_delta = 0;
     unsigned int extruder_changes_delta = 0;
     float filament_load_time_delta = 0.0f;
     float filament_unload_time_delta = 0.0f;
     float tool_change_time_delta = 0.0f;
-
-    if (prev_filament_id == next_filament_id)
-        return;
-
-    if (prev_extruder_id != -1)
-        m_last_filament_id[prev_extruder_id] = prev_filament_id;
 
     if (prev_extruder_id == next_extruder_id) {
         // don't need extruder change
@@ -5513,21 +5766,111 @@ void GCodeProcessor::process_filament_change(int id)
             tool_change_time_delta += tool_change_time;
         }
     }
-
-    if (filament_changes_delta > 0 || extruder_changes_delta > 0 || filament_load_time_delta > 0.0f || filament_unload_time_delta > 0.0f || tool_change_time_delta > 0.0f) {
-        m_result.lock();
-        m_result.print_statistics.total_filament_changes += filament_changes_delta;
-        m_result.print_statistics.total_extruder_changes += extruder_changes_delta;
-        m_result.print_statistics.total_filament_load_time += filament_load_time_delta;
-        m_result.print_statistics.total_filament_unload_time += filament_unload_time_delta;
-        m_result.print_statistics.total_tool_change_time += tool_change_time_delta;
-        m_result.unlock();
-    }
-
     m_cp_color.current = m_extruder_colors[next_filament_id];
     simulate_st_synchronize(extra_time);
     // store tool change move
     store_move_vertex(EMoveType::Tool_change);
+    }
+    else {
+        // BBL parity: nozzle_group_result path (H2C/H2S multi-nozzle)
+        // Rewritten to match BambuStudio 2.7-beta process_filament_change.
+        int next_filament_id = id;
+
+        std::optional<MultiNozzleUtils::NozzleInfo> target_nozzle_info;
+        // If nozzle_id is specified, try to get the nozzle info by nozzle_id
+        if (nozzle_id != -1)
+            target_nozzle_info = m_nozzle_group_result->get_nozzle_from_id(nozzle_id);
+        // If nozzle_id is not specified or not found, try to get the nozzle info for the filament
+        if (!target_nozzle_info) {
+            auto target_opt = m_nozzle_group_result->get_nozzle_for_filament(next_filament_id);
+            if (!target_opt)
+                return;
+            target_nozzle_info = target_opt;
+        }
+        if (!target_nozzle_info)
+            return;
+
+        int new_extruder_id = target_nozzle_info->extruder_id;
+        int old_extruder_id = prev_extruder_id;
+
+        int new_nozzle_id_in_extruder = target_nozzle_info->group_id;
+        int old_nozzle_id_in_extruder = m_nozzle_status_recorder.get_nozzle_in_extruder(new_extruder_id);
+
+        int old_filament_in_nozzle = m_nozzle_status_recorder.get_filament_in_nozzle(new_nozzle_id_in_extruder);
+        int old_filament_in_extruder = m_nozzle_status_recorder.get_filament_in_nozzle(old_nozzle_id_in_extruder);
+
+        bool extruder_change = (new_extruder_id != old_extruder_id);
+        bool nozzle_in_extruder_change = (new_nozzle_id_in_extruder != old_nozzle_id_in_extruder);
+        bool filament_in_nozzle_change = (next_filament_id != old_filament_in_nozzle);
+
+        m_result.lock();
+        // Extruder change time (e.g. dual-extruder swap)
+        if (extruder_change && old_extruder_id != -1) {
+            extra_time += get_extruder_change_time(new_extruder_id);
+            m_result.print_statistics.total_extruder_changes++;
+        }
+        // Nozzle change within same extruder
+        if (nozzle_in_extruder_change && !extruder_change) {
+            m_result.print_statistics.total_nozzle_changes++;
+        }
+        // BBL parity: combined condition — ONE unload + ONE load
+        // (not separate if-blocks, which would double-count when both are true)
+        bool perform_static_time_calc = nozzle_in_extruder_change || filament_in_nozzle_change;
+        // H2C Vortek: H2C printer has independent nozzles on a single extruder, so nozzle switches
+        // within the same extruder do not require filament unloading/loading.
+        if (m_printer_model == "Bambu Lab H2C") {
+            perform_static_time_calc = filament_in_nozzle_change;
+        }
+        if (perform_static_time_calc) {
+            if (old_filament_in_extruder >= 0)
+                extra_time += get_filament_unload_time(static_cast<size_t>(old_filament_in_extruder));
+            m_time_processor.extruder_unloaded = false;
+            extra_time += get_filament_load_time(static_cast<size_t>(next_filament_id));
+
+            if (filament_in_nozzle_change && old_filament_in_nozzle != -1)
+                m_result.print_statistics.total_flush_filament_changes++;
+        }
+        // Note: hotend_change_time is NOT added here — it's already accounted
+        // for in SYNC gcode commands emitted by the firmware template.
+
+        if (prev_filament_id != -1)
+            m_result.print_statistics.total_filament_changes++;
+
+        process_filaments(CustomGCode::ToolChange);
+
+        m_result.unlock();
+
+        if (new_extruder_id != -1) {
+            m_filament_id[new_extruder_id] = next_filament_id;
+        }
+        m_extruder_id = new_extruder_id;
+
+        // Record nozzle state for future lookups
+        m_nozzle_status_recorder.set_nozzle_status(new_nozzle_id_in_extruder, next_filament_id, new_extruder_id);
+
+        m_cp_color.current = m_extruder_colors[next_filament_id];
+        // store tool change move
+        store_move_vertex(EMoveType::Tool_change);
+
+        // BBL parity: construct a new time block to handle filament change
+        for (size_t i = 0; i < static_cast<size_t>(PrintEstimatedStatistics::ETimeMode::Count); ++i) {
+            TimeMachine& machine = m_time_processor.machines[i];
+            if (!machine.enabled)
+                continue;
+            TimeBlock block;
+            block.move_id = m_result.moves.size() - 1;
+            block.role = ExtrusionRole::erWipeTower;
+            block.move_type = EMoveType::Tool_change;
+            block.layer_id = std::max<unsigned int>(1, m_layer_id);
+            block.g1_line_id = m_g1_line_id;
+            block.flags.prepare_stage = m_processing_start_custom_gcode;
+            block.distance = 0;
+            block.calculate_trapezoid();
+            machine.blocks.push_back(block);
+        }
+
+        simulate_st_synchronize(extra_time, ExtrusionRole::erWipeTower);
+    }
 }
 
 void GCodeProcessor::store_move_vertex(EMoveType type, EMovePathType path_type, bool internal_only)
@@ -5808,6 +6151,11 @@ float GCodeProcessor::get_extruder_change_time(size_t extruder_id)
     return m_time_processor.machine_tool_change_time;
 }
 
+float GCodeProcessor::get_hotend_change_time()
+{
+    return m_time_processor.hotend_change_times;
+}
+
 //BBS
 int GCodeProcessor::get_filament_vitrification_temperature(size_t extrude_id)
 {
@@ -5851,13 +6199,13 @@ void GCodeProcessor::process_filaments(CustomGCode::Type code)
     }
 }
 
-void GCodeProcessor::calculate_time(GCodeProcessorResult& result, size_t keep_last_n_blocks, float additional_time)
+void GCodeProcessor::calculate_time(GCodeProcessorResult& result, size_t keep_last_n_blocks, float additional_time, ExtrusionRole target_role)
 {
     // calculate times
     std::vector<TimeMachine::ActualSpeedMove> actual_speed_moves;
     for (size_t i = 0; i < static_cast<size_t>(PrintEstimatedStatistics::ETimeMode::Count); ++i) {
         TimeMachine& machine = m_time_processor.machines[i];
-        machine.calculate_time(m_result, static_cast<PrintEstimatedStatistics::ETimeMode>(i), keep_last_n_blocks, additional_time);
+        machine.calculate_time(m_result, static_cast<PrintEstimatedStatistics::ETimeMode>(i), keep_last_n_blocks, additional_time, target_role);
         if (static_cast<PrintEstimatedStatistics::ETimeMode>(i) == PrintEstimatedStatistics::ETimeMode::Normal)
             actual_speed_moves = std::move(machine.actual_speed_moves);
     }
@@ -5911,9 +6259,9 @@ void GCodeProcessor::calculate_time(GCodeProcessorResult& result, size_t keep_la
     }
 }
 
-void GCodeProcessor::simulate_st_synchronize(float additional_time)
+void GCodeProcessor::simulate_st_synchronize(float additional_time, ExtrusionRole target_role)
 {
-    calculate_time(m_result, 0, additional_time);
+    calculate_time(m_result, 0, additional_time, target_role);
 }
 
 void GCodeProcessor::update_estimated_times_stats()
@@ -5938,6 +6286,8 @@ void GCodeProcessor::update_estimated_times_stats()
     m_result.print_statistics.flush_per_filament      = m_used_filaments.flush_per_filament;
     m_result.print_statistics.used_filaments_per_role   = m_used_filaments.filaments_per_role;
     m_result.print_statistics.total_volumes_per_extruder = m_used_filaments.total_volumes_per_filament;
+
+
 }
 
 double GCodeProcessor::extract_absolute_position_on_axis(Axis axis, const GCodeReader::GCodeLine& line, double area_filament_cross_section)
@@ -6008,8 +6358,13 @@ void GCodeProcessor::update_slice_warnings()
         if (used_filaments[idx] < m_result.required_nozzle_HRC.size())
             filament_hrc = m_result.required_nozzle_HRC[used_filaments[idx]];
 
-        int filament_extruder_id = m_filament_maps[used_filaments[idx]];
-        int extruder_hrc = nozzle_hrc_lists[filament_extruder_id];
+        int filament_extruder_id = 0;
+        int extruder_hrc = 0;
+        if (used_filaments[idx] >= 0 && used_filaments[idx] < (int)m_filament_maps.size()) {
+            filament_extruder_id = m_filament_maps[used_filaments[idx]];
+            if (filament_extruder_id >= 0 && filament_extruder_id < (int)nozzle_hrc_lists.size())
+                extruder_hrc = nozzle_hrc_lists[filament_extruder_id];
+        }
 
         BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << boost::format(": Check HRC: filament:%1%, hrc=%2%, extruder:%3%, hrc:%4%") % used_filaments[idx] % filament_hrc % filament_extruder_id % extruder_hrc;
 
@@ -6093,5 +6448,10 @@ int GCodeProcessor::get_extruder_id(bool force_initialize)const
         return force_initialize ? 0 : -1;
     return static_cast<int>(m_extruder_id);
 }
+// ============================================================================
+// PreCoolingInjector implementation — EXTRACTED to VortekPreCooling.cpp
+// Class declaration stays in GCodeProcessor.hpp.
+// BBL parity: BambuStudio GCodeProcessor.cpp:6412-6786 (commit 3f2570c)
+// ============================================================================
 
 } /* namespace Slic3r */

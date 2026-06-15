@@ -64,12 +64,12 @@ public:
     std::string enable_power_loss_recovery(PowerLossRecoveryMode mode);
     // return false if this extruder was already selected
     bool        need_toolchange(unsigned int filament_id) const;
-    std::string set_extruder(unsigned int filament_id);
+    std::string set_extruder(unsigned int filament_id, int nozzle_id = -1);
     void init_extruder(unsigned int filament_id);
     // Prefix of the toolchange G-code line, to be used by the CoolingBuffer to separate sections of the G-code
     // printed with the same extruder.
     std::string toolchange_prefix() const;
-    std::string toolchange(unsigned int filament_id);
+    std::string toolchange(unsigned int filament_id, int nozzle_id = -1);
     std::string set_speed(double F, const std::string &comment = std::string(), const std::string &cooling_marker = std::string());
     // SoftFever NOTE: the returned speed is mm/minute
     double      get_current_speed() const { return m_current_speed;}
@@ -84,6 +84,7 @@ public:
     std::string retract(bool before_wipe = false, double retract_length = 0);
     std::string retract_for_toolchange(bool before_wipe = false, double retract_length = 0);
     std::string unretract();
+    double get_extruder_retracted_length(const int filament_id);
     // do lift instantly
     std::string eager_lift(const LiftType type);
     // record a lift request, do realy lift in next travel
@@ -126,6 +127,10 @@ public:
     const bool is_bbl_printers() const {return m_is_bbl_printers;}
     void set_is_first_layer(bool bval) { m_is_first_layer = bval; }
     GCodeFlavor get_gcode_flavor() const { return config.gcode_flavor; }
+    // BBS: Reset acceleration tracking so the next set_travel_acceleration() call
+    // always emits M204, regardless of the previously cached value.
+    // Used to match BambuStudio output after machine_start_gcode completes.
+    void reset_last_acceleration() { m_last_acceleration = 0; m_last_travel_acceleration = 0; }
 
     // Returns whether this flavor supports separate print and travel acceleration.
     static bool supports_separate_travel_acceleration(GCodeFlavor flavor);

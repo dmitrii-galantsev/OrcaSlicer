@@ -6,7 +6,9 @@
 #include "libslic3r/ExtrusionEntity.hpp"
 #include "libslic3r/PrintConfig.hpp"
 #include "libslic3r/CustomGCode.hpp"
+#include "libslic3r/Extruder.hpp"
 
+#include "libslic3r/MultiNozzleUtils.hpp"
 #include <cstdint>
 #include <array>
 #include <vector>
@@ -14,6 +16,10 @@
 #include <string>
 #include <string_view>
 #include <optional>
+
+namespace Vortek {
+    class PreCooling;
+}
 
 namespace Slic3r {
 
@@ -77,7 +83,9 @@ class Print;
 
         std::array<Mode, static_cast<size_t>(ETimeMode::Count)> modes;
         unsigned int                                        total_filament_changes;
+        unsigned int                                        total_flush_filament_changes;
         unsigned int                                        total_extruder_changes;
+        unsigned int                                        total_nozzle_changes;
         float                                               total_filament_load_time;
         float                                               total_filament_unload_time;
         float                                               total_tool_change_time;
@@ -101,7 +109,9 @@ class Print;
             flush_per_filament.clear();
             used_filaments_per_role.clear();
             total_filament_changes = 0;
+            total_flush_filament_changes = 0;
             total_extruder_changes = 0;
+            total_nozzle_changes   = 0;
             total_filament_load_time = 0.0f;
             total_filament_unload_time = 0.0f;
             total_tool_change_time = 0.0f;
@@ -167,6 +177,7 @@ class Print;
         GCodeCheckResult  gcode_check_result;
         FilamentPrintableResult filament_printable_reuslt;
         float initial_layer_time;
+        std::shared_ptr<MultiNozzleUtils::LayeredNozzleGroupResult> nozzle_group_result;
 
         struct SettingsIds
         {
@@ -309,15 +320,79 @@ class Print;
             nozzle_change_sequence = other.nozzle_change_sequence;
             optimal_assignment = other.optimal_assignment;
             filament_change_count_map = other.filament_change_count_map;
+            filament_change_sequence = other.filament_change_sequence;
             initial_layer_time = other.initial_layer_time;
+            conflict_result = other.conflict_result;
+            nozzle_group_result = other.nozzle_group_result;
+            extruder_areas = other.extruder_areas;
+            extruder_heights = other.extruder_heights;
+            support_traditional_timelapse = other.support_traditional_timelapse;
+            z_offset = other.z_offset;
+            backtrace_enabled = other.backtrace_enabled;
+            required_nozzle_HRC = other.required_nozzle_HRC;
+            filament_vitrification_temperature = other.filament_vitrification_temperature;
+            filament_maps = other.filament_maps;
+            nozzle_hrc = other.nozzle_hrc;
+            nozzle_type = other.nozzle_type;
 #if ENABLE_GCODE_VIEWER_STATISTICS
             time = other.time;
 #endif
             return *this;
         }
         void  lock() const { result_mutex.lock(); }
+            
         void  unlock() const { result_mutex.unlock(); }
     };
+
+    // BBL parity: ExtruderPreHeating data structures for PreCoolingInjector.
+    // Ref: BambuStudio GCodeProcessor.hpp:359-421 (commit 3f2570c)
+    namespace ExtruderPreHeating
+    {
+        struct FilamentUsageBlock
+        {
+            int filament_id;
+            int extruder_id;
+            int nozzle_id;
+            unsigned int lower_gcode_id;
+            unsigned int upper_gcode_id;  // [lower_gcode_id, upper_gcode_id) uses current filament
+            FilamentUsageBlock(int filament_id_, int extruder_id_, int nozzle_id_, unsigned int lower_gcode_id_, unsigned int upper_gcode_id_)
+                : filament_id(filament_id_), extruder_id(extruder_id_), nozzle_id(nozzle_id_), lower_gcode_id(lower_gcode_id_), upper_gcode_id(upper_gcode_id_) {}
+        };
+
+        struct ExtruderUsageBlcok
+        {
+            int extruder_id = -1;
+            unsigned int start_id = -1;
+            unsigned int end_id = -1;
+            int start_filament = -1;
+            int end_filament = -1;
+            int start_nozzle_id = -1;
+            int end_nozzle_id = -1;
+            unsigned int post_extrusion_start_id = -1;
+            unsigned int post_extrusion_end_id = -1;
+            bool         ignore_cooling_before_tower = false;
+
+            void initialize_step_1(int extruder_id_, int start_id_, int start_filament_, int start_nozzle_id_) {
+                extruder_id = extruder_id_;
+                start_id = start_id_;
+                start_filament = start_filament_;
+                start_nozzle_id = start_nozzle_id_;
+            };
+            void initialize_step_2(int post_extrusion_start_id_) {
+                post_extrusion_start_id = post_extrusion_start_id_;
+            }
+            void initialize_step_3(int end_id_, int end_filament_, int post_extrusion_end_id_, int end_nozzle_id_) {
+                end_id = end_id_;
+                end_filament = end_filament_;
+                post_extrusion_end_id = post_extrusion_end_id_;
+                end_nozzle_id = end_nozzle_id_;
+            }
+            void reset() {
+                *this = ExtruderUsageBlcok();
+            }
+            ExtruderUsageBlcok() = default;
+        };
+    }
 
 
     class CommandProcessor {
@@ -340,6 +415,7 @@ class Print;
 
     class GCodeProcessor
     {
+        friend class Vortek::PreCooling;
         static const std::vector<std::string> Reserved_Tags;
         static const std::vector<std::string> Reserved_Tags_compatible;
         static const std::string Flush_Start_Tag;
@@ -370,6 +446,20 @@ class Print;
             PA_Change,
             Print_Time_Sec_Placeholder,
             Used_Filament_Length_Placeholder,
+            // H2C FIX: NozzleChangeStart / NozzleChangeEnd tags — required for dual-nozzle
+            // (Vortek / H2C) printers. Without these tags the GCodeProcessor cannot distinguish
+            // a nozzle switch from a regular filament change, causing the firmware to perform
+            // a full flush instead of a quick nozzle swap.
+            //
+            // These tags are emitted by WipeTower::ramming() (the active code path called from
+            // tool_change_new()) and by WipeTower::nozzle_change() (legacy path from tool_change()).
+            // The GCodeProcessor's post_process() parses them to build ExtruderUsageBlocks for
+            // the PreCoolingInjector and to count nozzle vs. extruder vs. filament changes.
+            //
+            // Ref: BambuStudio GCodeProcessor.hpp:469-470 (commit 3f2570c)
+            //   https://github.com/bambulab/BambuStudio/blob/master/src/libslic3r/GCode/GCodeProcessor.hpp
+            NozzleChangeStart,
+            NozzleChangeEnd,
         };
 
         static const std::string& reserved_tag(ETags tag) { return s_IsBBLPrinter ? Reserved_Tags[static_cast<unsigned char>(tag)] : Reserved_Tags_compatible[static_cast<unsigned char>(tag)]; }
@@ -559,10 +649,14 @@ class Print;
             std::vector<ActualSpeedMove> actual_speed_moves;
             //BBS: prepare stage time before print model, including start gcode time and mostly same with start gcode time
             float prepare_time;
+            using AdditionalBuffer = std::vector<std::pair<ExtrusionRole, float>>;
+            AdditionalBuffer m_additional_time_buffer;
 
             void reset();
 
-            void calculate_time(GCodeProcessorResult& result, PrintEstimatedStatistics::ETimeMode mode, size_t keep_last_n_blocks = 0, float additional_time = 0.0f);
+            AdditionalBuffer merge_adjacent_addtional_time_blocks(const AdditionalBuffer& buffer);
+
+            void calculate_time(GCodeProcessorResult& result, PrintEstimatedStatistics::ETimeMode mode, size_t keep_last_n_blocks = 0, float additional_time = 0.0f, ExtrusionRole target_role = ExtrusionRole::erNone);
         };
 
         struct UsedFilaments  // filaments per ColorChange
@@ -609,6 +703,21 @@ class Print;
 
         struct TimeProcessor
         {
+            // BBL parity: types of lines that can be injected into the gcode during post-processing.
+            // Ref: BambuStudio GCodeProcessor.hpp:815-826 (commit 3f2570c)
+            enum InsertLineType
+            {
+                PlaceholderReplace,
+                TimePredict,
+                FilamentChangePredict,
+                ExtruderChangePredict,
+                PreCooling,
+                PreHeating,
+            };
+
+            // Map from gcode line id → list of (content, type) pairs to inject at that line.
+            using InsertedLinesMap = std::map<unsigned int, std::vector<std::pair<std::string, InsertLineType>>>;
+
             struct Planner
             {
                 // Size of the firmware planner queue. The old 8-bit Marlins usually just managed 16 trapezoidal blocks.
@@ -629,13 +738,44 @@ class Print;
             // Additional load / unload times for a filament exchange sequence.
             float filament_load_times;
             float filament_unload_times;
+            float hotend_change_times;
             //Orca:  time for tool change
             float machine_tool_change_time;
+            // G29 bed-leveling time from machine profile (replaces hardcoded 260s)
+            float machine_prepare_compensation_time{260.0f};
 
             std::array<TimeMachine, static_cast<size_t>(PrintEstimatedStatistics::ETimeMode::Count)> machines;
 
             void reset();
         };
+
+        // BBL parity: Context for post-processing with temperature pre-scheduling.
+        // Ref: BambuStudio GCodeProcessor.hpp:746-810 (commit 3f2570c)
+        struct TimeProcessContext
+        {
+            UsedFilaments used_filaments;
+            std::vector<Extruder> filament_lists;
+            std::vector<std::string> filament_types;
+            std::vector<int> filament_nozzle_temp;
+            std::vector<int> physical_extruder_map;
+
+            MultiNozzleUtils::LayeredNozzleGroupResult nozzle_group_result;
+
+            size_t total_layer_num;
+            std::vector<double> cooling_rate{ 2.f };
+            std::vector<double> heating_rate{ 2.f };
+            std::vector<double> filament_preheat_temperature_delta{0.f};
+            std::vector<double> filament_max_temperature_drop_when_ec{0.f};
+            std::vector<int> pre_cooling_temp{ 0 };
+            float inject_time_threshold{ 30.f };
+            bool enable_pre_heating{ false };
+            bool handle_hotend_as_extruder{ false };
+            bool has_filament_switcher{ false };
+            std::vector<int> extruder_max_nozzle_count{ 1 };
+            std::vector<ExtruderType> extruder_types;
+            std::vector<double> nozzle_diameter;
+        };
+
     public:
         class SeamsDetector
         {
@@ -822,6 +962,8 @@ class Print;
         unsigned int m_layer_id;
         CpColor m_cp_color;
         SeamsDetector m_seams_detector;
+        //  H2C TODO - moved
+        GCodeProcessorResult m_result;
         OptionsZCorrector m_options_z_corrector;
         size_t m_last_default_color_id;
         bool m_detect_layer_based_on_tag {false};
@@ -845,7 +987,12 @@ class Print;
             ideaMaker,
             KissSlicer
         };
-
+        // const std::vector<int>& filament_nozzle_temps_initial_layer_;
+        // const std::vector<int>& extruder_max_nozzle_count_;
+        // const std::vector<double>& filament_cooling_before_tower_;
+        //                filament_nozzle_temps_initial_layer(filament_nozzle_temps_initial_layer_),
+        // extruder_max_nozzle_count(extruder_max_nozzle_count_),
+        //         filament_cooling_before_tower(filament_cooling_before_tower_),
         static const std::vector<std::pair<GCodeProcessor::EProducer, std::string>> Producers;
         EProducer m_producer;
 
@@ -854,7 +1001,6 @@ class Print;
 
         Print* m_print{ nullptr };
 
-        GCodeProcessorResult m_result;
         static unsigned int s_result_id;
 
     public:
@@ -873,7 +1019,6 @@ class Print;
         void set_print(Print* print) { m_print = print; }
 
         DynamicConfig export_config_for_render() const;
-
         void enable_stealth_time_estimator(bool enabled);
         bool is_stealth_time_estimator_enabled() const {
             return m_time_processor.machines[static_cast<size_t>(PrintEstimatedStatistics::ETimeMode::Stealth)].enabled;
@@ -884,13 +1029,15 @@ class Print;
         const GCodeProcessorResult& get_result() const { return m_result; }
         GCodeProcessorResult& result() { return m_result; }
         GCodeProcessorResult&& extract_result() { return std::move(m_result); }
-
+        const MultiNozzleUtils::NozzleStatusRecorder& get_nozzle_status() const { return m_nozzle_status_recorder; }
+        
         // Load a G-code into a stand-alone G-code viewer.
         // throws CanceledException through print->throw_if_canceled() (sent by the caller as callback).
         void process_file(const std::string& filename, std::function<void()> cancel_callback = nullptr);
 
         // Streaming interface, for processing G-codes just generated by PrusaSlicer in a pipelined fashion.
         void initialize(const std::string& filename);
+        void initialize_from_context(const MultiNozzleUtils::LayeredNozzleGroupResult& nozzle_group_result);
         void initialize_result_moves() {
             // 1st move must be a dummy move
             assert(m_result.moves.empty());
@@ -931,6 +1078,28 @@ class Print;
         bool process_kissslicer_tags(const std::string_view comment);
 
         bool detect_producer(const std::string_view comment);
+
+        std::shared_ptr<MultiNozzleUtils::LayeredNozzleGroupResult> m_nozzle_group_result;
+        MultiNozzleUtils::NozzleStatusRecorder m_nozzle_status_recorder;
+        std::vector<int> m_extruder_max_nozzle_count;
+        std::vector<double> m_filament_cooling_before_tower;
+
+        // H2C PreCooling config members — read from PrintConfig in apply_config()
+        bool m_enable_pre_heating{ false };
+        std::vector<double> m_cooling_rate;
+        std::vector<double> m_heating_rate;
+        std::vector<int> m_pre_cooling_temp;
+        std::vector<double> m_filament_preheat_temperature_delta;
+        std::vector<double> m_filament_max_temperature_drop_when_ec;
+        std::vector<std::string> m_filament_types;
+        std::vector<ExtruderType> m_extruder_types;
+        std::vector<double> m_nozzle_diameter;
+        bool m_has_filament_switcher{ false };
+        float m_inject_time_threshold{ 30.f };
+        // H2C Vortek: Printer model name for H2C-specific timing logic
+        std::string m_printer_model;
+
+        float get_hotend_change_time();
 
         // Move
         void process_G0(const GCodeReader::GCodeLine& line);
@@ -1073,13 +1242,13 @@ class Print;
 
         // Processes T line (Select Tool)
         void process_T(const GCodeReader::GCodeLine& line);
-        void process_T(const std::string_view command);
+        void process_T(const std::string_view command, int nozzle_id = -1);
         void process_M1020(const GCodeReader::GCodeLine &line);
 
         void process_M622(const GCodeReader::GCodeLine &line);
         void process_M623(const GCodeReader::GCodeLine &line);
 
-        void process_filament_change(int id);
+        void process_filament_change(int id, int nozzle_id = -1);
 
         // post process the file with the given filename to:
         // 1) add remaining time lines M73 and update moves' gcode ids accordingly
@@ -1115,10 +1284,10 @@ class Print;
         void process_custom_gcode_time(CustomGCode::Type code);
         void process_filaments(CustomGCode::Type code);
 
-        void calculate_time(GCodeProcessorResult& result, size_t keep_last_n_blocks = 0, float additional_time = 0.0f);
+        void calculate_time(GCodeProcessorResult& result, size_t keep_last_n_blocks = 0, float additional_time = 0.0f, ExtrusionRole target_role = ExtrusionRole::erNone);
 
         // Simulates firmware st_synchronize() call
-        void simulate_st_synchronize(float additional_time = 0.0f);
+        void simulate_st_synchronize(float additional_time = 0.0f, ExtrusionRole target_role = ExtrusionRole::erNone);
 
         void update_estimated_times_stats();
 

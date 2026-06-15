@@ -5,12 +5,18 @@
 
 #include "../libslic3r.h"
 
+#include <functional>
+#include <map>
 #include <utility>
 
 #include <boost/container/small_vector.hpp>
 #include "../FilamentGroup.hpp"
 #include "../ExtrusionEntity.hpp"
 #include "../PrintConfig.hpp"
+
+namespace Vortek {
+    class GroupReorder;
+}
 
 namespace Slic3r {
 
@@ -49,6 +55,14 @@ public:
     	bool out = this->is_overriddable(ee, print_config, object, region);
     	this->something_overridable |= out;
     	return out;
+    }
+    //for byobject mode, there are no config, but object still have overridable setting
+    bool is_obj_overriddable(const ExtrusionEntityCollection &ee, const PrintObject &object) const;
+    bool is_obj_overriddable_and_mark(const ExtrusionEntityCollection &ee, const PrintObject &object)
+    {
+        bool out = this->is_obj_overriddable(ee, object);
+        this->something_overridable |= out;
+        return out;
     }
 
     // BBS
@@ -124,6 +138,29 @@ struct FilamentChangeStats
 
 };
 
+// H2C port: GroupReorder namespace — dynamic per-combo-range filament-to-nozzle optimization.
+// BBL ref: BambuStudio/src/libslic3r/GCode/ToolOrdering.hpp:139-160
+namespace GroupReorder
+{
+
+// BBL ref: BambuStudio/src/libslic3r/GCode/ToolOrdering.hpp:143
+std::vector<MultiNozzleUtils::NozzleInfo>      build_default_nozzle_list(const PrintConfig &config, size_t extruder_nums);
+// BBL ref: BambuStudio/src/libslic3r/GCode/ToolOrdering.hpp:144
+std::vector<MultiNozzleUtils::NozzleGroupInfo> build_nozzle_groups(const PrintConfig &config, size_t extruder_nums);
+// BBL ref: BambuStudio/src/libslic3r/GCode/ToolOrdering.hpp:147  ("分组相关的函数")
+std::vector<FlushMatrix>                       prepare_flush_matrices(const PrintConfig &print_config);
+
+// BBL ref: BambuStudio/src/libslic3r/GCode/ToolOrdering.hpp:149-155
+FilamentGroupContext build_filament_group_context(Print                                           *print,
+                                                  const std::vector<std::vector<unsigned int>>    &layer_filaments,
+                                                  const std::vector<std::set<int>>                &physical_unprintables,
+                                                  const std::vector<std::set<int>>                &geometric_unprintables,
+                                                  const std::map<int, std::set<NozzleVolumeType>> &unprintable_volumes,
+                                                  FilamentMapMode                                  mode,
+                                                  const std::unordered_map<int, int>              &nozzle_status = {});
+
+} // namespace GroupReorder
+
 
 class LayerTools
 {
@@ -179,6 +216,7 @@ private:
 
 class ToolOrdering
 {
+    friend class Vortek::GroupReorder;
 public:
     enum FilamentChangeMode {
         SingleExt,
@@ -241,7 +279,37 @@ public:
     * called in dual extruder mode, the value in map will be 0 or 1
     * 0 based group id
     */
-    static std::vector<int> get_recommended_filament_maps(const std::vector<std::vector<unsigned int>>& layer_filaments, const Print* print,const FilamentMapMode mode, const std::vector<std::set<int>>& physical_unprintables, const std::vector<std::set<int>>& geometric_unprintables);
+
+    static MultiNozzleUtils::LayeredNozzleGroupResult get_recommended_filament_maps(Print* print, const std::vector<std::vector<unsigned int>>& layer_filaments, const FilamentMapMode mode, const std::vector<std::set<int>>& physical_unprintables, const std::vector<std::set<int>>& geometric_unprintables,
+                                                                                   const std::map<int, std::set<NozzleVolumeType>> &unprintable_volumes = {},
+                                                                                   const std::unordered_map<int, int>& nozzle_status = {});
+
+    // H2C port: Cached layer/unprintable data for GroupReorder.
+    // BBL ref: BambuStudio/src/libslic3r/GCode/ToolOrdering.hpp:346-353
+    struct LayerData {
+        std::vector<std::vector<unsigned int>> layer_filaments;
+        std::vector<unsigned int> used_filaments;
+        std::vector<std::set<int>> physical_unprintables;
+        std::vector<std::set<int>> geometric_unprintables;
+        std::map<int, std::set<NozzleVolumeType>> filament_unprintable_volumes;
+    };
+
+    // H2C port: Context passed to plan_filament_mapping_and_order_by_combo_ranges.
+    // BBL ref: BambuStudio/src/libslic3r/GCode/ToolOrdering.hpp:354-360
+    struct OrderingContext {
+        std::vector<unsigned int> filament_lists;
+        std::function<bool(int, std::vector<int>&)> get_custom_seq;
+        bool support_multi_nozzle;
+        bool support_dynamic_map;
+    };
+
+    // BBL ref: BambuStudio/src/libslic3r/GCode/ToolOrdering.cpp:1941
+    LayerData collect_layer_and_unprintable_data();
+
+    // H2C port: Nozzle state tracking across objects/layers for dynamic reorder.
+    // BBL ref: BambuStudio/src/libslic3r/GCode/ToolOrdering.hpp:391-392, 437-438
+    const MultiNozzleUtils::NozzleStatusRecorder& get_nozzle_status() const { return m_nozzle_status; }
+    void set_nozzle_status(const MultiNozzleUtils::NozzleStatusRecorder& status) { m_initial_nozzle_status = status; m_nozzle_status = status; }
 
     // should be called after doing reorder
     FilamentChangeStats get_filament_change_stats(FilamentChangeMode mode);
@@ -283,6 +351,10 @@ private:
     FilamentChangeStats        m_stats_by_single_extruder;
     FilamentChangeStats        m_stats_by_multi_extruder_curr;
     FilamentChangeStats        m_stats_by_multi_extruder_best;
+    // H2C port: nozzle state at object start / end for GroupReorder continuity.
+    // BBL ref: BambuStudio/src/libslic3r/GCode/ToolOrdering.hpp:437-438
+    MultiNozzleUtils::NozzleStatusRecorder m_initial_nozzle_status;  // nozzle state at object start
+    MultiNozzleUtils::NozzleStatusRecorder m_nozzle_status;          // nozzle state at object end
 
     int                        most_used_extruder;
 };

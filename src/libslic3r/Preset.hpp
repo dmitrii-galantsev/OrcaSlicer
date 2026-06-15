@@ -105,7 +105,7 @@ extern int get_values_from_json(std::string file_path, std::vector<std::string>&
 
 extern ConfigFileType guess_config_file_type(const boost::property_tree::ptree &tree);
 
-extern void extend_default_config_length(DynamicPrintConfig& config, const bool set_nil_to_default, const DynamicPrintConfig& defaults);
+extern void extend_default_config_length(DynamicPrintConfig& config, const DynamicPrintConfig& inherit_config, const bool set_nil_to_default, const DynamicPrintConfig& defaults);
 
 class VendorProfile
 {
@@ -778,6 +778,9 @@ public:
     // Generate a file path from a profile name. Add the ".ini" suffix if it is missing.
     std::string     path_from_name(const std::string &new_name, bool detach = false) const;
     std::string     path_for_preset(const Preset & preset) const;
+
+    // Get the alias of a preset, setting it if it's empty
+    std::string     get_preset_alias(Preset &preset, bool force = false);
 
     size_t num_default_presets() { return m_num_default_presets; }
 

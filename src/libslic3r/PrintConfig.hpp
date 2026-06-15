@@ -335,6 +335,11 @@ enum LayerSeq {
     flsCustomize
 };
 
+enum PrimeVolumeMode {
+    pvmDefault = 0,
+    pvmSaving
+};
+
 static std::unordered_map<NozzleType, std::string>NozzleTypeEumnToStr = {
     {NozzleType::ntUndefine,        "undefine"},
     {NozzleType::ntHardenedSteel,   "hardened_steel"},
@@ -418,13 +423,16 @@ enum ExtruderType {
 enum NozzleVolumeType {
     nvtStandard = 0,
     nvtHighFlow,
-    nvtMaxNozzleVolumeType = nvtHighFlow
+    nvtHybrid,
+    nvtTPUHighFlow,
+    nvtMaxNozzleVolumeType = nvtTPUHighFlow
 };
 
 enum FilamentMapMode {
     fmmAutoForFlush,
     fmmAutoForMatch,
     fmmManual,
+    fmmNozzleManual,
     fmmDefault
 };
 
@@ -514,6 +522,8 @@ extern const std::vector<std::string> filament_extruder_override_keys;
 // for parse extruder_ams_count
 extern std::vector<std::map<int, int>> get_extruder_ams_count(const std::vector<std::string> &strs);
 extern std::vector<std::string> save_extruder_ams_count_to_string(const std::vector<std::map<int, int>> &extruder_ams_count);
+extern std::vector<std::map<NozzleVolumeType, int>> get_extruder_nozzle_stats(const std::vector<std::string> & strs);
+extern std::vector<std::string> save_extruder_nozzle_stats_to_string(const std::vector<std::map<NozzleVolumeType, int>> &extruder_nozzle_stats);
 
 #define CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(NAME) \
     template<> const t_config_enum_names& ConfigOptionEnum<NAME>::get_enum_names(); \
@@ -602,6 +612,118 @@ class StaticPrintConfig;
 // Minimum object distance for arrangement, based on printer technology.
 double min_object_distance(const ConfigBase &cfg);
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// H2C VariantOverrides — Per-Variant Parameter Storage
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+// BACKGROUND
+// ----------
+// BambuLab multi-extruder printers (H2C) support different nozzle variants per
+// physical extruder (e.g. Left=HighFlow, Right=Standard). Each variant can have
+// its own speed/acceleration profile. The Bambu preset system stores these as
+// JSON arrays in `print_options_with_variant`:
+//
+//   "inner_wall_speed": [300, 600, 300, 600]
+//                        ^^^  ^^^  ^^^  ^^^
+//                        L/S  L/HF R/S  R/HF
+//
+// OrcaSlicer's `update_values_to_printer_extruders()` correctly handles
+// ARRAY-typed options (ConfigOptionFloats, ConfigOptionInts, etc.) by
+// distributing values across variant indices. However, SCALAR-typed options
+// (ConfigOptionFloat: inner_wall_speed, outer_wall_speed, etc.) can only hold
+// ONE value at a time — the last-applied variant's value.
+//
+// SOLUTION ARCHITECTURE
+// ---------------------
+// VariantOverrides acts as a READ-ONLY LOOKUP TABLE that preserves the FULL
+// per-variant arrays from the JSON profile, separate from the scalar config.
+//
+// Data Flow:
+//
+//   Profile JSON
+//       │
+//       ▼
+//   PrintApply.cpp: DynamicPrintConfig::apply_variant_overrides()
+//       │
+//       ├─► Scalar config ← gets DEFAULT variant value (index 0)
+//       │
+//       └─► VariantOverrides ← stores ALL variant values as arrays
+//               │
+//               ▼
+//   GCode.cpp: precompute_extruder_speed_overrides()
+//       │
+//       ├─► Reads variant arrays from VariantOverrides
+//       ├─► Maps each physical extruder to its variant_index
+//       │   (via extruder_type + nozzle_volume_type → extruder_variant_list)
+//       └─► Builds per-extruder DynamicPrintConfig overlays
+//               │
+//               ▼
+//   GCode.hpp: VariantAwareConfig (wraps FullPrintConfig)
+//       │
+//       ├─► extruder_overrides[eid] = overlay for each physical extruder
+//       ├─► set_active_extruder(eid) — switches overlay at toolchange
+//       └─► apply() — re-applies overlay after EVERY config update
+//
+// WHY NOT JUST USE update_values_to_printer_extruders()?
+// ──────────────────────────────────────────────────────
+// That function only handles array-typed options. Scalar options (coFloat,
+// coFloatOrPercent, coBool) like inner_wall_speed, outer_wall_speed,
+// default_acceleration, etc. cannot be expanded into arrays — they are
+// fundamental scalar types in PrintRegionConfig. The two-layer approach
+// (VariantOverrides + VariantAwareConfig) solves this without modifying
+// the core config type system.
+//
+// STORAGE FORMAT
+// --------------
+// - floats: map<key, vector<double>> — numeric values indexed by variant
+// - strings: map<key, vector<string>> — raw string values (preserves "50%")
+//
+// ═══════════════════════════════════════════════════════════════════════════════
+struct VariantOverrides {
+    // Numeric values: key → [variant0_val, variant1_val, variant2_val, ...]
+    std::map<std::string, std::vector<double>>          floats;
+    // Raw string values (preserves percent notation like "50%")
+    std::map<std::string, std::vector<std::string>>     strings;
+
+    bool has(const std::string& key) const { return floats.count(key) > 0; }
+    bool empty() const { return floats.empty(); }
+    void clear() { floats.clear(); strings.clear(); }
+
+    double get_float(const std::string& key, int index) const {
+        auto it = floats.find(key);
+        if (it == floats.end() || it->second.empty()) return 0.0;
+        int idx = (index >= 0 && index < (int)it->second.size()) ? index : 0;
+        return it->second[idx];
+    }
+
+    // Get the raw string value (preserves "50%" style percent notation)
+    std::string get_string(const std::string& key, int index) const {
+        auto it = strings.find(key);
+        if (it == strings.end() || it->second.empty()) return {};
+        int idx = (index >= 0 && index < (int)it->second.size()) ? index : 0;
+        return it->second[idx];
+    }
+
+    int variant_count(const std::string& key) const {
+        auto it = floats.find(key);
+        return it != floats.end() ? (int)it->second.size() : 0;
+    }
+
+    // H2C: Write a value back into the variant array (preserves user edits
+    // when switching between Left/Right nozzle tabs).
+    void set_float(const std::string& key, int index, double value) {
+        auto it = floats.find(key);
+        if (it != floats.end() && index >= 0 && index < (int)it->second.size())
+            it->second[index] = value;
+    }
+
+    void set_string(const std::string& key, int index, const std::string& value) {
+        auto it = strings.find(key);
+        if (it != strings.end() && index >= 0 && index < (int)it->second.size())
+            it->second[index] = value;
+    }
+};
+
 // Slic3r dynamic configuration, used to override the configuration
 // per object, per modification volume or per printing material.
 // The dynamic configuration is also used to store user modifications of the print global parameters,
@@ -611,13 +733,13 @@ class DynamicPrintConfig : public DynamicConfig
 {
 public:
     DynamicPrintConfig() {}
-    DynamicPrintConfig(const DynamicPrintConfig &rhs) : DynamicConfig(rhs) {}
-    DynamicPrintConfig(DynamicPrintConfig &&rhs) noexcept : DynamicConfig(std::move(rhs)) {}
+    DynamicPrintConfig(const DynamicPrintConfig &rhs) : DynamicConfig(rhs), m_variant_overrides(rhs.m_variant_overrides) {}
+    DynamicPrintConfig(DynamicPrintConfig &&rhs) noexcept : DynamicConfig(std::move(rhs)), m_variant_overrides(std::move(rhs.m_variant_overrides)) {}
     explicit DynamicPrintConfig(const StaticPrintConfig &rhs);
     explicit DynamicPrintConfig(const ConfigBase &rhs) : DynamicConfig(rhs) {}
 
-    DynamicPrintConfig& operator=(const DynamicPrintConfig &rhs) { DynamicConfig::operator=(rhs); return *this; }
-    DynamicPrintConfig& operator=(DynamicPrintConfig &&rhs) noexcept { DynamicConfig::operator=(std::move(rhs)); return *this; }
+    DynamicPrintConfig& operator=(const DynamicPrintConfig &rhs) { DynamicConfig::operator=(rhs); m_variant_overrides = rhs.m_variant_overrides; return *this; }
+    DynamicPrintConfig& operator=(DynamicPrintConfig &&rhs) noexcept { DynamicConfig::operator=(std::move(rhs)); m_variant_overrides = std::move(rhs.m_variant_overrides); return *this; }
 
     static DynamicPrintConfig  full_print_config();
     static DynamicPrintConfig* new_from_defaults_keys(const std::vector<std::string> &keys);
@@ -625,7 +747,7 @@ public:
     // Overrides ConfigBase::def(). Static configuration definition. Any value stored into this ConfigBase shall have its definition here.
     const ConfigDef*    def() const override { return &print_config_def; }
 
-    void                normalize_fdm(int used_filaments = 0);
+    void                normalize_fdm();
     void                normalize_fdm_1();
     //return the changed param set
     t_config_option_keys normalize_fdm_2(int num_objects, int used_filaments = 0);
@@ -659,6 +781,12 @@ public:
     //BBS
     bool is_using_different_extruders();
     bool support_different_extruders(int& extruder_count);
+    // H2C TODO
+    int get_extruder_nozzle_volume_count(int extruder_count, std::vector<std::vector<NozzleVolumeType>>& nozzle_volume_types) const;
+    std::vector<int> update_values_to_printer_extruders(DynamicPrintConfig& printer_config, int extruder_count, int extruder_nozzle_volume_count, std::vector<std::vector<NozzleVolumeType>>& nv_types,
+        std::set<std::string>& key_set, std::string id_name, std::string variant_name, unsigned int stride = 1, unsigned int extruder_id = 0, NozzleVolumeType filament_nvt = nvtStandard);
+    void update_values_to_printer_extruders_for_multiple_filaments(DynamicPrintConfig& printer_config, int extruder_count, int extruder_nozzle_volume_count, std::set<std::string>& key_set, std::string id_name, std::string variant_name);
+
     int get_index_for_extruder(int extruder_or_filament_id, std::string id_name, ExtruderType extruder_type, NozzleVolumeType nozzle_volume_type, std::string variant_name, unsigned int stride = 1) const;
     void update_values_to_printer_extruders(DynamicPrintConfig& printer_config, std::set<std::string>& key_set, std::string id_name, std::string variant_name, unsigned int stride = 1, unsigned int extruder_id = 0);
     void update_values_to_printer_extruders_for_multiple_filaments(DynamicPrintConfig& printer_config, std::set<std::string>& key_set, std::string id_name, std::string variant_name);
@@ -679,6 +807,24 @@ public:
     // query filament
     std::string get_filament_vendor() const;
     std::string get_filament_type() const;
+
+    // H2C: Variant overrides — read-only lookup table for nozzle variant arrays
+    const VariantOverrides& variant_overrides() const { return m_variant_overrides; }
+    VariantOverrides& variant_overrides() { return m_variant_overrides; }
+
+    // Apply variant values from the overlay into the scalar config.
+    // variant_index: index into the variant array (e.g. 0=Standard, 1=HighFlow for single-extruder)
+    // keys: set of option keys to apply (typically print_options_with_variant)
+    void apply_variant_overrides(int variant_index, const std::set<std::string>& keys);
+
+    // Save current scalar config values back into the variant overrides table.
+    // This is the inverse of apply_variant_overrides() — reads scalars from the
+    // live config and writes them to variant_overrides[variant_index], preserving
+    // user edits before switching to a different nozzle variant.
+    void save_variant_overrides(int variant_index, const std::set<std::string>& keys);
+
+private:
+    VariantOverrides m_variant_overrides;
 };
 extern std::set<std::string> printer_extruder_options;
 extern std::set<std::string> print_options_with_variant;
@@ -688,7 +834,7 @@ extern std::set<std::string> printer_options_with_variant_2;
 extern std::set<std::string> empty_options;
 
 extern void compute_filament_override_value(const std::string& opt_key, const ConfigOption *opt_old_machine, const ConfigOption *opt_new_machine, const ConfigOption *opt_new_filament, const DynamicPrintConfig& new_full_config,
-    t_config_option_keys& diff_keys, DynamicPrintConfig& filament_overrides, std::vector<int>& f_maps);
+    t_config_option_keys& diff_keys, DynamicPrintConfig& filament_overrides, std::vector<int>& f_map_indices);
 
 void handle_legacy_sla(DynamicPrintConfig &config);
 
@@ -1101,6 +1247,7 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionFloat,                infill_shift_step))
     ((ConfigOptionString,               sparse_infill_rotate_template))
     ((ConfigOptionPercent,              sparse_infill_density))
+    ((ConfigOptionBool, infill_instead_top_bottom_surfaces))
     ((ConfigOptionEnum<InfillPattern>,  sparse_infill_pattern))
     ((ConfigOptionFloat,                lateral_lattice_angle_1))
     ((ConfigOptionFloat,                lateral_lattice_angle_2))
@@ -1141,6 +1288,7 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionBool,                 gyroid_optimized))
     // Ironing options
     ((ConfigOptionEnum<IroningType>, ironing_type))
+    ((ConfigOptionBool,                 embedding_wall_into_infill))
     ((ConfigOptionEnum<InfillPattern>, ironing_pattern))
     ((ConfigOptionPercent, ironing_flow))
     ((ConfigOptionFloat, ironing_spacing))
@@ -1335,21 +1483,42 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionBools,               filament_is_support))
     ((ConfigOptionInts,                filament_printable))
     ((ConfigOptionFloats,              filament_change_length))
+    ((ConfigOptionFloats,              filament_change_length_nc))
     ((ConfigOptionFloats,              filament_cost))
     ((ConfigOptionStrings,             default_filament_colour))
     ((ConfigOptionInts,                temperature_vitrification))  //BBS
     ((ConfigOptionFloats,              filament_max_volumetric_speed))
+    // H2C TODO
+    ((ConfigOptionFloatsNullable,      filament_ramming_volumetric_speed))//extruder change
+    ((ConfigOptionFloatsNullable,      filament_ramming_travel_time_nc))//nc:nozzle change
+    ((ConfigOptionIntsNullable,        filament_pre_cooling_temperature_nc))
+    ((ConfigOptionFloatsNullable,      filament_max_volumetric_speed_nc))
+    ((ConfigOptionFloatsNullable,      filament_ramming_volumetric_speed_nc))
+    ((ConfigOptionFloatsNullable,      filament_preheat_temperature_delta))
     ((ConfigOptionInts,                required_nozzle_HRC))
     ((ConfigOptionEnum<FilamentMapMode>, filament_map_mode))
     ((ConfigOptionInts,                filament_map))
+    // H2C TODO
+    ((ConfigOptionInts,                filament_volume_map))
+    ((ConfigOptionInts,                filament_nozzle_map))
+    ((ConfigOptionInts,                filament_map_2)) //used for multi nozzle, map filament to the index identified by extruder+nozzle_volume_type
+    ((ConfigOptionFloat,               machine_hotend_change_time))
+    ((ConfigOptionBool,                group_algo_with_time))
     //((ConfigOptionInts,                filament_extruder_id))
     ((ConfigOptionStrings,             filament_extruder_variant))
     ((ConfigOptionBool,                support_object_skip_flush))
     ((ConfigOptionEnum<BedTempFormula>, bed_temperature_formula))
     ((ConfigOptionInts,                physical_extruder_map))
+    ((ConfigOptionFloatsNullable,      hotend_cooling_rate))
+    ((ConfigOptionFloatsNullable,      hotend_heating_rate))
+    ((ConfigOptionBool,                enable_pre_heating))
     ((ConfigOptionIntsNullable,        nozzle_flush_dataset))
     ((ConfigOptionFloatsNullable,      filament_flush_volumetric_speed))
     ((ConfigOptionIntsNullable,        filament_flush_temp))
+    ((ConfigOptionFloatsNullable,      filament_cooling_before_tower))
+    ((ConfigOptionFloat,               wipe_tower_center_pos_x))
+    ((ConfigOptionFloat,               wipe_tower_center_pos_y))
+    ((ConfigOptionBool,                wipe_tower_center_pos_valid))
     // BBS
     ((ConfigOptionBool,                scan_first_layer))
     ((ConfigOptionEnum<PowerLossRecoveryMode>, enable_power_loss_recovery))
@@ -1393,6 +1562,7 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionString,              file_start_gcode))
     ((ConfigOptionString,              machine_start_gcode))
     ((ConfigOptionStrings,             filament_start_gcode))
+    ((ConfigOptionFloatsNullable,      filament_retract_length_nc))
     ((ConfigOptionBool,                single_extruder_multi_material))
     ((ConfigOptionBool,                manual_filament_change))
     ((ConfigOptionBool,                single_extruder_multi_material_priming))
@@ -1411,11 +1581,19 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionInt,                 nozzle_hrc))
     ((ConfigOptionBool,                auxiliary_fan))
     ((ConfigOptionBool,                support_air_filtration))
+    // H2C TODO
+    ((ConfigOptionBool,                support_cooling_filter))
+    ((ConfigOptionBool,                cooling_filter_enabled))
+    ((ConfigOptionBool,                auto_disable_filter_on_overheat))
+    ((ConfigOptionIntsNullable,        extruder_max_nozzle_count))
     ((ConfigOptionEnum<PrinterStructure>,printer_structure))
     ((ConfigOptionBool,                support_chamber_temp_control))
     ((ConfigOptionEnumsGeneric,        extruder_type))
     ((ConfigOptionEnumsGeneric,        nozzle_volume_type))
     ((ConfigOptionStrings,             extruder_ams_count))
+    // H2C TODO
+    ((ConfigOptionStrings,             extruder_nozzle_stats))
+    ((ConfigOptionEnum<PrimeVolumeMode>,prime_volume_mode))
     ((ConfigOptionInts,                printer_extruder_id))
     ((ConfigOptionInt,                 master_extruder_id))
     ((ConfigOptionStrings,             printer_extruder_variant))
@@ -1440,7 +1618,12 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionFloat,               extra_loading_move))
     ((ConfigOptionFloat,               machine_load_filament_time))
     ((ConfigOptionFloat,               machine_tool_change_time))
+    // Wire machine_prepare_compensation_time from JSON profiles into C++ config
+    // so GCodeProcessor can read the G29 bed-leveling duration per-machine instead of hardcoded 260s.
+    ((ConfigOptionFloat,               machine_prepare_compensation_time))
     ((ConfigOptionFloat,               machine_unload_filament_time))
+    // H2C TODO
+    ((ConfigOptionFloat,               machine_switch_extruder_time))
     ((ConfigOptionFloats,              filament_loading_speed))
     ((ConfigOptionFloats,              filament_loading_speed_start))
     ((ConfigOptionFloats,              filament_unloading_speed))
@@ -1449,7 +1632,6 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionInts,                filament_cooling_moves))
     ((ConfigOptionFloats,              filament_cooling_initial_speed))
     ((ConfigOptionFloats,              filament_minimal_purge_on_wipe_tower))
-    ((ConfigOptionFloatsNullable,      filament_cooling_before_tower))
     ((ConfigOptionFloats,              filament_tower_interface_pre_extrusion_dist))
     ((ConfigOptionFloats,              filament_tower_interface_pre_extrusion_length))
     ((ConfigOptionFloats,              filament_tower_ironing_area))
@@ -1628,6 +1810,9 @@ PRINT_CONFIG_CLASS_DERIVED_DEFINE(
     // BBS: move from PrintObjectConfig
     ((ConfigOptionBool, independent_support_layer_height))
     ((ConfigOptionBool,               combine_brims))
+    // H2C TODO
+    ((ConfigOptionFloats,             filament_prime_volume))
+    ((ConfigOptionFloats,             filament_prime_volume_nc))
     // SoftFever
     ((ConfigOptionPercents,            filament_shrink))
     ((ConfigOptionPercents,            filament_shrinkage_compensation_z))
@@ -1653,8 +1838,6 @@ PRINT_CONFIG_CLASS_DERIVED_DEFINE(
     ((ConfigOptionPoint,               bed_mesh_max))
     ((ConfigOptionPoint,               bed_mesh_probe_distance))
     ((ConfigOptionFloat,               adaptive_bed_mesh_margin))
-
-
 )
 
 // This object is mapped to Perl as Slic3r::Config::Full.
@@ -2026,8 +2209,8 @@ Points get_bed_shape(const PrintConfig &cfg, bool use_share = false);
 Points get_bed_shape(const SLAPrinterConfig &cfg);
 Slic3r::Polygons get_bed_excluded_area(const PrintConfig& cfg);
 Slic3r::Polygon get_bed_shape_with_excluded_area(const PrintConfig& cfg, bool use_share = false);
-bool has_skirt(const DynamicPrintConfig& cfg);
-float get_real_skirt_dist(const DynamicPrintConfig& cfg);
+bool has_skirt(const ConfigBase& cfg);
+float get_real_skirt_dist(const ConfigBase& cfg);
 
 // ModelConfig is a wrapper around DynamicPrintConfig with an addition of a timestamp.
 // Each change of ModelConfig is tracked by assigning a new timestamp from a global counter.
@@ -2153,6 +2336,7 @@ static void set_flush_volumes_matrix(std::vector<T> &out_matrix, const std::vect
 }
 
 size_t get_extruder_index(const GCodeConfig& config, unsigned int filament_id);
+size_t get_config_idx_for_filament(const GCodeConfig& config, unsigned int filament_id);
 
 } // namespace Slic3r
 

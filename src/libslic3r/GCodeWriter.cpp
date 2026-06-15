@@ -512,6 +512,8 @@ std::string GCodeWriter::enable_power_loss_recovery(PowerLossRecoveryMode mode)
     const bool enable = mode == PowerLossRecoveryMode::Enable;
 
     if (m_is_bbl_printers) {
+        // BBL firmware uses these exact comments for PLR state transitions
+        gcode << (enable ? "; open powerlost recovery\n" : "; close powerlost recovery\n");
         gcode << "M1003 S" << (enable ? "1" : "0");
     }
     else if (FLAVOR_IS(gcfMarlinFirmware)) {
@@ -519,7 +521,7 @@ std::string GCodeWriter::enable_power_loss_recovery(PowerLossRecoveryMode mode)
     } else {
         return std::string();
     }
-    if (GCodeWriter::full_gcode_comment) gcode << " ; set Power-loss Recovery";
+    if (!m_is_bbl_printers && GCodeWriter::full_gcode_comment) gcode << " ; set Power-loss Recovery";
     gcode << "\n";
     return gcode.str();
 }
@@ -562,7 +564,7 @@ std::string GCodeWriter::toolchange_prefix() const
     return gcode;
 }
 
-std::string GCodeWriter::toolchange(unsigned int filament_id)
+std::string GCodeWriter::toolchange(unsigned int filament_id, int nozzle_id)
 {
     // set the new extruder
     auto filament_extruder_iter = Slic3r::lower_bound_by_predicate(m_filament_extruders.begin(), m_filament_extruders.end(), [filament_id](const Extruder &e) { return e.id() < filament_id; });
@@ -574,8 +576,11 @@ std::string GCodeWriter::toolchange(unsigned int filament_id)
     // if we are running a single-extruder setup, just set the extruder and return nothing
     std::ostringstream gcode;
     if (this->multiple_extruders || (this->config.filament_diameter.values.size() > 1 && !is_bbl_printers())) {
-        // Orca: call toolchange_prefix() to get the correct command prefix based on the configuration and flavor.
-        gcode << this->toolchange_prefix() << filament_id;
+        // BBL printers: emit M1020 S<filament> H<nozzle_id> for multi-nozzle support
+        if (this->m_is_bbl_printers && nozzle_id >= 0)
+            gcode << "M1020 S" << filament_id << " H" << nozzle_id;
+        else
+            gcode << this->toolchange_prefix() << filament_id;
         if (GCodeWriter::full_gcode_comment)
             gcode << " ; change extruder";
         gcode << "\n";
@@ -743,7 +748,10 @@ std::string GCodeWriter::travel_to_xyz(const Vec3d &point, const std::string &co
                 w0.emit_comment(GCodeWriter::full_gcode_comment, comment);
                 slop_move = w0.string();
             }
-            else if (m_to_lift_type == LiftType::NormalLift) {
+            else if (m_to_lift_type == LiftType::NormalLift
+                     || (m_to_lift_type == LiftType::SpiralLift && !this->is_current_position_clear())) {
+                // BBL 84e82b25a: SpiralLift needs a known starting position to plot the helix; if
+                // we can't see one, fall back to a vertical lift instead of emitting nothing.
                 slop_move = _travel_to_z(target.z(), "normal lift Z");
             }
         }
@@ -1080,6 +1088,19 @@ std::string GCodeWriter::unretract()
     return gcode;
 }
 
+double GCodeWriter::get_extruder_retracted_length(const int filament_id)
+{
+    double res = 0.0;
+    auto   filament_extruder_iter = Slic3r::lower_bound_by_predicate(m_filament_extruders.begin(), m_filament_extruders.end(), [filament_id](const Extruder &e) { return e.id() < filament_id; });
+    assert(filament_extruder_iter != m_filament_extruders.end() && filament_extruder_iter->id() == filament_id);
+
+    if (filament_extruder_iter->is_share_extruder())
+        res = filament_extruder_iter->get_share_retracted_length();
+    else
+        res = filament_extruder_iter->get_single_retracted_length();
+
+    return res;
+}
 
 std::string GCodeWriter::unlift()
 {
@@ -1197,13 +1218,12 @@ void GCodeWriter::add_object_change_labels(std::string& gcode)
     add_object_start_labels(gcode);
 }
 
-std::string GCodeWriter::set_extruder(unsigned int filament_id)
+std::string GCodeWriter::set_extruder(unsigned int filament_id, int nozzle_id)
 {
     auto filament_ext_it = Slic3r::lower_bound_by_predicate(m_filament_extruders.begin(), m_filament_extruders.end(), [filament_id](const Extruder &e) { return e.id() < filament_id; });
     unsigned int extruder_id = filament_ext_it->extruder_id();
     assert(filament_ext_it != m_filament_extruders.end() && filament_ext_it->id() == filament_id);
-    //TODO: optmize here, pass extruder_id to toolchange
-    return this->need_toolchange(filament_id) ? this->toolchange(filament_id) : "";
+    return this->need_toolchange(filament_id) ? this->toolchange(filament_id, nozzle_id) : "";
 }
 
 void GCodeWriter::init_extruder(unsigned int filament_id)

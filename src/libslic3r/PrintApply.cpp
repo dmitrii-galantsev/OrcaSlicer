@@ -240,7 +240,10 @@ static t_config_option_keys print_config_diffs(
         const ConfigOption *opt_new_filament = std::binary_search(extruder_retract_keys.begin(), extruder_retract_keys.end(), opt_key) ? new_full_config.option(filament_prefix + opt_key) : nullptr;
 
         if (opt_new_filament != nullptr) {
-            compute_filament_override_value(opt_key, opt_old, opt_new, opt_new_filament, new_full_config, print_diff, filament_overrides, filament_maps);
+            std::vector<int> filament_map_indices(filament_maps.size(), 0);
+            for (int i = 0; i < filament_maps.size(); i++)
+                filament_map_indices[i] = filament_maps[i] - 1;
+            compute_filament_override_value(opt_key, opt_old, opt_new, opt_new_filament, new_full_config, print_diff, filament_overrides, filament_map_indices);
         } else if (*opt_new != *opt_old) {
             //BBS: add plate_index logic for wipe_tower_x/wipe_tower_y
             if (!opt_key.compare("wipe_tower_x") || !opt_key.compare("wipe_tower_y")) {
@@ -1118,6 +1121,83 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
 
     //BBS: add more logs
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(", Line %1%: enter")%__LINE__;
+
+    // H2C Vortek: Check if the printer is BBL and has a multi-extruder / multi-nozzle configuration (Vortek).
+    const bool is_bbl_printers = this->is_BBL_printer();
+    const bool is_h2c_multi_nozzle = is_bbl_printers &&
+        (m_config.nozzle_diameter.size() > 1) &&
+        (m_config.extruder_max_nozzle_count.values.size() > 1) &&
+        (m_config.extruder_max_nozzle_count.values[1] > 1);
+
+    // H2C Vortek: If it is a multi-nozzle H2C configuration, handle initialization and preservation
+    // of the nozzle map to avoid resetting it to all zeros.
+    if (is_h2c_multi_nozzle) {
+        auto opt_new_nozzle_map = new_full_config.option<ConfigOptionInts>("filament_nozzle_map");
+        auto opt_old_nozzle_map = m_full_print_config.option<ConfigOptionInts>("filament_nozzle_map");
+        if (opt_new_nozzle_map && opt_old_nozzle_map) {
+            auto is_all_zeros = [](const std::vector<int>& v) {
+                for (int val : v) {
+                    if (val != 0) return false;
+                }
+                return true;
+            };
+            // If the incoming nozzle map from the UI is empty or contains all zeros (e.g. when loading a new 3MF),
+            // we prevent using this zero mapping, which would cause all filaments to print from a single nozzle.
+            if (is_all_zeros(opt_new_nozzle_map->values)) {
+                // If we have a previously calculated non-zero nozzle map from a prior slicing, restore it.
+                if (!is_all_zeros(opt_old_nozzle_map->values) &&
+                    opt_new_nozzle_map->values.size() == opt_old_nozzle_map->values.size()) {
+                    {
+                        auto fmt = [](const std::vector<int>& v){ std::string s="["; for(size_t i=0;i<v.size();++i){ if(i)s+=","; s+=std::to_string(v[i]); } return s+"]"; };
+                        BOOST_LOG_TRIVIAL(warning) << "[H2C-APP] H2C printer active. Preserving calculated filament mappings in Print::apply: nozzle_map="
+                                                   << fmt(opt_old_nozzle_map->values);
+                    }
+                    opt_new_nozzle_map->values = opt_old_nozzle_map->values;
+
+                    auto map_mode_opt = new_full_config.option<ConfigOptionEnum<FilamentMapMode>>("filament_map_mode");
+                    bool is_manual = map_mode_opt && (map_mode_opt->value == FilamentMapMode::fmmManual || map_mode_opt->value == FilamentMapMode::fmmNozzleManual);
+                    if (!is_manual) {
+                        auto opt_new_filament_map = new_full_config.option<ConfigOptionInts>("filament_map");
+                        auto opt_old_filament_map = m_full_print_config.option<ConfigOptionInts>("filament_map");
+                        if (opt_new_filament_map && opt_old_filament_map &&
+                            opt_new_filament_map->values.size() == opt_old_filament_map->values.size()) {
+                            opt_new_filament_map->values = opt_old_filament_map->values;
+                        }
+
+                        auto opt_new_volume_map = new_full_config.option<ConfigOptionInts>("filament_volume_map");
+                        auto opt_old_volume_map = m_full_print_config.option<ConfigOptionInts>("filament_volume_map");
+                        if (opt_new_volume_map && opt_old_volume_map &&
+                            opt_new_volume_map->values.size() == opt_old_volume_map->values.size()) {
+                            opt_new_volume_map->values = opt_old_volume_map->values;
+                        }
+                    } else {
+                        BOOST_LOG_TRIVIAL(warning) << "[H2C-APP] Manual filament mapping active. Keeping user-specified filament_map and filament_volume_map.";
+                    }
+                } else {
+                    // Otherwise (clean start), initialize cyclic nozzle assignment on the Vortek carousel.
+                    // Assign filaments to available nozzles sequentially (e.g. 0,1,2,3,0,1...).
+                    int nozzle_count = 2;
+                    auto opt_max_nozzles = new_full_config.option<ConfigOptionIntsNullable>("extruder_max_nozzle_count");
+                    if (opt_max_nozzles && !opt_max_nozzles->values.empty()) {
+                        for (int val : opt_max_nozzles->values) {
+                            if (val > 1) {
+                                nozzle_count = val;
+                                break;
+                            }
+                        }
+                    }
+                    for (size_t i = 0; i < opt_new_nozzle_map->values.size(); ++i) {
+                        opt_new_nozzle_map->values[i] = i % nozzle_count;
+                    }
+                    {
+                        auto fmt = [](const std::vector<int>& v){ std::string s="["; for(size_t i=0;i<v.size();++i){ if(i)s+=","; s+=std::to_string(v[i]); } return s+"]"; };
+                        BOOST_LOG_TRIVIAL(warning) << "[H2C-APP] H2C printer active. Initializing zero filament nozzle map with cyclic mapping: "
+                                                   << fmt(opt_new_nozzle_map->values) << " (nozzle_count=" << nozzle_count << ")";
+                    }
+                }
+            }
+        }
+    }
     // Normalize the config.
 	new_full_config.option("print_settings_id",            true);
 	new_full_config.option("filament_settings_id",         true);
@@ -1195,7 +1275,26 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
 
     //BBS: process the filament_map related logic
     std::unordered_set<std::string> print_diff_set(print_diff.begin(), print_diff.end());
-    if (print_diff_set.find("filament_map_mode") == print_diff_set.end())
+    if (is_h2c_multi_nozzle) {
+        if (print_diff_set.find("filament_map") != print_diff_set.end()) {
+            print_diff_set.erase("filament_map");
+            m_full_print_config.option<ConfigOptionInts>("filament_map", true)->set(new_full_config.option<ConfigOptionInts>("filament_map", true));
+            m_config.filament_map = *new_full_config.option<ConfigOptionInts>("filament_map", true);
+        }
+        if (print_diff_set.find("filament_volume_map") != print_diff_set.end()) {
+            print_diff_set.erase("filament_volume_map");
+            m_full_print_config.option<ConfigOptionInts>("filament_volume_map", true)->set(new_full_config.option<ConfigOptionInts>("filament_volume_map", true));
+            m_config.filament_volume_map = *new_full_config.option<ConfigOptionInts>("filament_volume_map", true);
+        }
+        if (print_diff_set.find("filament_nozzle_map") != print_diff_set.end()) {
+            print_diff_set.erase("filament_nozzle_map");
+            m_full_print_config.option<ConfigOptionInts>("filament_nozzle_map", true)->set(new_full_config.option<ConfigOptionInts>("filament_nozzle_map", true));
+            m_config.filament_nozzle_map = *new_full_config.option<ConfigOptionInts>("filament_nozzle_map", true);
+            BOOST_LOG_TRIVIAL(warning) << "[H2C-APP] H2C active: synced filament_nozzle_map to m_config: "
+                                       << new_full_config.option<ConfigOptionInts>("filament_nozzle_map", true)->serialize();
+        }
+    }
+    if (!print_diff_set.empty() && print_diff_set.find("filament_map_mode") == print_diff_set.end())
     {
         FilamentMapMode map_mode = new_full_config.option<ConfigOptionEnum<FilamentMapMode>>("filament_map_mode", true)->value;
         if (map_mode < fmmManual) {
@@ -1207,11 +1306,38 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
                 old_opt->set(new_opt);
                 m_config.filament_map = *new_opt;
             }
+            if (print_diff_set.find("filament_volume_map") != print_diff_set.end()) {
+                print_diff_set.erase("filament_volume_map");
+                //full_config_diff.erase("filament_volume_map");
+                ConfigOptionInts* old_opt = m_full_print_config.option<ConfigOptionInts>("filament_volume_map", true);
+                ConfigOptionInts* new_opt = new_full_config.option<ConfigOptionInts>("filament_volume_map", true);
+                old_opt->set(new_opt);
+                m_config.filament_volume_map = *new_opt;
+            }
+            if (print_diff_set.find("filament_nozzle_map") != print_diff_set.end()) {
+                print_diff_set.erase("filament_nozzle_map");
+                //full_config_diff.erase("filament_nozzle_map");
+                ConfigOptionInts* old_opt = m_full_print_config.option<ConfigOptionInts>("filament_nozzle_map", true);
+                ConfigOptionInts* new_opt = new_full_config.option<ConfigOptionInts>("filament_nozzle_map", true);
+                {
+                    auto fmt = [](const std::vector<int>& v){ std::string s="["; for(size_t i=0;i<v.size();++i){ if(i)s+=","; s+=std::to_string(v[i]); } return s+"]"; };
+                    BOOST_LOG_TRIVIAL(warning) << "[H2C-APP] (auto-mode-block) erasing nozzle_map diff & overwriting old=" << fmt(old_opt->values) << " <- new=" << fmt(new_opt->values);
+                }
+                old_opt->set(new_opt);
+                m_config.filament_nozzle_map = *new_opt;
+            }
         }
         else {
             print_diff_set.erase("extruder_ams_count");
+            if (map_mode == fmmManual) {
+                // this param is not used in gui studio
+                print_diff_set.erase("filament_nozzle_map");
+            }
             std::vector<int> old_filament_map = m_config.filament_map.values;
             std::vector<int> new_filament_map = new_full_config.option<ConfigOptionInts>("filament_map", true)->values;
+
+            std::vector<int> old_filament_volume_map = m_config.filament_volume_map.values;
+            std::vector<int> new_filament_volume_map = new_full_config.option<ConfigOptionInts>("filament_volume_map", true)->values;
 
             if (old_filament_map.size() == new_filament_map.size())
             {
@@ -1232,6 +1358,32 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
         }
         if (print_diff_set.size() != print_diff.size())
             print_diff.assign(print_diff_set.begin(), print_diff_set.end());
+    }
+    // H2C TODO
+    // //filament_map_2
+    // m_config.filament_map_2.values = filament_maps;
+    // auto opt_extruder_type = dynamic_cast<const ConfigOptionEnumsGeneric*>(new_full_config.option("extruder_type"));
+    // auto opt_filament_volume_maps = dynamic_cast<const ConfigOptionInts*>(new_full_config.option("filament_volume_map"));
+    // auto opt_nozzle_volume_type = dynamic_cast<const ConfigOptionEnumsGeneric*>(new_full_config.option("nozzle_volume_type"));
+    // for (int index = 0; index < filament_maps.size(); index++)
+    // {
+    //     ExtruderType extruder_type = (ExtruderType)(opt_extruder_type->get_at(filament_maps[index] - 1));
+    //     NozzleVolumeType nozzle_volume_type = (NozzleVolumeType)(opt_nozzle_volume_type->get_at(filament_maps[index] - 1));
+    //     if ((extruder_volume_type_count > extruder_count) && opt_filament_volume_maps && (opt_filament_volume_maps->values.size() > index))
+    //             nozzle_volume_type = (NozzleVolumeType)(opt_filament_volume_maps->values[index]);
+    //     m_config.filament_map_2.values[index] = new_full_config.get_index_for_extruder(filament_maps[index], "print_extruder_id", extruder_type, nozzle_volume_type, "print_extruder_variant");
+    // }
+
+    // H2C fix: capture and clear the auto-filament-map flag BEFORE any diff logic.
+    // If set, process() just finished and updated m_config/m_full_print_config with
+    // auto-computed filament maps + variant-resolved values.  The GUI-side config
+    // (new_full_config) hasn't caught up yet, so diffs are expected but spurious.
+    // We let ALL config updates proceed normally (so m_full_print_config syncs to
+    // the GUI values) but force UNCHANGED at the end to prevent a restart loop.
+    const bool suppress_restart_for_auto_filament_map = m_has_auto_filament_map_result;
+    if (suppress_restart_for_auto_filament_map) {
+        m_has_auto_filament_map_result = false;
+        BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ": auto_filament_map flag captured — will suppress restart";
     }
 
     // Do not use the ApplyStatus as we will use the max function when updating apply_status.
@@ -1257,7 +1409,7 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
     bool   num_extruders_changed  = false;
     if (! full_config_diff.empty()) {
         //BBS: add more logs
-        BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(" %1%: found full_config_diff changed.")%__LINE__;
+        BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(" %1%: found full_config_diff changed")%__LINE__;
         update_apply_status(this->invalidate_step(psGCodeExport));
         m_placeholder_parser.clear_config();
         // clear_config() wiped the constructor-set "version"; restore it for custom G-code.
@@ -1280,6 +1432,12 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
 	    // Handle changes to regions config defaults
 	    m_default_region_config.apply_only(new_full_config, region_diff, true);
         //m_full_print_config = std::move(new_full_config);
+        {
+            auto fmt_vec_opt = [](const ConfigOption* opt){ if(!opt) return std::string("(null)"); auto* v = dynamic_cast<const ConfigOptionInts*>(opt); if(!v) return std::string("(not_ints)"); std::string s="["; for(size_t i=0;i<v->values.size();++i){ if(i)s+=","; s+=std::to_string(v->values[i]); } return s+"]"; };
+            BOOST_LOG_TRIVIAL(warning) << "[H2C-APP] (line 1303) overwriting m_full_print_config: old.filament_nozzle_map=" << fmt_vec_opt(m_full_print_config.option("filament_nozzle_map"))
+                << " new.filament_nozzle_map=" << fmt_vec_opt(new_full_config.option("filament_nozzle_map"))
+                << " (m_config.filament_nozzle_map=" << fmt_vec_opt(m_config.option("filament_nozzle_map")) << ")";
+        }
         m_full_print_config = new_full_config;
         if (num_extruders  != m_config.filament_diameter.size()) {
             num_extruders  = m_config.filament_diameter.size();
@@ -1784,6 +1942,17 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
 	//BBS: add timestamp logic
 	if (apply_status != APPLY_STATUS_UNCHANGED)
 		m_modified_count++;
+
+	// H2C fix: If the auto-filament-map flag was set, all diffs were caused by
+	// process() modifying m_config/m_full_print_config (filament maps, variant
+	// speeds, etc.).  The configs above have been synced to new_full_config, so
+	// the NEXT apply() will see an empty diff.  Force UNCHANGED now to prevent
+	// Plater from restarting the background process in an infinite loop.
+	if (suppress_restart_for_auto_filament_map && apply_status != APPLY_STATUS_UNCHANGED) {
+		BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(" %1%: H2C forcing UNCHANGED (was %2%) — auto filament map suppression")%__LINE__ %apply_status;
+		apply_status = APPLY_STATUS_UNCHANGED;
+	}
+
 	BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(" %1%: finished,  this %2%, m_modified_count %3%, apply_status %4%, m_support_used %5%")%__LINE__ %this %m_modified_count %apply_status %m_support_used;
 	return static_cast<ApplyStatus>(apply_status);
 }

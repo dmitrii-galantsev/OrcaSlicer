@@ -258,6 +258,9 @@ struct SurfaceFillParams
     size_t 			idx = 0;
 	// Infill speed setting for the effective extrusion role.
 	float role_speed = 0;
+	// BBL e04b44c8b: per-region first_layer_flow_ratio must factor into the merge key so initial-layer
+	// regions with different ratios stay separate. Default 1.0 means non-initial layers keep merging.
+	float			first_layer_flow_ratio = 1.f;
 
     // Params for lattice infill angles
     float lateral_lattice_angle_1 = 0.f;
@@ -297,6 +300,7 @@ struct SurfaceFillParams
 		RETURN_COMPARE_NON_EQUAL_TYPED(unsigned, bridge);
 		RETURN_COMPARE_NON_EQUAL_TYPED(unsigned, extrusion_role);
 		RETURN_COMPARE_NON_EQUAL(role_speed);
+		RETURN_COMPARE_NON_EQUAL(first_layer_flow_ratio);
         RETURN_COMPARE_NON_EQUAL(lateral_lattice_angle_1);
 		RETURN_COMPARE_NON_EQUAL(lateral_lattice_angle_2);
 		RETURN_COMPARE_NON_EQUAL(symmetric_infill_y_axis);
@@ -324,6 +328,7 @@ struct SurfaceFillParams
 				this->flow                    == rhs.flow                    &&
 				this->extrusion_role          == rhs.extrusion_role          &&
 				this->role_speed              == rhs.role_speed              &&
+				this->first_layer_flow_ratio  == rhs.first_layer_flow_ratio  &&
                 this->lateral_lattice_angle_1 == rhs.lateral_lattice_angle_1 &&
 				this->lateral_lattice_angle_2 == rhs.lateral_lattice_angle_2 &&
 				this->infill_lock_depth       == rhs.infill_lock_depth       &&
@@ -862,9 +867,12 @@ std::vector<SurfaceFill> group_fills(const Layer &layer, LockRegionParam &lock_p
 		        const PrintRegionConfig &region_config = layerm.region().config();
 		        FlowRole extrusion_role = surface.is_top() ? frTopSolidInfill : (surface.is_solid() ? frSolidInfill : frInfill);
 		        bool     is_bridge 	    = layer.id() > 0 && surface.is_bridge();
+		        if (layer.id() == 0)
+		            params.first_layer_flow_ratio = region_config.first_layer_flow_ratio.value;
 		        params.extruder 	 = layerm.region().extruder(extrusion_role);
 		        params.pattern 		 = region_config.sparse_infill_pattern.value;
 		        params.density       = float(region_config.sparse_infill_density);
+                params.multiline	 = int(region_config.fill_multiline);
                 params.lateral_lattice_angle_1 = region_config.lateral_lattice_angle_1;
                 params.lateral_lattice_angle_2 = region_config.lateral_lattice_angle_2;
                 params.infill_overhang_angle = region_config.infill_overhang_angle;
@@ -1477,6 +1485,8 @@ Polylines Layer::generate_sparse_infill_polylines_for_anchoring(FillAdaptive::Oc
         // apply half spacing using this flow's own spacing and generate infill
         FillParams params;
         params.density           = float(0.01 * surface_fill.params.density);
+		params.multiline        = surface_fill.params.multiline;
+        params.pattern           = surface_fill.params.pattern;
         params.dont_adjust       = false; //  surface_fill.params.dont_adjust;
         params.anchor_length     = surface_fill.params.anchor_length;
         params.anchor_length_max = surface_fill.params.anchor_length_max;
