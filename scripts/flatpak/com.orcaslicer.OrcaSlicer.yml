@@ -167,6 +167,22 @@ modules:
       - type: dir
         path: ../../deps
         dest: deps
+        # Exclude host/native build artifacts. Without this, flatpak-builder
+        # copies AND checksums the entire deps/ tree — including deps/build,
+        # deps/build-dbginfo (tens of GB of native build output) and the
+        # download cache. Those dirs change on every local/native build, so the
+        # orca_deps module cache-misses every run and triggers a full ~30 min
+        # rebuild of Boost/CGAL/OCCT/OpenCV/etc. Skipping them keeps the source
+        # checksum stable (cache hits) and the copy tiny. The flatpak build does
+        # not use these dirs — it builds into deps/build_flatpak from the
+        # pre-downloaded external-packages sources below. (On a clean Flathub
+        # checkout these paths simply don't exist, so skip is a no-op there.)
+        skip:
+          - build
+          - build-dbginfo
+          - build_flatpak
+          - DL_CACHE
+          - AGENT_CODE_INFO.md
 
       # ---------------------------------------------------------------
       # Pre-downloaded dependency archives

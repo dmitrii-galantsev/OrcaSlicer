@@ -346,17 +346,64 @@ if [[ "$NO_DEBUGINFO" == true ]]; then
     echo -e "${YELLOW}Debug info disabled (using temp manifest)${NC}"
 fi
 
+# Make the deps module cacheable.
+#
+# flatpak-builder checksums a `type: dir` source with a RANDOM value (see
+# builder-source-dir.c: "We can't realistically checksum a directory, so always
+# rebuild"), so the orca_deps module — and with it the ~15 min Boost/CGAL/OCCT/
+# OpenCV/OpenVDB dependency build — was rebuilt on EVERY run regardless of a warm
+# ccache. We repack deps/ into a *deterministic* tarball and rewrite the
+# orca_deps source as a content-addressed `type: archive`. When deps/ is
+# unchanged the sha256 is identical, so flatpak-builder gets a cache hit and
+# skips the deps build entirely. The exclude list mirrors the manifest's `skip:`
+# and the rsync policy in build_slicer_flatpak.sh (drop multi-GB native build
+# artifacts). The checked-in manifest keeps `type: dir` for Flathub, which always
+# builds from a clean checkout where caching is moot.
+DEPS_TARBALL="$(pwd)/$BUILD_DIR/deps-src.tar"
+echo -e "${YELLOW}Packing deterministic deps tarball (cacheable deps module)...${NC}"
+tar --sort=name --format=gnu --mtime='UTC 2020-01-01' --owner=0 --group=0 --numeric-owner \
+    --exclude=./build --exclude=./build-dbginfo --exclude=./build_flatpak \
+    --exclude=./DL_CACHE --exclude=./AGENT_CODE_INFO.md \
+    -cf "$DEPS_TARBALL" -C deps .
+DEPS_SHA=$(sha256sum "$DEPS_TARBALL" | cut -d' ' -f1)
+echo -e "${GREEN}deps tarball sha256: $DEPS_SHA${NC}"
+python3 - "$MANIFEST" "$DEPS_TARBALL" "$DEPS_SHA" <<'PYEOF'
+import sys, yaml
+manifest_path, tarball, sha = sys.argv[1], sys.argv[2], sys.argv[3]
+with open(manifest_path) as f:
+    doc = yaml.safe_load(f)
+swapped = False
+for mod in doc.get('modules', []):
+    if not isinstance(mod, dict) or mod.get('name') != 'orca_deps':
+        continue
+    sources = []
+    for src in mod.get('sources', []):
+        if isinstance(src, dict) and src.get('type') == 'dir':
+            sources.append({'type': 'archive', 'path': tarball, 'sha256': sha,
+                            'dest': 'deps', 'strip-components': 1})
+            swapped = True
+        else:
+            sources.append(src)
+    mod['sources'] = sources
+if not swapped:
+    sys.exit('orca_deps: no type:dir source found to swap into an archive')
+with open(manifest_path, 'w') as f:
+    yaml.safe_dump(doc, f, default_flow_style=False, sort_keys=False, width=4096)
+PYEOF
+echo -e "${GREEN}orca_deps rewritten to content-addressed archive (cache-friendly)${NC}"
+
 if ! flatpak-builder \
     "${BUILDER_ARGS[@]}" \
     "$BUILD_DIR/build-dir" \
     "$MANIFEST"; then
     echo -e "${RED}Error: flatpak-builder failed${NC}"
     echo -e "${YELLOW}Check the build log above for details${NC}"
-    rm -f "$MANIFEST"
+    rm -f "$MANIFEST" "$DEPS_TARBALL"
     exit 1
 fi
 
-# Clean up generated manifest
+# Clean up generated manifest (keep DEPS_TARBALL: its mtime/content are stable so
+# it can be reused, but it is cheap to regenerate and lives under $BUILD_DIR).
 rm -f "$MANIFEST"
 
 # Create bundle
