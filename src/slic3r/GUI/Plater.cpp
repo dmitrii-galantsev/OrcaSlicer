@@ -9914,9 +9914,10 @@ void Plater::priv::set_current_panel(wxPanel* panel, bool no_slice)
         return;
 
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": current_panel %1%, new_panel %2%")%current_panel%panel;
-#ifdef __WXMAC__
+    // Force a synchronous render once the new panel is both shown and reloaded, so the
+    // stale GL framebuffer of the previous view is not visible for a frame. Only needed
+    // when switching away from an existing panel (skip the very first activation).
     bool force_render = (current_panel != nullptr);
-#endif // __WXMAC__
 
     //BBS: add slice logic when switch to preview page
     auto do_reslice = [this, no_slice]() {
@@ -10049,18 +10050,8 @@ void Plater::priv::set_current_panel(wxPanel* panel, bool no_slice)
 
     // to reduce flickering when changing view, first set as visible the new current panel
     for (wxPanel* p : panels) {
-        if (p == current_panel) {
-#ifdef __WXMAC__
-            // On Mac we need also to force a render to avoid flickering when changing view
-            if (force_render) {
-                if (p == view3D)
-                    dynamic_cast<View3D*>(p)->get_canvas3d()->render();
-                else if (p == preview)
-                    dynamic_cast<Preview*>(p)->get_canvas3d()->render();
-            }
-#endif // __WXMAC__
+        if (p == current_panel)
             p->Show();
-        }
     }
     // then set to invisible the other
     for (wxPanel* p : panels) {
@@ -10210,6 +10201,18 @@ void Plater::priv::set_current_panel(wxPanel* panel, bool no_slice)
     }
 
     current_panel->SetFocusFromKbd();
+
+    // The panel is now shown and its scene/print has been reloaded above. Force a
+    // synchronous render so the freshly-shown canvas paints current data instead of
+    // briefly leaking the previous view's stale framebuffer (visible on GTK/Linux).
+    if (force_render) {
+        if (current_panel == view3D)
+            view3D->get_canvas3d()->render();
+        else if (current_panel == preview)
+            preview->get_canvas3d()->render();
+        else if (current_panel == assemble_view)
+            assemble_view->get_canvas3d()->render();
+    }
 
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": successfully, exit");
 }
