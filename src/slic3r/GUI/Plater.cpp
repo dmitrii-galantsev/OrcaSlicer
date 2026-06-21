@@ -8764,10 +8764,26 @@ unsigned int Plater::priv::update_background_process(bool force_validation, bool
                 if (obj_ && obj_->is_multi_extruders()) {
                     auto* nozzle_system = obj_->GetNozzleSystem();
                     if (nozzle_system) {
+                        // Only seed nozzles whose physical diameter is actually used by this
+                        // print. Otherwise a nozzle of the wrong diameter still mounted from a
+                        // previous job (e.g. a 0.4 nozzle left in the carousel head while we are
+                        // slicing a 0.6 print) would, via color match, bias the nozzle mapping
+                        // toward that stale pocket and cause an unnecessary toolchange to the
+                        // wrong-diameter nozzle at print start. BBL never reuses a wrong-diameter
+                        // nozzle; restricting the seed to matching diameters mirrors that.
+                        const auto& target_diameters = background_process.fff_print()->config().nozzle_diameter.values;
+                        auto diameter_in_use = [&](float dia) {
+                            for (double td : target_diameters)
+                                if (std::fabs(static_cast<double>(dia) - td) < 0.01) return true;
+                            return false;
+                        };
                         for (const auto& [id, nozzle] : nozzle_system->GetExtNozzles()) {
                             auto clr = nozzle.GetFilamentColor();
-                            if (!clr.empty())
-                                device_nozzle_colors[id] = clr;
+                            if (clr.empty())
+                                continue;
+                            if (!diameter_in_use(nozzle.GetNozzleDiameter()))
+                                continue;
+                            device_nozzle_colors[id] = clr;
                         }
                     }
                 }
