@@ -211,6 +211,27 @@ void patch_toolchange_dyn_config(
 
         // filament_retract_length_nc is evaluated as a scalar of the incoming filament in BBL template!
         parser.set("filament_retract_length_nc", get_vec_float("filament_retract_length_nc", next_extruder, 0.0));
+
+        std::string old_variant = "Direct Drive Standard";
+        std::string new_variant = "Direct Drive Standard";
+        if (gcode.m_config.has("filament_extruder_variant")) {
+            auto opt = gcode.m_config.option<Slic3r::ConfigOptionStrings>("filament_extruder_variant");
+            if (opt) {
+                if (current_extruder < (int)opt->values.size()) old_variant = opt->values[current_extruder];
+                if (next_extruder < (int)opt->values.size()) new_variant = opt->values[next_extruder];
+            }
+        }
+        parser.set("old_extruder_variant", old_variant);
+        parser.set("new_extruder_variant", new_variant);
+
+        double new_retract = 0.0;
+        if (gcode.m_config.has("retract_length_toolchange")) {
+            auto opt = gcode.m_config.option<Slic3r::ConfigOptionFloats>("retract_length_toolchange");
+            if (opt && next_extruder < (int)opt->values.size()) {
+                new_retract = opt->values[next_extruder];
+            }
+        }
+        parser.set("new_extruder_retracted_length", new_retract);
     }
 }
 
