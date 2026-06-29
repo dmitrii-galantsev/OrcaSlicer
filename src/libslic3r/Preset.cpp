@@ -1343,7 +1343,17 @@ static std::vector<std::string> s_Preset_filament_options {/*"filament_colour", 
     "filament_long_retractions_when_cut","filament_retraction_distances_when_cut", "idle_temperature",
     //BBS filament change length while the extruder color
     "filament_change_length","filament_flush_volumetric_speed","filament_flush_temp", "filament_cooling_before_tower",
-    "long_retractions_when_ec", "retraction_distances_when_ec"
+    "long_retractions_when_ec", "retraction_distances_when_ec",
+    // Vortek (H2C) support keys
+    "filament_pre_cooling_temperature_nc",
+    "filament_ramming_volumetric_speed_nc",
+    "filament_ramming_travel_time_nc",
+    "filament_change_length_nc",
+    "filament_prime_volume_nc",
+    "filament_retract_length_nc",
+    "filament_retract_lift_nc",
+    "filament_retract_speed_nc",
+    "filament_deretract_speed_nc"
     };
 
 static std::vector<std::string> s_Preset_machine_limits_options {

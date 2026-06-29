@@ -8396,7 +8396,18 @@ std::set<std::string> filament_options_with_variant = {
     "activate_air_filtration_during_print",
     "activate_air_filtration_on_completion",
     "during_print_exhaust_fan_speed",
-    "complete_print_exhaust_fan_speed"
+    "complete_print_exhaust_fan_speed",
+    // Vortek (H2C) support keys
+    "filament_pre_cooling_temperature_nc",
+    "filament_ramming_volumetric_speed_nc",
+    "filament_ramming_travel_time_nc",
+    "filament_change_length_nc",
+    "filament_prime_volume",
+    "filament_prime_volume_nc",
+    "filament_retract_length_nc",
+    "filament_retract_lift_nc",
+    "filament_retract_speed_nc",
+    "filament_deretract_speed_nc"
 };
 
 // Parameters that are the same as the number of extruders
@@ -9676,6 +9687,8 @@ void DynamicPrintConfig::update_values_to_printer_extruders(DynamicPrintConfig& 
         }
         for (auto& key: key_set)
         {
+            if (!this->has(key))
+                continue;
             const ConfigOptionDef *optdef  = config_def->get(key);
             if (!optdef) {
                 BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(", Line %1%: can not find opt define for %2%")%__LINE__%key;
