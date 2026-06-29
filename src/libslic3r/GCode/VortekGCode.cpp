@@ -30,6 +30,9 @@ void update_layer_related_config(Slic3r::GCode& gcode, int layer_id)
     gcode.m_writer.config.filament_map.values = extruder_map;
     gcode.m_writer.config.filament_volume_map.values = volume_map;
     gcode.m_writer.config.filament_nozzle_map.values = nozzle_map;
+
+    // Register filament_pre_cooling_temperature_nc in placeholder_parser
+    gcode.placeholder_parser().set("filament_pre_cooling_temperature_nc", new Slic3r::ConfigOptionIntsNullable(gcode.m_config.filament_pre_cooling_temperature_nc));
 }
 
 void patch_toolchange_dyn_config(
@@ -101,6 +104,15 @@ void patch_toolchange_dyn_config(
         gcode.m_config.nozzle_diameter.values[extruder_id] = diameter;
         dyn_config.set_key_value("nozzle_diameter", new Slic3r::ConfigOptionFloats(gcode.m_config.nozzle_diameter.values));
         VORTEK_LOG(debug, "patched nozzle_diameter for extruder " << extruder_id << " -> " << diameter);
+    }
+
+    // 3. Dynamic Override filament_pre_cooling_temperature_nc for toolchange
+    if (!gcode.m_config.filament_pre_cooling_temperature_nc.values.empty()) {
+        auto filament_pre_cooling_temperature_nc = gcode.m_config.filament_pre_cooling_temperature_nc.values;
+        if (filament_pre_cooling_temperature_nc.size() < gcode.m_config.filament_type.values.size())
+            filament_pre_cooling_temperature_nc.resize(gcode.m_config.filament_type.values.size(), gcode.m_config.filament_pre_cooling_temperature_nc.get_at(0));
+        dyn_config.set_key_value("filament_pre_cooling_temperature_nc", new Slic3r::ConfigOptionInts(filament_pre_cooling_temperature_nc));
+        VORTEK_LOG(debug, "patched filament_pre_cooling_temperature_nc");
     }
 }
 
