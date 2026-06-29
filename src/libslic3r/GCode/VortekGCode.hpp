@@ -6,6 +6,9 @@
 namespace Slic3r {
     class GCode;
     class DynamicConfig;
+    class PlaceholderParser;
+    struct FullPrintConfig;
+    class Print;
 }
 
 namespace Vortek {
@@ -38,6 +41,24 @@ void patch_toolchange_dyn_config(
     Slic3r::DynamicConfig& dyn_config,
     int new_filament_id,
     int layer_id);
+
+/**
+ * @brief Registers all H2C/BBL-specific placeholder variables into a PlaceholderParser instance.
+ *
+ * Must be called on m_placeholder_parser_integration.parser AFTER it is initialized from
+ * print.placeholder_parser() in do_export(), because that assignment overwrites any earlier
+ * registrations made into GCode::m_placeholder_parser.
+ *
+ * @param parser  The integration parser (m_placeholder_parser_integration.parser)
+ * @param config  The full print config (GCode::m_config)
+ * @param print   Pointer to the Print object (may be nullptr)
+ */
+void register_vortek_placeholders(
+    Slic3r::PlaceholderParser& parser,
+    const Slic3r::FullPrintConfig& config,
+    const Slic3r::Print* print);
+
+
 
 } // namespace GCodeHooks
 } // namespace Vortek

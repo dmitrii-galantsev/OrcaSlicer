@@ -9,8 +9,72 @@
 namespace Vortek {
 namespace GCodeHooks {
 
+void register_vortek_placeholders(
+    Slic3r::PlaceholderParser& parser,
+    const Slic3r::FullPrintConfig& config,
+    const Slic3r::Print* print)
+{
+    // Register all H2C/BBL placeholders and NC variables if the printer supports H2C parameters.
+    // This is done early to ensure they are available even for single-nozzle plates or during early slicing stages.
+    if (!config.has("filament_pre_cooling_temperature_nc")) return;
+
+    parser.set("filament_pre_cooling_temperature_nc", new Slic3r::ConfigOptionIntsNullable(config.filament_pre_cooling_temperature_nc));
+    parser.set("filament_ramming_volumetric_speed_nc", new Slic3r::ConfigOptionFloatsNullable(config.filament_ramming_volumetric_speed_nc));
+    parser.set("filament_ramming_travel_time_nc", new Slic3r::ConfigOptionFloatsNullable(config.filament_ramming_travel_time_nc));
+    parser.set("filament_change_length_nc", new Slic3r::ConfigOptionFloats(config.filament_change_length_nc));
+    parser.set("filament_prime_volume_nc", new Slic3r::ConfigOptionFloats(config.filament_prime_volume_nc));
+    parser.set("filament_retract_length_nc", new Slic3r::ConfigOptionFloats(config.filament_retract_length_nc));
+    parser.set("filament_retract_lift_nc", new Slic3r::ConfigOptionFloats(config.filament_retract_lift_nc));
+    parser.set("filament_retract_speed_nc", new Slic3r::ConfigOptionInts(config.filament_retract_speed_nc));
+    parser.set("filament_deretract_speed_nc", new Slic3r::ConfigOptionInts(config.filament_deretract_speed_nc));
+
+    bool tower_valid = config.enable_prime_tower.value;
+    parser.set("wipe_tower_center_pos_valid", tower_valid);
+    parser.set("wipe_tower_center_pos_x", tower_valid ? (config.wipe_tower_x.values.empty() ? 95.5 : config.wipe_tower_x.values[0]) : 95.5);
+    parser.set("wipe_tower_center_pos_y", tower_valid ? (config.wipe_tower_y.values.empty() ? 336.0 : config.wipe_tower_y.values[0]) : 336.0);
+
+    parser.set("cooling_filter_enabled", false);
+    parser.set("old_extruder_variant", std::string("Direct Drive Standard"));
+    parser.set("new_extruder_variant", std::string("Direct Drive Standard"));
+    parser.set("new_extruder_retracted_length", 0.0);
+
+    std::vector<double> heat_rates = {3.5, 13.3};
+    std::vector<double> cool_rates = {1.6, 3.4};
+    parser.set("hotend_heating_rate", new Slic3r::ConfigOptionFloats(heat_rates));
+    parser.set("hotend_cooling_rate", new Slic3r::ConfigOptionFloats(cool_rates));
+
+    int first_non_support_extruder_id = 0;
+    if (print) {
+        auto non_support_extruders = print->extruders(false);
+        if (!non_support_extruders.empty()) {
+            first_non_support_extruder_id = non_support_extruders.front();
+        }
+    }
+    
+    auto get_vec_int = [&](const std::string& key, int idx, int def_val) -> int {
+        if (config.has(key)) {
+            auto opt = config.option<Slic3r::ConfigOptionInts>(key);
+            if (opt && idx < (int)opt->values.size()) return opt->values[idx];
+            auto opt_null = config.option<Slic3r::ConfigOptionIntsNullable>(key);
+            if (opt_null && idx < (int)opt_null->values.size()) return opt_null->values[idx];
+        }
+        return def_val;
+    };
+
+    int first_non_support_hotend_val = get_vec_int("filament_map_2", first_non_support_extruder_id, first_non_support_extruder_id);
+    
+    std::vector<std::string> first_non_support_filaments_vec = { std::to_string(first_non_support_extruder_id) };
+    std::vector<std::string> first_non_support_hotend_vec = { std::to_string(first_non_support_hotend_val) };
+    
+    parser.set("first_non_support_filaments", first_non_support_filaments_vec);
+    parser.set("first_non_support_hotend", first_non_support_hotend_vec);
+}
+
 void update_layer_related_config(Slic3r::GCode& gcode, int layer_id)
 {
+    // Register all H2C/BBL placeholders and NC variables
+    register_vortek_placeholders(gcode.placeholder_parser(), gcode.m_config, gcode.m_print);
+
     Slic3r::Print* print = gcode.m_print;
     if (!print) return;
 
@@ -32,62 +96,6 @@ void update_layer_related_config(Slic3r::GCode& gcode, int layer_id)
     gcode.m_writer.config.filament_map.values = extruder_map;
     gcode.m_writer.config.filament_volume_map.values = volume_map;
     gcode.m_writer.config.filament_nozzle_map.values = nozzle_map;
-
-    // Register Vortek configuration parameters in placeholder_parser
-    auto& parser = gcode.placeholder_parser();
-    parser.set("filament_pre_cooling_temperature_nc", new Slic3r::ConfigOptionIntsNullable(gcode.m_config.filament_pre_cooling_temperature_nc));
-    parser.set("filament_ramming_volumetric_speed_nc", new Slic3r::ConfigOptionFloatsNullable(gcode.m_config.filament_ramming_volumetric_speed_nc));
-    parser.set("filament_ramming_travel_time_nc", new Slic3r::ConfigOptionFloatsNullable(gcode.m_config.filament_ramming_travel_time_nc));
-    parser.set("filament_change_length_nc", new Slic3r::ConfigOptionFloats(gcode.m_config.filament_change_length_nc));
-    parser.set("filament_prime_volume_nc", new Slic3r::ConfigOptionFloats(gcode.m_config.filament_prime_volume_nc));
-    parser.set("filament_retract_length_nc", new Slic3r::ConfigOptionFloats(gcode.m_config.filament_retract_length_nc));
-    parser.set("filament_retract_lift_nc", new Slic3r::ConfigOptionFloats(gcode.m_config.filament_retract_lift_nc));
-    parser.set("filament_retract_speed_nc", new Slic3r::ConfigOptionInts(gcode.m_config.filament_retract_speed_nc));
-    parser.set("filament_deretract_speed_nc", new Slic3r::ConfigOptionInts(gcode.m_config.filament_deretract_speed_nc));
-
-    // Check H2C compatibility setup
-    if (gcode.m_config.has("filament_pre_cooling_temperature_nc")) {
-        bool tower_valid = gcode.m_config.enable_prime_tower.value;
-        parser.set("wipe_tower_center_pos_valid", tower_valid);
-        parser.set("wipe_tower_center_pos_x", tower_valid ? (gcode.m_config.wipe_tower_x.values.empty() ? 95.5 : gcode.m_config.wipe_tower_x.values[0]) : 95.5);
-        parser.set("wipe_tower_center_pos_y", tower_valid ? (gcode.m_config.wipe_tower_y.values.empty() ? 336.0 : gcode.m_config.wipe_tower_y.values[0]) : 336.0);
-
-        parser.set("cooling_filter_enabled", false);
-        parser.set("old_extruder_variant", std::string("Direct Drive Standard"));
-        parser.set("new_extruder_variant", std::string("Direct Drive Standard"));
-        parser.set("new_extruder_retracted_length", 0.0);
-
-        std::vector<double> heat_rates = {3.5, 13.3};
-        std::vector<double> cool_rates = {1.6, 3.4};
-        parser.set("hotend_heating_rate", new Slic3r::ConfigOptionFloats(heat_rates));
-        parser.set("hotend_cooling_rate", new Slic3r::ConfigOptionFloats(cool_rates));
-
-        int first_non_support_extruder_id = 0;
-        if (print) {
-            auto non_support_extruders = print->extruders(false);
-            if (!non_support_extruders.empty()) {
-                first_non_support_extruder_id = non_support_extruders.front();
-            }
-        }
-        
-        auto get_vec_int = [&](const std::string& key, int idx, int def_val) -> int {
-            if (gcode.m_config.has(key)) {
-                auto opt = gcode.m_config.option<Slic3r::ConfigOptionInts>(key);
-                if (opt && idx < (int)opt->values.size()) return opt->values[idx];
-                auto opt_null = gcode.m_config.option<Slic3r::ConfigOptionIntsNullable>(key);
-                if (opt_null && idx < (int)opt_null->values.size()) return opt_null->values[idx];
-            }
-            return def_val;
-        };
-
-        int first_non_support_hotend_val = get_vec_int("filament_map_2", first_non_support_extruder_id, first_non_support_extruder_id);
-        
-        std::vector<std::string> first_non_support_filaments_vec = { std::to_string(first_non_support_extruder_id) };
-        std::vector<std::string> first_non_support_hotend_vec = { std::to_string(first_non_support_hotend_val) };
-        
-        parser.set("first_non_support_filaments", first_non_support_filaments_vec);
-        parser.set("first_non_support_hotend", first_non_support_hotend_vec);
-    }
 }
 
 void patch_toolchange_dyn_config(

@@ -2484,7 +2484,6 @@ void GCode::_do_export(Print& print, GCodeOutputStream &file, ThumbnailsGenerato
     
     m_writer.set_is_bbl_machine(is_bbl_printers);
 
-    ::Vortek::GCodeHooks::update_layer_related_config(*this, 0);
 
     // How many times will be change_layer() called?
     // change_layer() in turn increments the progress bar status.
@@ -2712,6 +2711,11 @@ void GCode::_do_export(Print& print, GCodeOutputStream &file, ThumbnailsGenerato
     // Enable passing global variables between PlaceholderParser invocations.
     m_placeholder_parser_integration.context.global_config = std::make_unique<DynamicConfig>();
     print.update_object_placeholders(m_placeholder_parser_integration.parser.config_writable(), ".gcode");
+    // Register H2C/BBL/Vortek-specific placeholders directly into the integration parser.
+    // IMPORTANT: must happen AFTER line above — m_placeholder_parser_integration.parser is a fresh
+    // copy of print.placeholder_parser() and would overwrite any registrations made earlier into
+    // GCode::m_placeholder_parser (the object returned by gcode.placeholder_parser()).
+    ::Vortek::GCodeHooks::register_vortek_placeholders(m_placeholder_parser_integration.parser, m_config, m_print);
 
     // Get optimal tool ordering to minimize tool switches of a multi-exruder print.
     // For a print by objects, find the 1st printing object.
