@@ -493,20 +493,34 @@ void preprocess_filament_json(Slic3r::MachineObject* obj, nlohmann::json& filame
             // which erases the AMS if it sees an unmapped extruder_id of 0xE.
             ams_item["extruder_id"] = MAIN_EXTRUDER_ID;
             
+            std::optional<int> binded_switcher_pos = std::nullopt;
+            if (ams_item.contains("info")) {
+                const std::string& info = ams_item["info"].get<std::string>();
+                
+                // Extract FTS switch position from the original info string first!
+                int bind_switch_in = Slic3r::DevUtil::get_flag_bits(info, 24, 4);
+                if (bind_switch_in == 0) {
+                    binded_switcher_pos = Slic3r::VortekFilaSwitch::SwitchPos::POS_IN_B;
+                } else if (bind_switch_in == 1) {
+                    binded_switcher_pos = Slic3r::VortekFilaSwitch::SwitchPos::POS_IN_A;
+                }
+
+                // Mutate the info string to clear bits 8-11 (so it represents extruder ID 0 instead of 0xE)
+                try {
+                    uint32_t val = std::stoul(info, nullptr, 16);
+                    val = (val & ~0xF00);
+                    std::stringstream ss;
+                    ss << "0x" << std::hex << val;
+                    ams_item["info"] = ss.str();
+                } catch (...) {
+                    // Fallback
+                }
+            }
+            
             if (fts_installed) {
                 // ── FTS MODE BRANCH ──────────────────────────────────────────
                 // Store pending bindings to both physical extruders and resolve the FTS direction.
                 std::set<int> binded_extruder_set = { MAIN_EXTRUDER_ID, DEPUTY_EXTRUDER_ID };
-                std::optional<int> binded_switcher_pos = std::nullopt;
-                if (ams_item.contains("info")) {
-                    const std::string& info = ams_item["info"].get<std::string>();
-                    int bind_switch_in = Slic3r::DevUtil::get_flag_bits(info, 24, 4);
-                    if (bind_switch_in == 0) {
-                        binded_switcher_pos = Slic3r::VortekFilaSwitch::SwitchPos::POS_IN_B;
-                    } else if (bind_switch_in == 1) {
-                        binded_switcher_pos = Slic3r::VortekFilaSwitch::SwitchPos::POS_IN_A;
-                    }
-                }
                 s_pending_ams_bindings[ams_id] = { binded_extruder_set, binded_switcher_pos };
                 VORTEK_LOG(info, "preprocess_filament_json: mapped 0xE to MAIN/DEPUTY for ams_id=" << ams_id);
             } else {
