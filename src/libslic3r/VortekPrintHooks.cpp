@@ -407,6 +407,22 @@ void PrintHooks::init_vortek_params(Slic3r::PrintConfigDef* def_ptr)
     def->set_default_value(new ConfigOptionInts{0});
 }
 
+std::vector<int> PrintHooks::get_filament_nozzle_maps(const Slic3r::Print& print)
+{
+    if (print.m_config.has("filament_nozzle_map")) {
+        return print.m_config.option<Slic3r::ConfigOptionInts>("filament_nozzle_map")->values;
+    }
+    return {};
+}
+
+std::vector<int> PrintHooks::get_filament_volume_maps(const Slic3r::Print& print)
+{
+    if (print.m_config.has("filament_volume_map")) {
+        return print.m_config.option<Slic3r::ConfigOptionInts>("filament_volume_map")->values;
+    }
+    return {};
+}
+
 #undef L
 
 } // namespace Vortek

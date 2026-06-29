@@ -262,6 +262,16 @@ public:
     std::vector<int> get_filament_maps() const;
     void set_filament_maps(const std::vector<int>& f_maps);
 
+    // Vortek: filament nozzle maps
+    std::vector<int> get_filament_nozzle_maps() const;
+    void set_filament_nozzle_maps(const std::vector<int>& f_maps);
+    void clear_filament_nozzle_map();
+
+    // Vortek: filament volume maps
+    std::vector<int> get_filament_volume_maps() const;
+    void set_filament_volume_maps(const std::vector<int>& f_maps);
+    void clear_filament_volume_map();
+
     void clear_filament_map();
     void clear_filament_map_mode();
 

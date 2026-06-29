@@ -24,6 +24,9 @@ class VortekNozzleRack;
 class VortekNozzleMappingCtrl;
 class VortekFilaSwitch;
 class DevFilaSystem;
+namespace GUI {
+class PartPlate;
+}
 }
 
 namespace Vortek {
@@ -120,6 +123,7 @@ void clear_all_device_mappings(Slic3r::MachineObject* obj);
 void clear_auto_nozzle_mapping(Slic3r::MachineObject* obj);
 void preprocess_filament_json(Slic3r::MachineObject* obj, nlohmann::json& filament_json);
 void apply_pending_ams_bindings(Slic3r::DevFilaSystem* fila_system);
+bool apply_nozzle_mapping_from_device(Slic3r::MachineObject* obj, Slic3r::GUI::PartPlate* plate);
 
 } // namespace DeviceHooks
 } // namespace Vortek

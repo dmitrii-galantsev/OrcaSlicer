@@ -121,18 +121,30 @@ LoadMappingResult PlateMapping::load_from_3mf_structure(
 void PlateMapping::sync_project_config_on_load(Slic3r::DynamicConfig& proj_cfg, int filament_count)
 {
     VORTEK_LOG(info, "sync_project_config_on_load: verifying loaded map sizes");
-    if (proj_cfg.has("filament_nozzle_map")) {
-        proj_cfg.option<Slic3r::ConfigOptionInts>("filament_nozzle_map")->values.resize(filament_count, 1);
+    
+    // Сброс MQTT-зависимых флагов, которые должны приходить с принтера, а не считываться из 3MF
+    if (auto* p = proj_cfg.option<Slic3r::ConfigOptionBool>("has_filament_switcher"))
+        p->value = false;
+    if (auto* p = proj_cfg.option<Slic3r::ConfigOptionBool>("enable_filament_dynamic_map"))
+        p->value = false;
+
+    // Синхронизация filament_nozzle_map (дефолт 0 — первое сопло)
+    auto* nozzle_map = proj_cfg.opt<Slic3r::ConfigOptionInts>("filament_nozzle_map", true);
+    if ((int)nozzle_map->values.size() != filament_count) {
+        nozzle_map->values.resize(filament_count, 0);
     }
-    if (proj_cfg.has("filament_volume_map")) {
-        proj_cfg.option<Slic3r::ConfigOptionInts>("filament_volume_map")->values.resize(filament_count, 1);
+
+    // Синхронизация filament_volume_map (дефолт 1 — стандартный объем / nvtStandard)
+    auto* volume_map = proj_cfg.opt<Slic3r::ConfigOptionInts>("filament_volume_map", true);
+    if ((int)volume_map->values.size() != filament_count) {
+        volume_map->values.resize(filament_count, 1);
     }
 }
 
 void PlateMapping::patch_export_config(Slic3r::DynamicPrintConfig& cfg)
 {
     if (!cfg.has("filament_nozzle_map")) {
-        cfg.set_key_value("filament_nozzle_map", new Slic3r::ConfigOptionInts({1}));
+        cfg.set_key_value("filament_nozzle_map", new Slic3r::ConfigOptionInts({0}));
     }
     if (!cfg.has("filament_volume_map")) {
         cfg.set_key_value("filament_volume_map", new Slic3r::ConfigOptionInts({1}));

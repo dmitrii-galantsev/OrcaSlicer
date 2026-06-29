@@ -27,6 +27,8 @@
 #include "DeviceCore/DevManager.h"
 #include "DeviceCore/DevMapping.h"
 #include "DeviceCore/DevStorage.h"
+#include "DeviceCore/VortekDeviceHooks.hpp"
+#include "PartPlate.hpp"
 
 #include <wx/progdlg.h>
 #include <wx/clipbrd.h>
@@ -860,6 +862,12 @@ void SelectMachineDialog::update_select_layout(MachineObject *obj)
     load_option_vals(obj);
     if (obj && obj->get_printer_arch() == PrinterArch::ARCH_I3) { m_checkbox_list["timelapse"]->setValue("off"); } /*off timelapse on selected for n series by zhimin.zeng*/
     save_option_vals(obj);
+
+    if (obj) {
+        if (auto* plate = wxGetApp().plater()->get_partplate_list().get_curr_plate()) {
+            Vortek::DeviceHooks::apply_nozzle_mapping_from_device(obj, plate);
+        }
+    }
 
     Layout();
     Fit();
@@ -3039,6 +3047,9 @@ void SelectMachineDialog::on_selection_changed(wxCommandEvent &event)
             dev->set_selected_machine(m_printer_last_select);
         }else if (dev->get_selected_machine()->get_dev_id() != m_printer_last_select) {
             dev->set_selected_machine(m_printer_last_select);
+        }
+        if (auto* plate = wxGetApp().plater()->get_partplate_list().get_curr_plate()) {
+            Vortek::DeviceHooks::apply_nozzle_mapping_from_device(obj, plate);
         }
 
         // Has changed machine unrecoverably

@@ -1,6 +1,7 @@
 #include "Plater.hpp"
 #include "libslic3r/Config.hpp"
 #include "libslic3r/VortekPlateMapping.hpp"
+#include "slic3r/GUI/DeviceCore/VortekDeviceHooks.hpp"
 #include "libslic3r_version.h"
 
 #include <cstddef>
@@ -6334,7 +6335,7 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                             project_filament_count = config_loaded.option<ConfigOptionStrings>("filament_colour")->size();
                             partplate_list.load_from_3mf_structure(plate_data, project_filament_count);
                             if (load_config) {
-                                Vortek::PlateMapping::sync_project_config_on_load(config, project_filament_count);
+                                Vortek::PlateMapping::sync_project_config_on_load(config_loaded, project_filament_count);
                             }
                             partplate_list.update_slice_context_to_current_plate(background_process);
                             this->preview->update_gcode_result(partplate_list.get_current_slice_result());
@@ -9670,10 +9671,18 @@ void Plater::priv::on_select_preset(wxCommandEvent &evt)
                 // update plater with new config
                 q->on_config_change(wxGetApp().preset_bundle->full_config());
 
-                // Vortek: clear mappings when switching to non-H2C printer
-                const auto* print = q->get_current_print();
-                if (print && !Vortek::PlateMapping::is_h2c_multi_nozzle(print)) {
-                    Vortek::PlateMapping::clear_mappings(&partplate_list.get_current_plate()->config());
+                // Vortek: clear mappings when switching to non-H2C printer, or apply them from device
+                const auto* print = background_process.fff_print();
+                if (print) {
+                    if (!Vortek::PlateMapping::is_h2c_multi_nozzle(print)) {
+                        Vortek::PlateMapping::clear_mappings(partplate_list.get_curr_plate()->config());
+                    } else {
+                        if (auto* dev = Slic3r::GUI::wxGetApp().getDeviceManager()) {
+                            if (auto* obj = dev->get_selected_machine()) {
+                                Vortek::DeviceHooks::apply_nozzle_mapping_from_device(obj, partplate_list.get_curr_plate());
+                            }
+                        }
+                    }
                 }
             });
 
@@ -9881,10 +9890,10 @@ void Plater::priv::on_slicing_completed(wxCommandEvent & evt)
 
     if (this->printer_technology == ptFFF) {
         auto* print = background_process.fff_print();
-        auto* plate = partplate_list.get_current_plate();
+        auto* plate = partplate_list.get_curr_plate();
         if (print && plate) {
             Vortek::PlateMapping::sync_after_slicing(
-                plate->config(),
+                *plate->config(),
                 static_cast<FilamentMapMode>(print->config().filament_map_mode.value),
                 print,
                 *wxGetApp().preset_bundle

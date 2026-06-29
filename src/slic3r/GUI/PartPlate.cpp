@@ -3817,6 +3817,46 @@ void PartPlate::clear_filament_map_mode()
         m_config.erase("filament_map_mode");
 }
 
+std::vector<int> PartPlate::get_filament_nozzle_maps() const
+{
+    std::string key = "filament_nozzle_map";
+    if (m_config.has(key))
+        return m_config.option<ConfigOptionInts>(key)->values;
+
+    return {};
+}
+
+void PartPlate::set_filament_nozzle_maps(const std::vector<int>& f_maps)
+{
+    m_config.option<ConfigOptionInts>("filament_nozzle_map", true)->values = f_maps;
+}
+
+void PartPlate::clear_filament_nozzle_map()
+{
+    if (m_config.has("filament_nozzle_map"))
+        m_config.erase("filament_nozzle_map");
+}
+
+std::vector<int> PartPlate::get_filament_volume_maps() const
+{
+    std::string key = "filament_volume_map";
+    if (m_config.has(key))
+        return m_config.option<ConfigOptionInts>(key)->values;
+
+    return {};
+}
+
+void PartPlate::set_filament_volume_maps(const std::vector<int>& f_maps)
+{
+    m_config.option<ConfigOptionInts>("filament_volume_map", true)->values = f_maps;
+}
+
+void PartPlate::clear_filament_volume_map()
+{
+    if (m_config.has("filament_volume_map"))
+        m_config.erase("filament_volume_map");
+}
+
 void PartPlate::on_extruder_count_changed(int extruder_count)
 {
     if (extruder_count < 2) {

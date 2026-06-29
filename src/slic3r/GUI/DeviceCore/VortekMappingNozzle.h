@@ -57,6 +57,12 @@ public:
     // nozzle mapping
     std::unordered_map<int, int> GetNozzleMappingMap() const { return m_nozzle_mapping; }
     nlohmann::json GetNozzleMappingJson() const { return m_nozzle_mapping_json; }
+    std::vector<int> GetFilamentNozzleMap() const {
+        if (m_nozzle_mapping_json.is_array()) {
+            return m_nozzle_mapping_json.get<std::vector<int>>();
+        }
+        return {};
+    }
     void SetManualNozzleMappingByFila(int fila_id, int nozzle_pos_id);
 
     std::vector<int> GetMappedNozzlePosVecByFilaId(int fila_id) const;// return empty if not mapped

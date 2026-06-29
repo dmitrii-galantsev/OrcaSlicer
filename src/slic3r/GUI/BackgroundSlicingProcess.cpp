@@ -23,6 +23,7 @@
 #include "libslic3r/Format/SL1.hpp"
 #include "libslic3r/Thread.hpp"
 #include "libslic3r/libslic3r.h"
+#include "libslic3r/VortekPrintHooks.hpp"
 
 #include <cassert>
 #include <stdexcept>
@@ -228,10 +229,16 @@ void BackgroundSlicingProcess::process_fff()
 		BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(" %1%: gcode_result reseted, will start print::process")%__LINE__;
 		m_print->process();
 		BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(" %1%: after print::process, send slicing complete event to gui...")%__LINE__;
-        if (m_current_plate->get_real_filament_map_mode(preset_bundle.project_config) < FilamentMapMode::fmmManual) {
-            std::vector<int> f_maps = m_fff_print->get_filament_maps();
-            m_current_plate->set_filament_maps(f_maps);
-		}
+        {
+            auto mode = m_current_plate->get_real_filament_map_mode(preset_bundle.project_config);
+            if (mode < FilamentMapMode::fmmManual) {
+                m_current_plate->set_filament_maps(m_fff_print->get_filament_maps());
+                m_current_plate->set_filament_volume_maps(::Vortek::PrintHooks::get_filament_volume_maps(*m_fff_print));
+            }
+            if (mode != FilamentMapMode::fmmNozzleManual) {
+                m_current_plate->set_filament_nozzle_maps(::Vortek::PrintHooks::get_filament_nozzle_maps(*m_fff_print));
+            }
+        }
 		wxCommandEvent evt(m_event_slicing_completed_id);
 		// Post the Slicing Finished message for the G-code viewer to update.
 		// Passing the timestamp

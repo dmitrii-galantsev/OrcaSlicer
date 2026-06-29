@@ -9,6 +9,7 @@
 #include "libslic3r/PresetBundle.hpp"
 #include "libslic3r/VortekMultiNozzle.hpp"
 #include "libslic3r/VortekLog.hpp"
+#include "slic3r/GUI/PartPlate.hpp"
 
 #include <map>
 #include <vector>
@@ -505,6 +506,24 @@ void apply_pending_ams_bindings(Slic3r::DevFilaSystem* fila_system) {
         }
     }
     s_pending_ams_bindings.clear();
+}
+
+bool apply_nozzle_mapping_from_device(Slic3r::MachineObject* obj, Slic3r::GUI::PartPlate* plate) {
+    if (!obj || !plate) return false;
+
+    auto rack = get_nozzle_rack(obj->GetNozzleSystem());
+    if (!rack || !rack->IsSupported()) return false;
+
+    auto mapping = get_nozzle_mapping(obj);
+    if (!mapping) return false;
+
+    std::vector<int> nozzle_map = mapping->GetFilamentNozzleMap();
+    if (nozzle_map.empty()) return false;
+
+    plate->set_filament_map_mode(Slic3r::FilamentMapMode::fmmNozzleManual);
+    plate->set_filament_nozzle_maps(nozzle_map);
+    VORTEK_LOG(info, "apply_nozzle_mapping_from_device: applied nozzle map from MQTT/Device, mode=fmmNozzleManual");
+    return true;
 }
 
 } // namespace DeviceHooks

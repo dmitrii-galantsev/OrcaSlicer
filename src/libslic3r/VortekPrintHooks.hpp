@@ -49,11 +49,22 @@ public:
      * 
      * @param print Reference to the Print object
      * @param group_result Reference to the resolved nozzle grouping result
+     * @endif
      */
     static void update_to_config_by_nozzle_group_result(
         Slic3r::Print& print,
         const Slic3r::MultiNozzleUtils::NozzleGroupResultBase& group_result
     );
+
+    /**
+     * @brief Reads the filament nozzle mapping from the Print config.
+     */
+    static std::vector<int> get_filament_nozzle_maps(const Slic3r::Print& print);
+
+    /**
+     * @brief Reads the filament volume mapping from the Print config.
+     */
+    static std::vector<int> get_filament_volume_maps(const Slic3r::Print& print);
 };
 
 } // namespace Vortek
