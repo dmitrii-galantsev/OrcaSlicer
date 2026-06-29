@@ -1,6 +1,7 @@
 #include "DevExtruderSystem.h"
 #include "DevNozzleSystem.h"
 #include "DevUtil.h"
+#include "VortekDeviceHooks.hpp"
 
 #include "slic3r/GUI/DeviceManager.hpp"
 
@@ -112,7 +113,10 @@ void DevNozzleSystemParser::ParseV1_0(const nlohmann::json& nozzletype_json,
         }
     }
 
-    system->m_nozzles[nozzle.m_nozzle_id] = nozzle;
+    Vortek::DeviceHooks::process_nozzle_placement(system, nozzle, 0);
+    if (!Vortek::DeviceHooks::is_nozzle_on_rack_helper(system, 0)) {
+        system->m_nozzles[nozzle.m_nozzle_id] = nozzle;
+    }
 }
 
 
@@ -134,10 +138,14 @@ void DevNozzleSystemParser::ParseV2_0(const json& nozzle_json, DevNozzleSystem* 
     {
         DevNozzle nozzle_obj;
         const auto& njon = it.value();
-        nozzle_obj.m_nozzle_id = njon["id"].get<int>();
+        int raw_id = njon["id"].get<int>();
         nozzle_obj.m_diameter = njon["diameter"].get<float>();
         s_parse_nozzle_type(njon["type"].get<std::string>(), nozzle_obj);
-        system->m_nozzles[nozzle_obj.m_nozzle_id] = nozzle_obj;
+        
+        Vortek::DeviceHooks::process_nozzle_placement(system, nozzle_obj, raw_id);
+        if (!Vortek::DeviceHooks::is_nozzle_on_rack_helper(system, nozzle_obj.m_nozzle_id)) {
+            system->m_nozzles[nozzle_obj.m_nozzle_id] = nozzle_obj;
+        }
     }
 }
 }

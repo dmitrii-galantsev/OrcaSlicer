@@ -1,5 +1,9 @@
 #include "VortekMultiNozzle.hpp"
 #include "VortekLog.hpp"
+#include "PresetBundle.hpp"
+#include <numeric>
+#include <boost/log/trivial.hpp>
+#include <boost/format.hpp>
 #include <sstream>
 #include <algorithm>
 
@@ -521,4 +525,91 @@ std::vector<std::map<NozzleVolumeType, int>> get_extruder_nozzle_stats(const std
 }
 
 } // namespace MultiNozzleUtils
+
+int ExtruderNozzleStat::get_extruder_nozzle_count(int extruder_id, std::optional<NozzleVolumeType> volume_type) const
+{
+    if(extruder_id < 0 || extruder_id >= extruder_nozzle_counts.size())
+        return 0;
+    if (!volume_type.has_value())
+        return std::accumulate(extruder_nozzle_counts[extruder_id].begin(), extruder_nozzle_counts[extruder_id].end(), 0,
+            [](int sum, const std::pair<NozzleVolumeType, int>& p) { return sum + p.second; });
+
+    auto iter = extruder_nozzle_counts[extruder_id].find(*volume_type);
+    if(iter == extruder_nozzle_counts[extruder_id].end())
+        return 0;
+    return iter->second;
+}
+
+void ExtruderNozzleStat::on_printer_model_change(PresetBundle* preset_bundle)
+{
+    if (force_keep_stat)
+        return;
+    BOOST_LOG_TRIVIAL(info)<< __FUNCTION__ << boost::format(": reset extruder nozzle stat by printer model change : %1%") % preset_bundle->printers.get_selected_preset().name;
+    auto nozzle_volume_type = preset_bundle->project_config.option<ConfigOptionEnumsGeneric>("nozzle_volume_type");
+    auto max_nozzle_count = preset_bundle->printers.get_selected_preset().config.option<ConfigOptionIntsNullable>("extruder_max_nozzle_count");
+    extruder_nozzle_counts.resize(max_nozzle_count->size());
+    for (size_t eid = 0; eid < extruder_nozzle_counts.size(); ++eid) {
+        NozzleVolumeType type = nvtStandard;
+        if (eid >= nozzle_volume_type->size())
+            BOOST_LOG_TRIVIAL(error)<< __FUNCTION__ << boost::format(": eid out of bounds, use standard flow");
+        else
+            type = NozzleVolumeType(nozzle_volume_type->values[eid]);
+        set_extruder_nozzle_count(eid, type, max_nozzle_count->values[eid], true);
+    }
+}
+
+void ExtruderNozzleStat::on_printer_model_change_cli(const std::vector<int>& nozzle_volume_type, const std::vector<int>& max_nozzle_count)
+{
+    if (force_keep_stat) return;
+    extruder_nozzle_counts.resize(max_nozzle_count.size());
+    for (size_t eid = 0; eid < extruder_nozzle_counts.size(); ++eid) {
+        NozzleVolumeType type = nvtStandard;
+        if (eid >= nozzle_volume_type.size())
+            BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << boost::format(": eid out of bounds, use standard flow");
+        else
+            type = NozzleVolumeType(nozzle_volume_type[eid]);
+        set_extruder_nozzle_count(eid, type, max_nozzle_count[eid], true);
+    }
+}
+
+void ExtruderNozzleStat::on_volume_type_switch(int extruder_id, NozzleVolumeType type)
+{
+    if (data_flag == NozzleDataFlag::ndfMachine) {
+        // do nothing here
+    }
+    else {
+        int current_count = get_extruder_nozzle_count(extruder_id, std::nullopt);
+        if (extruder_id >= extruder_nozzle_counts.size()) {
+            extruder_nozzle_counts.resize(extruder_id + 1);
+        }
+        extruder_nozzle_counts[extruder_id].clear();
+        extruder_nozzle_counts[extruder_id][type] = current_count;
+    }
+}
+
+void ExtruderNozzleStat::set_extruder_nozzle_count(int extruder_id, NozzleVolumeType type, int count, bool clear)
+{
+    if (extruder_id >= extruder_nozzle_counts.size())
+        extruder_nozzle_counts.resize(extruder_id + 1);
+    if(clear)
+        extruder_nozzle_counts[extruder_id].clear();
+    extruder_nozzle_counts[extruder_id][type] = count;
+}
+
+std::vector<std::string> save_extruder_nozzle_stats_to_string(const std::vector<std::map<NozzleVolumeType,int>>& extruder_nozzle_stats)
+{
+    std::vector<std::string> extruder_nozzle_count_str;
+    for (size_t idx = 0; idx < extruder_nozzle_stats.size(); ++idx) {
+        std::ostringstream oss;
+        const auto& item = extruder_nozzle_stats[idx];
+        for (auto it = item.begin(); it != item.end(); ++it) {
+            oss << get_nozzle_volume_type_string(it->first) << "#" << it->second;
+            if (std::next(it) != item.end())
+                oss << "|";
+        }
+        extruder_nozzle_count_str.emplace_back(oss.str());
+    }
+    return extruder_nozzle_count_str;
+}
+
 } // namespace Slic3r

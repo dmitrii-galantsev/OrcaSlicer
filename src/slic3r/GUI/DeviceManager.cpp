@@ -2,6 +2,7 @@
 #include "DeviceManager.hpp"
 #include "libslic3r/Time.hpp"
 #include "libslic3r/Thread.hpp"
+#include "DeviceCore/VortekDeviceHooks.hpp"
 #include "slic3r/Utils/NetworkAgent.hpp"
 #include "GuiColor.hpp"
 
@@ -23,11 +24,15 @@
 #include "fast_float/fast_float.h"
 
 #include "DeviceCore/DevFilaSystem.h"
+#include "DeviceCore/VortekFilaSwitch.h"
 #include "DeviceCore/DevExtensionTool.h"
 #include "DeviceCore/DevExtruderSystem.h"
 #include "DeviceCore/DevNozzleSystem.h"
 #include "DeviceCore/DevBed.h"
 #include "DeviceCore/DevLamp.h"
+#include "DeviceCore/VortekMappingNozzle.h"
+#include "DeviceCore/VortekFilaSwitch.h"
+#include "DeviceCore/VortekUtilBackend.h"
 #include "DeviceCore/DevFan.h"
 #include "DeviceCore/DevStorage.h"
 
@@ -567,6 +572,7 @@ MachineObject::MachineObject(DeviceManager* manager, NetworkAgent* agent, std::s
         m_extension_tool = DevExtensionTool::Create(this);
         m_nozzle_system = new DevNozzleSystem(this);
         m_fila_system   = new DevFilaSystem(this);
+        Vortek::DeviceHooks::init_device_mappings(this);
         m_hms_system    = new DevHMS(this);
         m_config = new DevConfig(this);
 
@@ -2873,6 +2879,10 @@ int MachineObject::parse_json(std::string tunnel, std::string payload, bool key_
 
                 //supported function
                 m_config->ParseConfig(jj);
+                auto fs = Vortek::DeviceHooks::get_fila_switch(this);
+                if (fs) {
+                    fs->ParseFilaSwitchInfo(jj);
+                }
 
                 if (jj.contains("support_build_plate_marker_detect")) {
                     if (jj["support_build_plate_marker_detect"].is_boolean()) {
@@ -3000,6 +3010,10 @@ int MachineObject::parse_json(std::string tunnel, std::string payload, bool key_
 
 
             if (jj.contains("command")) {
+                auto nm = Vortek::DeviceHooks::get_nozzle_mapping(this);
+                if (nm) {
+                    nm->ParseAutoNozzleMapping(jj);
+                }
                 if (jj["command"].get<std::string>() == "ams_change_filament") {
                     if (jj.contains("errno")) {
                         if (jj["errno"].is_number()) {
@@ -3723,7 +3737,10 @@ int MachineObject::parse_json(std::string tunnel, std::string payload, bool key_
                     update_printer_preset_name();
                     update_filament_list();
                     if (jj.contains("ams")) {
-                        DevFilaSystemParser::ParseV1_0(jj, this, m_fila_system, key_field_only);
+                        nlohmann::json filament_json = jj;
+                        Vortek::DeviceHooks::preprocess_filament_json(this, filament_json);
+                        DevFilaSystemParser::ParseV1_0(filament_json, this, m_fila_system, key_field_only);
+                        Vortek::DeviceHooks::apply_pending_ams_bindings(m_fila_system);
                     }
 
                     /* vitrual tray*/
@@ -5070,6 +5087,15 @@ void MachineObject::parse_new_info(json print)
         if (device.contains("extruder")) { ExtderSystemParser::ParseV2_0(device["extruder"], m_extder_system);}
         if (device.contains("ext_tool")) { DevExtensionToolParser::ParseV2_0(device["ext_tool"], m_extension_tool); }
 
+        if (m_nozzle_system && !fun.empty()) {
+            Vortek::DeviceHooks::set_support_nozzle_rack(this, get_flag_bits(fun, 60));
+        }
+
+        Slic3r::PresetBundle* preset_bundle = Slic3r::GUI::wxGetApp().preset_bundle;
+        if (preset_bundle) {
+            Vortek::DeviceHooks::sync_machine_nozzle_inventory_to_preset(this, *preset_bundle);
+        }
+
         if (device.contains("ctc")) {
             json const& ctc = device["ctc"];
             int state = get_flag_bits(ctc["state"].get<int>(), 0, 4);
@@ -5101,88 +5127,7 @@ int MachineObject::get_flag_bits(std::string str, int start, int count) const
 
 uint32_t MachineObject::get_flag_bits_no_border(std::string str, int start_idx, int count) const
 {
-    if (start_idx < 0 || count <= 0) return 0;
-
-    try {
-        // --- 1) trim ---
-        auto ltrim = [](std::string& s) {
-            s.erase(s.begin(), std::find_if(s.begin(), s.end(),
-                [](unsigned char ch) { return !std::isspace(ch); }));
-            };
-        auto rtrim = [](std::string& s) {
-            s.erase(std::find_if(s.rbegin(), s.rend(),
-                [](unsigned char ch) { return !std::isspace(ch); }).base(), s.end());
-            };
-        ltrim(str); rtrim(str);
-
-        // --- 2) remove 0x/0X prefix ---
-        if (str.size() >= 2 && str[0] == '0' && (str[1] == 'x' || str[1] == 'X')) {
-            str.erase(0, 2);
-        }
-
-        // --- 3) keep only hex digits ---
-        std::string hex;
-        hex.reserve(str.size());
-        for (char c : str) {
-            if (std::isxdigit(static_cast<unsigned char>(c))) hex.push_back(c);
-        }
-        if (hex.empty()) return 0;
-
-        // --- 4) use size_t for all index/bit math ---
-        const size_t total_bits = hex.size() * 4ULL;
-
-        const size_t ustart = static_cast<size_t>(start_idx);
-        if (ustart >= total_bits) return 0;
-
-        const int int_bits = std::numeric_limits<uint32_t>::digits; // typically 32
-        const size_t need_bits = static_cast<size_t>(std::min(count, int_bits));
-
-        // [first_bit, last_bit]
-        const size_t first_bit = ustart;
-        const size_t last_bit = std::min(ustart + need_bits, total_bits) - 1ULL;
-        if (last_bit < first_bit) return 0;
-
-
-        const size_t right_index = hex.size() - 1ULL;
-
-        const size_t first_nibble = first_bit / 4ULL;
-        const size_t last_nibble = last_bit / 4ULL;
-
-        const size_t start_idx = right_index - last_nibble;
-        const size_t end_idx = right_index - first_nibble;
-        if (end_idx < start_idx) return 0;
-
-        const size_t sub_len = end_idx - start_idx + 1ULL;
-        if (end_idx >= hex.size()) return 0;
-
-        const std::string sub_hex = hex.substr(start_idx, sub_len);
-
-        unsigned long long chunk = std::stoull(sub_hex, nullptr, 16);
-
-        const unsigned nibble_offset = static_cast<unsigned>(first_bit % 4ULL);
-        const unsigned long long shifted =
-            (nibble_offset == 0U) ? chunk : (chunk >> nibble_offset);
-
-        uint32_t mask;
-        if (need_bits >= static_cast<size_t>(std::numeric_limits<uint32_t>::digits)) {
-            mask = std::numeric_limits<uint32_t>::max();
-        }
-        else {
-            mask = static_cast<uint32_t>((1ULL << need_bits) - 1ULL);
-        }
-
-        const uint32_t val = static_cast<uint32_t>(shifted & mask);
-        return val;
-    }
-    catch (const std::invalid_argument&) {
-        return 0;
-    }
-    catch (const std::out_of_range&) {
-        return 0;
-    }
-    catch (...) {
-        return 0;
-    }
+    return Vortek::DeviceHooks::get_flag_bits_no_border(str, start_idx, count);
 }
 
 int MachineObject::get_flag_bits(int num, int start, int count, int base) const

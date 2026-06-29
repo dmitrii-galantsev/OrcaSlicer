@@ -91,6 +91,9 @@ class DeviceManager;
 class DevStorage;
 struct DevPrintTaskRatingInfo;
 
+class VortekNozzleMappingCtrl;
+class VortekFilaSwitch;
+
 
 class MachineObject
 {
@@ -118,6 +121,7 @@ private:
     DevFan*           m_fan;
     DevBed *          m_bed;
     DevStorage*       m_storage;
+
 
     /*Ctrl*/
     DevCtrl* m_ctrl;
@@ -331,6 +335,7 @@ public:
 
     DevFilaSystem*   GetFilaSystem() const { return m_fila_system;}
     bool             HasAms() const;
+
 
     DevLamp*         GetLamp() const { return m_lamp; }
     DevFan*          GetFan() const { return m_fan; }

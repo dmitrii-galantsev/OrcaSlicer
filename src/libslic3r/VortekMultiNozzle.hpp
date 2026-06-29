@@ -240,6 +240,41 @@ std::vector<NozzleInfo> build_nozzle_list(double diameter, const std::vector<int
 std::vector<std::map<NozzleVolumeType, int>> get_extruder_nozzle_stats(const std::vector<std::string>& stats_strings);
 
 } // namespace MultiNozzleUtils
+
+class PresetBundle;
+
+/**
+ * @brief Manages nozzle type and statistics count per physical extruder.
+ */
+struct ExtruderNozzleStat
+{
+public:
+    enum NozzleDataFlag {
+        ndfMachine = 0,
+        ndfNone
+    };
+public:
+    ExtruderNozzleStat() = default;
+    ExtruderNozzleStat(const std::vector<std::map<NozzleVolumeType, int>>& nozzle_counts, const NozzleDataFlag flag = ndfNone) : extruder_nozzle_counts(nozzle_counts), data_flag(flag) {}
+    void on_volume_type_switch(int extruder_id, NozzleVolumeType type);
+    void on_printer_model_change(PresetBundle* preset_bundle);
+    void on_printer_model_change_cli(const std::vector<int> &nozzle_volume_type, const std::vector<int> &max_nozzle_count);
+    void set_extruder_nozzle_count(int extruder_id, NozzleVolumeType type, int count, bool clear);
+    int get_extruder_nozzle_count(int extruder_id, std::optional<NozzleVolumeType> volume_type = std::nullopt) const;
+
+    const std::vector<std::map<NozzleVolumeType, int>> get_raw_stat() const { return extruder_nozzle_counts; }
+    void set_raw_stat(const std::vector<std::map<NozzleVolumeType, int>>& data) { extruder_nozzle_counts = data; }
+
+    void set_nozzle_data_flag(NozzleDataFlag flag){ data_flag = flag; }
+    void set_force_keep_flag(bool flag) { force_keep_stat = flag; }
+private:
+    bool force_keep_stat{ false };
+    std::vector<std::map<NozzleVolumeType,int>> extruder_nozzle_counts;
+    NozzleDataFlag data_flag{ ndfNone };
+};
+
+std::vector<std::string> save_extruder_nozzle_stats_to_string(const std::vector<std::map<NozzleVolumeType,int>>& extruder_nozzle_stats);
+
 } // namespace Slic3r
 
 #endif // VORTEK_MULTI_NOZZLE_HPP

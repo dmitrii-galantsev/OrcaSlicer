@@ -51,6 +51,16 @@ list(APPEND SLIC3R_GUI_SOURCES
     GUI/DeviceCore/DevNozzleSystem.cpp
     GUI/DeviceCore/DevUtil.h
     GUI/DeviceCore/DevUtil.cpp
-
+    GUI/DeviceCore/VortekNozzleRack.h
+    GUI/DeviceCore/VortekNozzleRack.cpp
+    GUI/DeviceCore/VortekNozzleRackCtrl.cpp
+    GUI/DeviceCore/VortekMappingNozzle.h
+    GUI/DeviceCore/VortekMappingNozzle.cpp
+    GUI/DeviceCore/VortekFilaSwitch.h
+    GUI/DeviceCore/VortekFilaSwitch.cpp
+    GUI/DeviceCore/VortekUtilBackend.h
+    GUI/DeviceCore/VortekUtilBackend.cpp
+    GUI/DeviceCore/VortekDeviceHooks.hpp
+    GUI/DeviceCore/VortekDeviceHooks.cpp
 )
 set(SLIC3R_GUI_SOURCES ${SLIC3R_GUI_SOURCES} PARENT_SCOPE)

@@ -4,6 +4,7 @@
 #include "Preset.hpp"
 #include "AppConfig.hpp"
 #include "enum_bitmask.hpp"
+#include "VortekMultiNozzle.hpp"
 
 #include <memory>
 #include <shared_mutex>
@@ -327,6 +328,7 @@ public:
     std::vector<std::vector<std::string>> ams_multi_color_filment;
 
     std::vector<std::map<int, int>> extruder_ams_counts;
+    ExtruderNozzleStat extruder_nozzle_stat;
 
     // Calibrate
     Preset const * calibrate_printer = nullptr;

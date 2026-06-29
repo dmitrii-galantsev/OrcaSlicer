@@ -4146,6 +4146,7 @@ DynamicPrintConfig PresetBundle::full_fff_config(bool apply_extruder, std::optio
     add_if_some_non_empty(std::move(different_settings),            "different_settings_to_system");
     add_if_some_non_empty(std::move(print_compatible_printers),     "print_compatible_printers");
     out.option<ConfigOptionStrings>("extruder_ams_count", true)->values   = save_extruder_ams_count_to_string(this->extruder_ams_counts);
+    out.option<ConfigOptionStrings>("extruder_nozzle_stats", true)->values = save_extruder_nozzle_stats_to_string(this->extruder_nozzle_stat.get_raw_stat());
 
 	out.option<ConfigOptionEnumGeneric>("printer_technology", true)->value = ptFFF;
     return out;

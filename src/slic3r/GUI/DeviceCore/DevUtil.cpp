@@ -1,4 +1,5 @@
 #include "DevUtil.h"
+#include "VortekDeviceHooks.hpp"
 #include "fast_float/fast_float.h"
 
 namespace Slic3r
@@ -23,6 +24,11 @@ int DevUtil::get_flag_bits(std::string str, int start, int count)
     }
 
     return 0;
+}
+
+uint32_t DevUtil::get_flag_bits_no_border(std::string str, int start_idx, int count)
+{
+    return Vortek::DeviceHooks::get_flag_bits_no_border(str, start_idx, count);
 }
 
 int DevUtil::get_flag_bits(int num, int start, int count, int base)

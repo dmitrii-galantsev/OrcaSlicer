@@ -14,6 +14,11 @@
 #include <boost/log/trivial.hpp>
 #include "nlohmann/json.hpp"
 
+ /* Sequence Id*/
+#define STUDIO_START_SEQ_ID    20000
+#define STUDIO_END_SEQ_ID      30000
+#define CLOUD_SEQ_ID     0
+
 namespace Slic3r
 {
 
@@ -27,10 +32,18 @@ public:
 public:
     static int get_flag_bits(std::string str, int start, int count = 1);
     static int get_flag_bits(int num, int start, int count = 1, int base = 10);
+    static uint32_t get_flag_bits_no_border(std::string str, int start_idx, int count = 1);
+
+    // eg. get_hex_bits(16, 1, 10) = 1
+    static int get_hex_bits(int num, int pos, int input_num_base = 10) { return get_flag_bits(num, pos * 4, 4, input_num_base);};
 
     static float string_to_float(const std::string& str_value);
 
     static std::string convertToIp(long long ip);
+
+    // sequence id check
+    static bool is_studio_cmd(int seq) { return seq >= STUDIO_START_SEQ_ID && seq < STUDIO_END_SEQ_ID;};
+    static bool is_cloud_cmd(int seq) { return seq == CLOUD_SEQ_ID;};
 };
 
 
