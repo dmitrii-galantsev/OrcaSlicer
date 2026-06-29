@@ -405,6 +405,18 @@ void PrintHooks::init_vortek_params(Slic3r::PrintConfigDef* def_ptr)
     def->min = 0;
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionInts{0});
+
+    // Register custom filament keys in the global filament options set
+    Slic3r::filament_options_with_variant.insert("filament_pre_cooling_temperature_nc");
+    Slic3r::filament_options_with_variant.insert("filament_ramming_volumetric_speed_nc");
+    Slic3r::filament_options_with_variant.insert("filament_ramming_travel_time_nc");
+    Slic3r::filament_options_with_variant.insert("filament_change_length_nc");
+    Slic3r::filament_options_with_variant.insert("filament_prime_volume");
+    Slic3r::filament_options_with_variant.insert("filament_prime_volume_nc");
+    Slic3r::filament_options_with_variant.insert("filament_retract_length_nc");
+    Slic3r::filament_options_with_variant.insert("filament_retract_lift_nc");
+    Slic3r::filament_options_with_variant.insert("filament_retract_speed_nc");
+    Slic3r::filament_options_with_variant.insert("filament_deretract_speed_nc");
 }
 
 std::vector<int> PrintHooks::get_filament_nozzle_maps(const Slic3r::Print& print)
