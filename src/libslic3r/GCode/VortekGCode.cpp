@@ -3,6 +3,8 @@
 #include "libslic3r/Print.hpp"
 #include "libslic3r/VortekLog.hpp"
 #include <algorithm>
+#include <string>
+#include <vector>
 
 namespace Vortek {
 namespace GCodeHooks {
@@ -31,8 +33,61 @@ void update_layer_related_config(Slic3r::GCode& gcode, int layer_id)
     gcode.m_writer.config.filament_volume_map.values = volume_map;
     gcode.m_writer.config.filament_nozzle_map.values = nozzle_map;
 
-    // Register filament_pre_cooling_temperature_nc in placeholder_parser
-    gcode.placeholder_parser().set("filament_pre_cooling_temperature_nc", new Slic3r::ConfigOptionIntsNullable(gcode.m_config.filament_pre_cooling_temperature_nc));
+    // Register Vortek configuration parameters in placeholder_parser
+    auto& parser = gcode.placeholder_parser();
+    parser.set("filament_pre_cooling_temperature_nc", new Slic3r::ConfigOptionIntsNullable(gcode.m_config.filament_pre_cooling_temperature_nc));
+    parser.set("filament_ramming_volumetric_speed_nc", new Slic3r::ConfigOptionFloatsNullable(gcode.m_config.filament_ramming_volumetric_speed_nc));
+    parser.set("filament_ramming_travel_time_nc", new Slic3r::ConfigOptionFloatsNullable(gcode.m_config.filament_ramming_travel_time_nc));
+    parser.set("filament_change_length_nc", new Slic3r::ConfigOptionFloats(gcode.m_config.filament_change_length_nc));
+    parser.set("filament_prime_volume_nc", new Slic3r::ConfigOptionFloats(gcode.m_config.filament_prime_volume_nc));
+    parser.set("filament_retract_length_nc", new Slic3r::ConfigOptionFloats(gcode.m_config.filament_retract_length_nc));
+    parser.set("filament_retract_lift_nc", new Slic3r::ConfigOptionFloats(gcode.m_config.filament_retract_lift_nc));
+    parser.set("filament_retract_speed_nc", new Slic3r::ConfigOptionInts(gcode.m_config.filament_retract_speed_nc));
+    parser.set("filament_deretract_speed_nc", new Slic3r::ConfigOptionInts(gcode.m_config.filament_deretract_speed_nc));
+
+    // Check H2C compatibility setup
+    if (gcode.m_config.has("filament_pre_cooling_temperature_nc")) {
+        bool tower_valid = gcode.m_config.enable_prime_tower.value;
+        parser.set("wipe_tower_center_pos_valid", tower_valid);
+        parser.set("wipe_tower_center_pos_x", tower_valid ? (gcode.m_config.wipe_tower_x.values.empty() ? 95.5 : gcode.m_config.wipe_tower_x.values[0]) : 95.5);
+        parser.set("wipe_tower_center_pos_y", tower_valid ? (gcode.m_config.wipe_tower_y.values.empty() ? 336.0 : gcode.m_config.wipe_tower_y.values[0]) : 336.0);
+
+        parser.set("cooling_filter_enabled", false);
+        parser.set("old_extruder_variant", std::string("Direct Drive Standard"));
+        parser.set("new_extruder_variant", std::string("Direct Drive Standard"));
+        parser.set("new_extruder_retracted_length", 0.0);
+
+        std::vector<double> heat_rates = {3.5, 13.3};
+        std::vector<double> cool_rates = {1.6, 3.4};
+        parser.set("hotend_heating_rate", new Slic3r::ConfigOptionFloats(heat_rates));
+        parser.set("hotend_cooling_rate", new Slic3r::ConfigOptionFloats(cool_rates));
+
+        int first_non_support_extruder_id = 0;
+        if (print) {
+            auto non_support_extruders = print->extruders(false);
+            if (!non_support_extruders.empty()) {
+                first_non_support_extruder_id = non_support_extruders.front();
+            }
+        }
+        
+        auto get_vec_int = [&](const std::string& key, int idx, int def_val) -> int {
+            if (gcode.m_config.has(key)) {
+                auto opt = gcode.m_config.option<Slic3r::ConfigOptionInts>(key);
+                if (opt && idx < (int)opt->values.size()) return opt->values[idx];
+                auto opt_null = gcode.m_config.option<Slic3r::ConfigOptionIntsNullable>(key);
+                if (opt_null && idx < (int)opt_null->values.size()) return opt_null->values[idx];
+            }
+            return def_val;
+        };
+
+        int first_non_support_hotend_val = get_vec_int("filament_map_2", first_non_support_extruder_id, first_non_support_extruder_id);
+        
+        std::vector<std::string> first_non_support_filaments_vec = { std::to_string(first_non_support_extruder_id) };
+        std::vector<std::string> first_non_support_hotend_vec = { std::to_string(first_non_support_hotend_val) };
+        
+        parser.set("first_non_support_filaments", first_non_support_filaments_vec);
+        parser.set("first_non_support_hotend", first_non_support_hotend_vec);
+    }
 }
 
 void patch_toolchange_dyn_config(
@@ -113,6 +168,41 @@ void patch_toolchange_dyn_config(
             filament_pre_cooling_temperature_nc.resize(gcode.m_config.filament_type.values.size(), gcode.m_config.filament_pre_cooling_temperature_nc.get_at(0));
         dyn_config.set_key_value("filament_pre_cooling_temperature_nc", new Slic3r::ConfigOptionInts(filament_pre_cooling_temperature_nc));
         VORTEK_LOG(debug, "patched filament_pre_cooling_temperature_nc");
+    }
+
+    // 4. Vortek (H2C) dynamic compatibility mapping for the current toolchange
+    if (gcode.m_config.has("filament_pre_cooling_temperature_nc")) {
+        int current_extruder = gcode.writer().filament() ? gcode.writer().filament()->id() : 0;
+        int next_extruder = new_filament_id;
+
+        auto get_vec_bool = [&](const std::string& key, int idx, bool def_val) -> bool {
+            if (gcode.m_config.has(key)) {
+                auto opt = gcode.m_config.option<Slic3r::ConfigOptionBools>(key);
+                if (opt && idx < (int)opt->values.size()) return opt->values[idx];
+                // Also handle nullable bools (e.g. long_retractions_when_ec)
+                auto opt_null = gcode.m_config.option<Slic3r::ConfigOptionBoolsNullable>(key);
+                if (opt_null && idx < (int)opt_null->values.size()) return opt_null->values[idx];
+            }
+            return def_val;
+        };
+        auto get_vec_float = [&](const std::string& key, int idx, double def_val) -> double {
+            if (gcode.m_config.has(key)) {
+                auto opt = gcode.m_config.option<Slic3r::ConfigOptionFloats>(key);
+                if (opt && idx < (int)opt->values.size()) return opt->values[idx];
+                auto opt_null = gcode.m_config.option<Slic3r::ConfigOptionFloatsNullable>(key);
+                if (opt_null && idx < (int)opt_null->values.size()) return opt_null->values[idx];
+            }
+            return def_val;
+        };
+
+        auto& parser = gcode.placeholder_parser();
+        parser.set("long_retraction_when_cut", get_vec_bool("long_retractions_when_cut", current_extruder, false));
+        parser.set("retraction_distance_when_cut", get_vec_float("retraction_distances_when_cut", current_extruder, 0.0));
+        parser.set("long_retraction_when_ec", get_vec_bool("long_retractions_when_ec", current_extruder, false));
+        parser.set("retraction_distance_when_ec", get_vec_float("retraction_distances_when_ec", current_extruder, 0.0));
+
+        // filament_retract_length_nc is evaluated as a scalar of the incoming filament in BBL template!
+        parser.set("filament_retract_length_nc", get_vec_float("filament_retract_length_nc", next_extruder, 0.0));
     }
 }
 
