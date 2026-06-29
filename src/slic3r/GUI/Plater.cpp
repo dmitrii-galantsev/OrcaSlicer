@@ -13858,8 +13858,6 @@ wxString Plater::get_project_name()
 
 void Plater::update_all_plate_thumbnails(bool force_update)
 {
-    if (is_preview_shown())
-        return;
     for (int i = 0; i < get_partplate_list().get_plate_count(); i++) {
         PartPlate* plate = get_partplate_list().get_plate(i);
         ThumbnailsParams thumbnail_params = { {}, false, true, true, true, i};
@@ -13888,7 +13886,7 @@ void Plater::update_obj_preview_thumbnail(ModelObject *mo, int obj_idx, int vol_
 //invalid all plate's thumbnails
 void Plater::invalid_all_plate_thumbnails()
 {
-    if (using_exported_file() || skip_thumbnail_invalid || is_preview_shown())
+    if (using_exported_file() || skip_thumbnail_invalid)
         return;
     BOOST_LOG_TRIVIAL(info) << "thumb: invalid all";
     for (int i = 0; i < get_partplate_list().get_plate_count(); i++) {
