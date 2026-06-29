@@ -583,6 +583,8 @@ MachineObject::MachineObject(DeviceManager* manager, NetworkAgent* agent, std::s
 
 MachineObject::~MachineObject()
 {
+    Vortek::DeviceHooks::clear_all_device_mappings(this);
+
     if (subtask_) {
         delete subtask_;
         subtask_ = nullptr;

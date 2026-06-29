@@ -427,6 +427,13 @@ void init_device_mappings(Slic3r::MachineObject* obj) {
     get_or_create_fila_switch(obj);
 }
 
+void clear_all_device_mappings(Slic3r::MachineObject* obj) {
+    if (!obj) return;
+    s_nozzle_racks.erase(obj);
+    s_nozzle_mappings.erase(obj);
+    s_fila_switches.erase(obj);
+}
+
 bool contains_ext_nozzle(const Slic3r::DevNozzleSystem* system, int nozzle_id) {
     if (!system) return false;
     const auto& nozzles = system->GetNozzles();

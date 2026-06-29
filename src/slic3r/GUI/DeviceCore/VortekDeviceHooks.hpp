@@ -116,6 +116,7 @@ std::shared_ptr<Slic3r::VortekNozzleMappingCtrl> get_nozzle_mapping(const Slic3r
 std::shared_ptr<Slic3r::VortekFilaSwitch> get_or_create_fila_switch(Slic3r::MachineObject* obj);
 std::shared_ptr<Slic3r::VortekFilaSwitch> get_fila_switch(const Slic3r::MachineObject* obj);
 void init_device_mappings(Slic3r::MachineObject* obj);
+void clear_all_device_mappings(Slic3r::MachineObject* obj);
 void clear_auto_nozzle_mapping(Slic3r::MachineObject* obj);
 void preprocess_filament_json(Slic3r::MachineObject* obj, nlohmann::json& filament_json);
 void apply_pending_ams_bindings(Slic3r::DevFilaSystem* fila_system);

@@ -6333,6 +6333,9 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                             }
                             project_filament_count = config_loaded.option<ConfigOptionStrings>("filament_colour")->size();
                             partplate_list.load_from_3mf_structure(plate_data, project_filament_count);
+                            if (load_config) {
+                                Vortek::PlateMapping::sync_project_config_on_load(config, project_filament_count);
+                            }
                             partplate_list.update_slice_context_to_current_plate(background_process);
                             this->preview->update_gcode_result(partplate_list.get_current_slice_result());
                             release_PlateData_list(plate_data);
@@ -9666,6 +9669,12 @@ void Plater::priv::on_select_preset(wxCommandEvent &evt)
                 wxGetApp().get_tab(preset_type)->select_preset(preset_name);
                 // update plater with new config
                 q->on_config_change(wxGetApp().preset_bundle->full_config());
+
+                // Vortek: clear mappings when switching to non-H2C printer
+                const auto* print = q->get_current_print();
+                if (print && !Vortek::PlateMapping::is_h2c_multi_nozzle(print)) {
+                    Vortek::PlateMapping::clear_mappings(&partplate_list.get_current_plate()->config());
+                }
             });
 
 
@@ -9869,6 +9878,20 @@ void Plater::priv::on_slicing_update(SlicingStatusEvent &evt)
 void Plater::priv::on_slicing_completed(wxCommandEvent & evt)
 {
     BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << boost::format(": event_type %1%, string %2%") % evt.GetEventType() % evt.GetString();
+
+    if (this->printer_technology == ptFFF) {
+        auto* print = background_process.fff_print();
+        auto* plate = partplate_list.get_current_plate();
+        if (print && plate) {
+            Vortek::PlateMapping::sync_after_slicing(
+                plate->config(),
+                static_cast<FilamentMapMode>(print->config().filament_map_mode.value),
+                print,
+                *wxGetApp().preset_bundle
+            );
+        }
+    }
+
     //BBS: add slice project logic
     if (m_slice_all && (m_cur_slice_plate < (partplate_list.get_plate_count() - 1))) {
         BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << boost::format("slicing all, finished plate %1%, will continue next.")%m_cur_slice_plate;
