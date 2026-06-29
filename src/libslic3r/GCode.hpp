@@ -36,6 +36,22 @@
 #include <cfloat>
 
 namespace Slic3r {
+    class GCode;
+    class DynamicConfig;
+}
+
+namespace Vortek {
+    namespace GCodeHooks {
+        void update_layer_related_config(::Slic3r::GCode& gcode, int layer_id);
+        void patch_toolchange_dyn_config(
+            ::Slic3r::GCode& gcode,
+            ::Slic3r::DynamicConfig& dyn_config,
+            int new_filament_id,
+            int layer_id);
+    }
+}
+
+namespace Slic3r {
 
 // Forward declarations.
 class GCode;
@@ -694,6 +710,9 @@ private:
     friend class PressureEqualizer;
     friend class Print;
     friend class SmallAreaInfillFlowCompensator;
+
+    friend void ::Vortek::GCodeHooks::update_layer_related_config(::Slic3r::GCode& gcode, int layer_id);
+    friend void ::Vortek::GCodeHooks::patch_toolchange_dyn_config(::Slic3r::GCode& gcode, ::Slic3r::DynamicConfig& dyn_config, int new_filament_id, int layer_id);
 };
 
 std::vector<const PrintInstance*> sort_object_instances_by_model_order(const Print& print, bool init_order = false);

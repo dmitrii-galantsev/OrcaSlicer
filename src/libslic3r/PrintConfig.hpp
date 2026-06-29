@@ -28,6 +28,10 @@
 #include <boost/preprocessor/tuple/elem.hpp>
 #include <boost/preprocessor/tuple/to_seq.hpp>
 
+namespace Vortek {
+    class PrintHooks;
+}
+
 namespace Slic3r {
 
 enum GCodeFlavor : unsigned char {
@@ -425,7 +429,15 @@ enum FilamentMapMode {
     fmmAutoForFlush,
     fmmAutoForMatch,
     fmmManual,
+    fmmNozzleManual,
+    fmmAutoForQuality,
     fmmDefault
+};
+
+enum PrimeVolumeMode {
+    pvmDefault = 0,
+    pvmSaving,
+    pvmFast 
 };
 
 extern std::string get_extruder_variant_string(ExtruderType extruder_type, NozzleVolumeType nozzle_volume_type);
@@ -571,6 +583,7 @@ class DynamicPrintConfig;
 // Does not store the actual values, but defines default values.
 class PrintConfigDef : public ConfigDef
 {
+    friend class ::Vortek::PrintHooks;
 public:
     PrintConfigDef();
 
@@ -609,6 +622,18 @@ private:
 extern const PrintConfigDef print_config_def;
 
 class StaticPrintConfig;
+
+struct ExtruderNozleInfo
+{
+    ExtruderType extruder_type;
+    NozzleVolumeType nozzle_volume_type;
+    bool operator<(const ExtruderNozleInfo& other) const
+    {
+        if(extruder_type != other.extruder_type)
+            return extruder_type < other.extruder_type;
+        return nozzle_volume_type < other.nozzle_volume_type;
+    }
+};
 
 // Minimum object distance for arrangement, based on printer technology.
 double min_object_distance(const ConfigBase &cfg);
@@ -1484,6 +1509,30 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionStrings,              small_area_infill_flow_compensation_model))
 
     ((ConfigOptionBool,                has_scarf_joint_seam))
+
+    // Vortek (H2C) support keys
+    ((ConfigOptionIntsNullable,        extruder_max_nozzle_count))
+    ((ConfigOptionStrings,             extruder_nozzle_stats))
+    ((ConfigOptionBool,                enable_filament_dynamic_map))
+    ((ConfigOptionBool,                has_filament_switcher))
+    ((ConfigOptionEnum<PrimeVolumeMode>, prime_volume_mode))
+    ((ConfigOptionFloat,               machine_hotend_change_time))
+    ((ConfigOptionFloatsNullable,      hotend_heating_rate))
+    ((ConfigOptionFloatsNullable,      hotend_cooling_rate))
+    ((ConfigOptionBool,                enable_pre_heating))
+    ((ConfigOptionInts,                filament_nozzle_map))
+    ((ConfigOptionInts,                filament_volume_map))
+    ((ConfigOptionInts,                filament_map_2))
+    ((ConfigOptionIntsNullable,        filament_pre_cooling_temperature_nc))
+    ((ConfigOptionFloatsNullable,      filament_ramming_volumetric_speed_nc))
+    ((ConfigOptionFloatsNullable,      filament_ramming_travel_time_nc))
+    ((ConfigOptionFloats,              filament_change_length_nc))
+    ((ConfigOptionFloats,              filament_prime_volume))
+    ((ConfigOptionFloats,              filament_prime_volume_nc))
+    ((ConfigOptionFloats,              filament_retract_length_nc))
+    ((ConfigOptionFloats,              filament_retract_lift_nc))
+    ((ConfigOptionInts,                filament_retract_speed_nc))
+    ((ConfigOptionInts,                filament_deretract_speed_nc))
 )
 
 // This object is mapped to Perl as Slic3r::Config::Print.

@@ -6,6 +6,7 @@
 #include "libslic3r.h"
 #include "I18N.hpp"
 #include "GCode.hpp"
+#include "GCode/VortekGCode.hpp"
 #include "Exception.hpp"
 #include "ExtrusionEntity.hpp"
 #include "EdgeGrid.hpp"
@@ -968,6 +969,7 @@ static std::vector<Vec2d> get_path_of_change_filament(const Print& print)
                     config.set_key_value(key_value, new ConfigOptionFloat(0.f));
                 }
             }
+            ::Vortek::GCodeHooks::patch_toolchange_dyn_config(gcodegen, config, new_filament_id, gcodegen.m_layer_index);
             toolchange_gcode_str = gcodegen.placeholder_parser_process("change_filament_gcode", change_filament_gcode, new_filament_id, &config);
 
             check_add_eol(toolchange_gcode_str);
@@ -2481,6 +2483,8 @@ void GCode::_do_export(Print& print, GCodeOutputStream &file, ThumbnailsGenerato
     m_fan_mover.release();
     
     m_writer.set_is_bbl_machine(is_bbl_printers);
+
+    ::Vortek::GCodeHooks::update_layer_related_config(*this, 0);
 
     // How many times will be change_layer() called?
     // change_layer() in turn increments the progress bar status.
@@ -4693,6 +4697,7 @@ LayerResult GCode::process_layer(
 
     // BBS: don't use lazy_raise when enable spiral vase
     gcode += this->change_layer(print_z);  // this will increase m_layer_index
+    ::Vortek::GCodeHooks::update_layer_related_config(*this, m_layer_index);
     m_layer = &layer;
     m_object_layer_over_raft = false;
 
@@ -7992,6 +7997,7 @@ std::string GCode::set_extruder(unsigned int new_filament_id, double print_z, bo
     if (!change_filament_gcode.empty() && !(m_config.manual_filament_change.value && m_toolchange_count == 1)) {
         dyn_config.set_key_value("toolchange_z", new ConfigOptionFloat(print_z));
 
+        ::Vortek::GCodeHooks::patch_toolchange_dyn_config(*this, dyn_config, new_filament_id, m_layer_index);
         toolchange_gcode_parsed = placeholder_parser_process("change_filament_gcode", change_filament_gcode, new_filament_id, &dyn_config);
         check_add_eol(toolchange_gcode_parsed);
         gcode += toolchange_gcode_parsed;

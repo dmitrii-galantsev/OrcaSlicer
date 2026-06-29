@@ -25,6 +25,14 @@
 #include <set>
 
 #include "calib.hpp"
+#include "VortekMultiNozzle.hpp"
+#include "VortekPrintHooks.hpp"
+
+namespace Vortek {
+    class PlateMapping;
+    class GroupReorder;
+    class PrintHooks;
+}
 
 namespace Slic3r {
 
@@ -1097,6 +1105,12 @@ public:
     void set_check_multi_filaments_compatibility(bool check) { m_need_check_multi_filaments_compatibility = check; }
     bool need_check_multi_filaments_compatibility() const { return m_need_check_multi_filaments_compatibility; }
 
+    void set_nozzle_group_result(std::shared_ptr<MultiNozzleUtils::NozzleGroupResultBase> result);
+    const std::shared_ptr<MultiNozzleUtils::NozzleGroupResultBase> get_nozzle_group_result() const;
+    std::shared_ptr<MultiNozzleUtils::LayeredNozzleGroupResult> get_layered_nozzle_group_result() const;
+    void update_filament_maps_to_config(std::vector<int> f_maps, std::vector<int> f_volume_maps, std::vector<int> f_nozzle_maps);
+    void update_to_config_by_nozzle_group_result(const MultiNozzleUtils::NozzleGroupResultBase& result);
+
     // scaled point
     Vec2d translate_to_print_space(const Point &point) const;
     static FilamentTempType get_filament_temp_type(const std::string& filament_type);
@@ -1150,6 +1164,12 @@ private:
     PrintConfig                             m_config;
     PrintObjectConfig                       m_default_object_config;
     PrintRegionConfig                       m_default_region_config;
+
+    std::shared_ptr<MultiNozzleUtils::NozzleGroupResultBase> m_nozzle_group_result;
+
+    friend class ::Vortek::PlateMapping;
+    friend class ::Vortek::GroupReorder;
+    friend class ::Vortek::PrintHooks;
     PrintObjectPtrs                         m_objects;
     PrintRegionPtrs                         m_print_regions;
     

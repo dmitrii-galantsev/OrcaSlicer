@@ -252,6 +252,8 @@ set(lisbslic3r_sources
     GCode/WipeTower2.hpp
     GCode/WipeTower.cpp
     GCode/WipeTower.hpp
+    GCode/VortekGCode.cpp
+    GCode/VortekGCode.hpp
     GCodeWriter.cpp
     GCodeWriter.hpp
     Geometry/ArcWelder.hpp
@@ -464,6 +466,19 @@ set(lisbslic3r_sources
     Utils.hpp
     VariableWidth.cpp
     VariableWidth.hpp
+    VortekGroupReorder.cpp
+    VortekGroupReorder.hpp
+    VortekLog.hpp
+    VortekMultiNozzle.cpp
+    VortekMultiNozzle.hpp
+    VortekPlateMapping.cpp
+    VortekPlateMapping.hpp
+    VortekPreCooling.cpp
+    VortekPreCooling.hpp
+    VortekPrintHooks.cpp
+    VortekPrintHooks.hpp
+    VortekWipeTower.cpp
+    VortekWipeTower.hpp
     Zipper.cpp
     Zipper.hpp
     FilamentGroup.hpp

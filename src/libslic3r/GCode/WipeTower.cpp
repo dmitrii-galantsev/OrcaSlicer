@@ -1,4 +1,5 @@
 #include "WipeTower.hpp"
+#include "libslic3r/VortekWipeTower.hpp"
 
 #include <cassert>
 #include <iostream>
@@ -4463,6 +4464,31 @@ bool WipeTower::need_thick_bridge_flow(float pos_y) const {
         return pos_y > y_min && pos_y < y_max;
     }
     return false;
+}
+
+bool WipeTower::is_same_extruder(int filament_id_1, int filament_id_2, int layer_id) const
+{
+    return ::Vortek::WipeTower::is_same_extruder(this, filament_id_1, filament_id_2, layer_id);
+}
+
+bool WipeTower::is_same_nozzle(int filament_id_1, int filament_id_2, int layer_id) const
+{
+    return ::Vortek::WipeTower::is_same_nozzle(this, filament_id_1, filament_id_2, layer_id);
+}
+
+int WipeTower::get_nozzle_id(int filament_id, int layer_id) const
+{
+    return ::Vortek::WipeTower::get_nozzle_id(this, filament_id, layer_id);
+}
+
+int WipeTower::get_extruder_id(int filament_id, int layer_id) const
+{
+    return ::Vortek::WipeTower::get_extruder_id(this, filament_id, layer_id);
+}
+
+bool WipeTower::is_need_ramming(int filament_id_1, int filament_id_2, int layer_id) const
+{
+    return ::Vortek::WipeTower::is_need_ramming(this, filament_id_1, filament_id_2, layer_id);
 }
 
 } // namespace Slic3r

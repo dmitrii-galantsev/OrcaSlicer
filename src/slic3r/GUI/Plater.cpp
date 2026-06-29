@@ -1,5 +1,6 @@
 #include "Plater.hpp"
 #include "libslic3r/Config.hpp"
+#include "libslic3r/VortekPlateMapping.hpp"
 #include "libslic3r_version.h"
 
 #include <cstddef>
@@ -1362,7 +1363,7 @@ bool Sidebar::priv::sync_extruder_list(bool &only_external_material)
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << __LINE__ << "check error: machine_preset empty";
         return false;
     }
-    if (machine_print_name != target_model_id) {
+    if (machine_print_name != target_model_id && !Vortek::PlateMapping::are_models_compatible(machine_print_name, target_model_id)) {
         MessageDialog dlg(this->plater, _L("The currently selected machine preset is inconsistent with the connected printer type.\n"
                                             "Are you sure to continue syncing?"), _L("Sync printer information"), wxICON_WARNING | wxYES | wxNO);
         if (dlg.ShowModal() == wxID_NO) {
@@ -1487,7 +1488,9 @@ void Sidebar::priv::update_sync_status(const MachineObject *obj)
     bool printer_synced = false;
     // 1. update printer status
     const Preset &cur_preset = wxGetApp().preset_bundle->printers.get_edited_preset();
-    if (preset_bundle && preset_bundle->printers.get_edited_preset().get_printer_type(preset_bundle) == obj->get_show_printer_type()) {
+    std::string preset_type = preset_bundle ? cur_preset.get_printer_type(preset_bundle) : "";
+    std::string show_type = obj ? obj->get_show_printer_type() : "";
+    if (preset_bundle && (preset_type == show_type || Vortek::PlateMapping::are_models_compatible(preset_type, show_type))) {
         panel_printer_preset->ShowBadge(true);
         printer_synced = true;
 
@@ -1553,13 +1556,19 @@ void Sidebar::priv::update_sync_status(const MachineObject *obj)
         extruder_infos[0].diameter = float(value);
     }
     else if(extruder_nums == 2){
-        double value = 0.0;
-        left_extruder->diameter.ToDouble(&value);
-        extruder_infos[0].diameter = float(value);
-    
-        value = 0.0;
-        right_extruder->diameter.ToDouble(&value);
-        extruder_infos[1].diameter = float(value);
+        auto *nozzle_diam_opt = preset_bundle->printers.get_edited_preset().config.option<ConfigOptionFloats>("nozzle_diameter");
+        if (nozzle_diam_opt && nozzle_diam_opt->values.size() >= 2) {
+            extruder_infos[0].diameter = float(nozzle_diam_opt->values[0]);
+            extruder_infos[1].diameter = float(nozzle_diam_opt->values[1]);
+        } else {
+            double value = 0.0;
+            left_extruder->diameter.ToDouble(&value);
+            extruder_infos[0].diameter = float(value);
+        
+            value = 0.0;
+            right_extruder->diameter.ToDouble(&value);
+            extruder_infos[1].diameter = float(value);
+        }
     }
 
     std::vector<ExtruderInfo> machine_extruder_infos(obj->GetExtderSystem()->GetTotalExtderCount());
@@ -3499,7 +3508,7 @@ bool Sidebar::need_auto_sync_extruder_list_after_connect_priner(const MachineObj
     std::string   machine_print_name = obj->get_show_printer_type();
     PresetBundle *preset_bundle      = wxGetApp().preset_bundle;
     std::string   target_model_id    = preset_bundle->printers.get_selected_preset().get_printer_type(preset_bundle);
-    if (machine_print_name != target_model_id) {
+    if (machine_print_name != target_model_id && !Vortek::PlateMapping::are_models_compatible(machine_print_name, target_model_id)) {
         return false;
     }
 
@@ -6958,7 +6967,9 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                     if (obj->is_support_upgrade_kit && obj->installed_upgrade_kit) machine_type = "C12";
 
                     bool nozzle_mismatch = !obj->GetExtderSystem()->NozzleDiameterMatchesOrUnknown(0, (float) preset_nozzle_diameter);
-                    if (printer_preset.get_current_printer_type(preset_bundle) != machine_type || nozzle_mismatch) {
+                    std::string current_printer_type = printer_preset.get_current_printer_type(preset_bundle);
+                    bool machine_type_mismatch = current_printer_type != machine_type && !Vortek::PlateMapping::are_models_compatible(current_printer_type, machine_type);
+                    if (machine_type_mismatch || nozzle_mismatch) {
                         Preset *machine_preset = get_printer_preset(obj);
                         if (machine_preset != nullptr) {
                             std::string printer_model = machine_preset->config.option<ConfigOptionString>("printer_model")->value;
@@ -9668,7 +9679,9 @@ void Plater::priv::on_select_preset(wxCommandEvent &evt)
                 if (obj && obj->is_multi_extruders()) {
                     PresetBundle *preset_bundle = wxGetApp().preset_bundle;
                     Preset& cur_preset = preset_bundle->printers.get_edited_preset();
-                    if (cur_preset.get_printer_type(preset_bundle) == obj->get_show_printer_type()) {
+                    std::string current_printer_type = cur_preset.get_printer_type(preset_bundle);
+                    std::string connected_printer_type = obj->get_show_printer_type();
+                    if (current_printer_type == connected_printer_type || Vortek::PlateMapping::are_models_compatible(current_printer_type, connected_printer_type)) {
                         double preset_nozzle_diameter = cur_preset.config.option<ConfigOptionFloats>("nozzle_diameter")->values[0];
                         bool   same_nozzle_diameter   = true;
 
@@ -15142,7 +15155,7 @@ Preset *get_printer_preset(const MachineObject *obj)
 
         std::string printer_type = obj->get_show_printer_type();
         bool nozzle_diameter_matches_or_unknown = printer_nozzle_vals && obj->GetExtderSystem()->NozzleDiameterMatchesOrUnknown(0, printer_nozzle_vals->get_at(0));
-        if (model_id.compare(printer_type) == 0 && nozzle_diameter_matches_or_unknown) {
+        if ((model_id.compare(printer_type) == 0 || Vortek::PlateMapping::are_models_compatible(model_id, printer_type)) && nozzle_diameter_matches_or_unknown) {
             printer_preset = &(*printer_it);
         }
     }

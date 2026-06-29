@@ -1,0 +1,142 @@
+#ifndef VORTEK_PLATE_MAPPING_HPP
+#define VORTEK_PLATE_MAPPING_HPP
+
+#include "libslic3r/Print.hpp"
+#include "libslic3r/PrintConfig.hpp"
+#include "libslic3r/Format/bbs_3mf.hpp"
+#include <vector>
+#include <unordered_set>
+
+namespace Slic3r {
+    class PresetBundle;
+}
+
+namespace Vortek {
+
+struct LoadMappingResult {
+    std::vector<int> filament_nozzle_map;
+    std::vector<int> filament_volume_map;
+};
+
+/**
+ * @brief Handles mapping and synchronization of H2C nozzle/filament configuration for print plates.
+ */
+class PlateMapping {
+public:
+    /**
+     * @brief Checks if H2C multi-nozzle features are enabled for the current print configuration.
+     * 
+     * @param print Pointer to the Print object
+     * @return True if H2C is active, false otherwise
+     */
+    static bool is_h2c_multi_nozzle(const Slic3r::Print* print);
+
+    /**
+     * @brief Synchronizes configuration overrides to the active plate config after slicing completes.
+     * 
+     * @param plate_config Configuration of the active plate
+     * @param filament_map_mode Mapping mode active
+     * @param print Pointer to the Print object containing slicing results
+     * @param preset_bundle Reference to the preset bundle
+     */
+    static void sync_after_slicing(
+        Slic3r::DynamicPrintConfig& plate_config,
+        Slic3r::FilamentMapMode filament_map_mode,
+        const Slic3r::Print* print,
+        Slic3r::PresetBundle& preset_bundle
+    );
+
+    /**
+     * @brief Resizes nozzle/volume maps on filament count change.
+     */
+    static void handle_filament_count_changed(Slic3r::DynamicPrintConfig* config, int filament_count);
+
+    /**
+     * @brief Appends default nozzle/volume mappings when a new filament is added.
+     */
+    static void handle_filament_added(Slic3r::DynamicPrintConfig* config);
+
+    /**
+     * @brief Erases nozzle/volume mappings at a given index when a filament is deleted.
+     */
+    static void handle_filament_deleted(Slic3r::DynamicPrintConfig* config, int filament_id);
+
+    /**
+     * @brief Clears all nozzle/volume mapping keys from the config.
+     */
+    static void clear_mappings(Slic3r::DynamicPrintConfig* config);
+
+    /**
+     * @brief Loads custom nozzle mappings from the 3MF PlateData config.
+     */
+    static LoadMappingResult load_from_3mf_structure(
+        const Slic3r::PlateData* plate_data,
+        int filament_count,
+        Slic3r::GCodeProcessorResult* gcode_result
+    );
+
+    /**
+     * @brief Ensures loaded project configs have matching nozzle/volume map dimensions.
+     */
+    static void sync_project_config_on_load(Slic3r::DynamicConfig& proj_cfg, int filament_count);
+
+    /**
+     * @brief Patches config for exporting metadata.
+     */
+    static void patch_export_config(Slic3r::DynamicPrintConfig& cfg);
+
+    /**
+     * @brief Formats and patches nozzle configurations inside PlateData during project export.
+     */
+    static void patch_plate_data_for_export(
+        Slic3r::PlateData* plate_data,
+        const std::vector<int>& filament_nozzle_map,
+        const std::vector<int>& filament_volume_map,
+        const std::vector<int>& filament_maps,
+        const Slic3r::DynamicPrintConfig& config,
+        const Slic3r::Print* print = nullptr
+    );
+
+    /**
+     * @brief Resolves differences when applying nozzle configurations to avoid false invalidations.
+     */
+    static void handle_h2c_mapping_apply(
+        Slic3r::Print* print,
+        Slic3r::DynamicPrintConfig& new_full_config,
+        const Slic3r::DynamicPrintConfig& old_full_config
+    );
+
+    /**
+     * @brief Filter/suppress H2C specific keys from invalidating print steps if they haven't changed.
+     */
+    static void handle_h2c_print_diff(
+        Slic3r::Print* print,
+        Slic3r::PrintConfig& config,
+        Slic3r::DynamicPrintConfig& full_print_config,
+        const Slic3r::DynamicPrintConfig& new_full_config,
+        std::unordered_set<std::string>& print_diff_set
+    );
+
+    /**
+     * @brief Serializes variant overrides to string.
+     */
+    static bool get_variant_override_serialized(const Slic3r::ConfigBase* config, const std::string& opt_key, std::string& out_serialized);
+
+    /**
+     * @brief Retrives list of variant override values.
+     */
+    static bool get_variant_override_values(const Slic3r::ConfigBase* config, const std::string& opt_key, std::vector<std::string>& out_values);
+
+    /**
+     * @brief Checks if two printer models are compatible (with fallback mapping like O1C <-> O1C2).
+     * 
+     * @param model1 First printer model name
+     * @param model2 Second printer model name
+     * @return True if models are compatible, false otherwise
+     */
+    static bool are_models_compatible(const std::string& model1, const std::string& model2);
+};
+
+} // namespace Vortek
+
+#endif // VORTEK_PLATE_MAPPING_HPP

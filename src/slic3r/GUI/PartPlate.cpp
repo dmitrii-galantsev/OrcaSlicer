@@ -28,6 +28,7 @@
 #include "GUI_App.hpp"
 #include "libslic3r/AppConfig.hpp"
 #include "libslic3r/PresetBundle.hpp"
+#include "libslic3r/VortekPlateMapping.hpp"
 #include "BackgroundSlicingProcess.hpp"
 #include "Widgets/Label.hpp"
 #include "2DBed.hpp"
@@ -3836,6 +3837,7 @@ void PartPlate::set_filament_count(int filament_count)
         std::vector<int>& filament_maps = m_config.option<ConfigOptionInts>("filament_map")->values;
         filament_maps.resize(filament_count, 1);
     }
+    Vortek::PlateMapping::handle_filament_count_changed(&m_config, filament_count);
 }
 
 void PartPlate::on_filament_added()
@@ -3844,6 +3846,7 @@ void PartPlate::on_filament_added()
         std::vector<int>& filament_maps = m_config.option<ConfigOptionInts>("filament_map")->values;
         filament_maps.push_back(1);
     }
+    Vortek::PlateMapping::handle_filament_added(&m_config);
 }
 
 void PartPlate::on_filament_deleted(int filament_count, int filament_id)
@@ -3856,6 +3859,7 @@ void PartPlate::on_filament_deleted(int filament_count, int filament_id)
         if (filament_id >= 0 && filament_id < (int) filament_maps.size())
             filament_maps.erase(filament_maps.begin() + filament_id);
     }
+    Vortek::PlateMapping::handle_filament_deleted(&m_config, filament_id);
     update_first_layer_print_sequence_when_delete_filament(filament_id);
 }
 
@@ -6159,6 +6163,14 @@ int PartPlateList::store_to_3mf_structure(PlateDataPtrs& plate_data_list, bool w
 		BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": plate %1% after load, width %2%, height %3%, size %4%!")
 			%(i+1) %plate_data_item->plate_thumbnail.width %plate_data_item->plate_thumbnail.height %plate_data_item->plate_thumbnail.pixels.size();
 		plate_data_item->config.apply(*m_plate_list[i]->config());
+        Vortek::PlateMapping::patch_plate_data_for_export(
+            plate_data_item,
+            m_plate_list[i]->config()->has("filament_nozzle_map") ? m_plate_list[i]->config()->option<ConfigOptionInts>("filament_nozzle_map")->values : std::vector<int>{},
+            m_plate_list[i]->config()->has("filament_volume_map") ? m_plate_list[i]->config()->option<ConfigOptionInts>("filament_volume_map")->values : std::vector<int>{},
+            plate_data_item->filament_maps,
+            plate_data_item->config,
+            nullptr
+        );
 
 		if (m_plate_list[i]->no_light_thumbnail_data.is_valid())
 			plate_data_item->no_light_thumbnail_file = "valid_no_light";

@@ -7,6 +7,7 @@
 #include "format.hpp"
 
 #include "GCode/Thumbnails.hpp"
+#include "VortekPrintHooks.hpp"
 #include <set>
 #include <boost/algorithm/string/case_conv.hpp>
 #include <boost/algorithm/string/replace.hpp>
@@ -576,9 +577,19 @@ CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(NozzleVolumeType)
 static const t_config_enum_values s_keys_map_FilamentMapMode = {
     { "Auto For Flush", fmmAutoForFlush },
     { "Auto For Match", fmmAutoForMatch },
-    { "Manual", fmmManual }
+    { "Manual", fmmManual },
+    { "Nozzle Manual", fmmNozzleManual },
+    { "Auto For Quality", fmmAutoForQuality },
+    { "Default", fmmDefault }
 };
 CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(FilamentMapMode)
+
+static const t_config_enum_values s_keys_map_PrimeVolumeMode = {
+    { "Default", pvmDefault },
+    { "Saving", pvmSaving },
+    { "Fast", pvmFast }
+};
+CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(PrimeVolumeMode)
 
 
 //BBS
@@ -2540,13 +2551,18 @@ void PrintConfigDef::init_fff_params()
     def->enum_values.push_back("Auto For Flush");
     def->enum_values.push_back("Auto For Match");
     def->enum_values.push_back("Manual");
+    def->enum_values.push_back("Nozzle Manual");
+    def->enum_values.push_back("Auto For Quality");
     def->enum_values.push_back("Default");
     def->enum_labels.push_back(L("Auto For Flush"));
     def->enum_labels.push_back(L("Auto For Match"));
     def->enum_labels.push_back(L("Manual"));
+    def->enum_labels.push_back(L("Nozzle Manual"));
+    def->enum_labels.push_back(L("Auto For Quality"));
     def->enum_labels.push_back(L("Default"));
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionEnum<FilamentMapMode>(fmmAutoForFlush));
+    ::Vortek::PrintHooks::init_vortek_params(this);
 
     def = this->add("filament_flush_temp", coInts);
     def->label = L("Flush temperature");

@@ -8,6 +8,7 @@
 #include "libslic3r/LocalesUtils.hpp"
 #include "libslic3r/format.hpp"
 #include "GCodeProcessor.hpp"
+#include "VortekPreCooling.hpp"
 
 #include <boost/log/trivial.hpp>
 #include <boost/algorithm/string/predicate.hpp>
@@ -915,6 +916,16 @@ void GCodeProcessor::run_post_process()
     if (in.f == nullptr)
         throw Slic3r::RuntimeError(std::string("GCode processor post process export failed.\nCannot open file for reading.\n"));
 
+    // Vortek pre-cooling pre-scan hook
+    ::Vortek::PreCooling::InsertedLinesMap precooling_inserted_lines;
+    ::Vortek::PreCooling::InsertedLinesMap::iterator precooling_iter;
+    bool enable_pre_cooling = false;
+    if (m_print && m_print->get_nozzle_group_result() && m_print->config().enable_pre_heating.value) {
+        enable_pre_cooling = true;
+        precooling_inserted_lines = ::Vortek::PreCooling::run_pre_scan(*this, m_result.filename);
+        precooling_iter = precooling_inserted_lines.begin();
+    }
+
     // temporary file to contain modified gcode
     std::string out_path = m_result.filename + ".postprocess";
     FilePtr out{ boost::nowide::fopen(out_path.c_str(), "wb") };
@@ -1362,6 +1373,11 @@ void GCodeProcessor::run_post_process()
 
                 if (eol) {
                     ++line_id;
+                    if (enable_pre_cooling) {
+                        ::Vortek::PreCooling::inject_lines(precooling_iter, precooling_inserted_lines, true, line_id, [&export_line](const std::string& inserted) {
+                            export_line.append_line(inserted);
+                        });
+                    }
                     const unsigned int internal_g1_lines_counter = export_line.update(gcode_line, line_id, g1_lines_counter);
                     // Orca: track the current layer for preheat temperature selection.
                     // The line is ";" + reserved_tag(Layer_Change) + EOL; match it independent of

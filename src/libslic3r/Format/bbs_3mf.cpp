@@ -4460,6 +4460,18 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
                     m_curr_plater->config.set_key_value("filament_map", new ConfigOptionInts(filament_map));
                 }
             }
+            else if (key == "filament_nozzle_map") {
+                if (m_curr_plater) {
+                    auto vec = get_vector_from_string(value);
+                    m_curr_plater->config.set_key_value("filament_nozzle_map", new ConfigOptionInts(vec));
+                }
+            }
+            else if (key == "filament_volume_map") {
+                if (m_curr_plater) {
+                    auto vec = get_vector_from_string(value);
+                    m_curr_plater->config.set_key_value("filament_volume_map", new ConfigOptionInts(vec));
+                }
+            }
             else if (key == GCODE_FILE_ATTR)
             {
                 m_curr_plater->gcode_file = value;
@@ -7972,6 +7984,30 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
                 if (filament_map_mode_opt !=nullptr && filament_maps_opt != nullptr) {
                     stream << "    <" << METADATA_TAG << " " << KEY_ATTR << "=\"" << FILAMENT_MAP_ATTR << "\" " << VALUE_ATTR << "=\"";
                     const std::vector<int>& values = filament_maps_opt->values;
+                    for (int i = 0; i < values.size(); ++i) {
+                        stream << values[i];
+                        if (i != (values.size() - 1))
+                            stream << " ";
+                    }
+                    stream << "\"/>\n";
+                }
+
+                ConfigOptionInts* filament_nozzle_maps_opt = plate_data->config.option<ConfigOptionInts>("filament_nozzle_map");
+                if (filament_nozzle_maps_opt != nullptr) {
+                    stream << "    <" << METADATA_TAG << " " << KEY_ATTR << "=\"filament_nozzle_map\" " << VALUE_ATTR << "=\"";
+                    const std::vector<int>& values = filament_nozzle_maps_opt->values;
+                    for (int i = 0; i < values.size(); ++i) {
+                        stream << values[i];
+                        if (i != (values.size() - 1))
+                            stream << " ";
+                    }
+                    stream << "\"/>\n";
+                }
+
+                ConfigOptionInts* filament_volume_maps_opt = plate_data->config.option<ConfigOptionInts>("filament_volume_map");
+                if (filament_volume_maps_opt != nullptr) {
+                    stream << "    <" << METADATA_TAG << " " << KEY_ATTR << "=\"filament_volume_map\" " << VALUE_ATTR << "=\"";
+                    const std::vector<int>& values = filament_volume_maps_opt->values;
                     for (int i = 0; i < values.size(); ++i) {
                         stream << values[i];
                         if (i != (values.size() - 1))

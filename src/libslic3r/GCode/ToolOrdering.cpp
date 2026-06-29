@@ -1,5 +1,6 @@
 #include "ExtrusionEntity.hpp"
 #include "Print.hpp"
+#include "VortekGroupReorder.hpp"
 #include "ToolOrdering.hpp"
 #include "Layer.hpp"
 #include "ClipperUtils.hpp"
@@ -1287,6 +1288,7 @@ void ToolOrdering::reorder_extruders_for_minimum_flush_volume(bool reorder_first
 
     filament_maps = m_print->get_filament_maps();
     map_mode = m_print->get_filament_map_mode();
+    bool is_vortek_handled = false;
     // only check and map in sequence mode, in by object mode, we check the map in print.cpp
     if (print_config->print_sequence != PrintSequence::ByObject || m_print->objects().size() == 1) {
         if (map_mode < FilamentMapMode::fmmManual) {
@@ -1301,11 +1303,17 @@ void ToolOrdering::reorder_extruders_for_minimum_flush_volume(bool reorder_first
                 return;
             std::transform(filament_maps.begin(), filament_maps.end(), filament_maps.begin(), [](int value) { return value + 1; });
             m_print->update_filament_maps_to_config(filament_maps);
+        } else if (map_mode == FilamentMapMode::fmmNozzleManual) {
+            is_vortek_handled = ::Vortek::GroupReorder::handle_nozzle_manual_reorder(
+                m_print, print_config, used_filaments, filament_maps, number_of_extruders);
         }
-        std::transform(filament_maps.begin(), filament_maps.end(), filament_maps.begin(), [](int value) { return value - 1; });
+
+        if (!is_vortek_handled) {
+            std::transform(filament_maps.begin(), filament_maps.end(), filament_maps.begin(), [](int value) { return value - 1; });
+        }
 
         if (m_print->is_BBL_printer())
-        check_filament_printable_after_group(used_filaments, filament_maps, print_config);
+            check_filament_printable_after_group(used_filaments, filament_maps, print_config);
     }
     else {
         // we just need to change the map to 0 based

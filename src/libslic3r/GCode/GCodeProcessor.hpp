@@ -15,6 +15,10 @@
 #include <string_view>
 #include <optional>
 
+namespace Vortek {
+    class PreCooling;
+}
+
 namespace Slic3r {
 
 class Print;
@@ -856,6 +860,8 @@ class Print;
 
         GCodeProcessorResult m_result;
         static unsigned int s_result_id;
+
+        friend class ::Vortek::PreCooling;
 
     public:
         GCodeProcessor();

@@ -19,6 +19,7 @@
 #include "MaterialType.hpp"
 #include "Model.hpp"
 #include "format.hpp"
+#include "VortekPrintHooks.hpp"
 #include <float.h>
 
 #include <algorithm>
@@ -330,8 +331,24 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
             || opt_key == "other_layers_print_sequence"
             || opt_key == "other_layers_print_sequence_nums" 
             || opt_key == "extruder_ams_count"
-            || opt_key == "filament_map_mode"
-            || opt_key == "filament_map"
+             || opt_key == "filament_map_mode"
+             || opt_key == "filament_map"
+             || opt_key == "filament_nozzle_map"
+             || opt_key == "filament_volume_map"
+             || opt_key == "filament_map_2"
+             || opt_key == "extruder_max_nozzle_count"
+             || opt_key == "extruder_nozzle_stats"
+             || opt_key == "enable_filament_dynamic_map"
+             || opt_key == "prime_volume_mode"
+             || opt_key == "filament_prime_volume_nc"
+             || opt_key == "filament_change_length_nc"
+             || opt_key == "filament_ramming_volumetric_speed_nc"
+             || opt_key == "filament_ramming_travel_time_nc"
+             || opt_key == "filament_pre_cooling_temperature_nc"
+             || opt_key == "machine_hotend_change_time"
+             || opt_key == "hotend_cooling_rate"
+             || opt_key == "hotend_heating_rate"
+             || opt_key == "enable_pre_heating"
             || opt_key == "filament_adhesiveness_category"
             || opt_key == "filament_tower_interface_pre_extrusion_dist"
             || opt_key == "filament_tower_interface_pre_extrusion_length"
@@ -3469,6 +3486,10 @@ void Print::_make_wipe_tower()
         for (size_t i = 0; i < number_of_extruders; ++i)
             wipe_tower.set_extruder(i, m_config);
 
+        if (auto group_result = get_layered_nozzle_group_result()) {
+            wipe_tower.set_nozzle_group_result(*group_result);
+        }
+
         // BBS: remove priming logic
         // m_wipe_tower_data.priming = Slic3r::make_unique<std::vector<WipeTower::ToolChangeResult>>(
         //    wipe_tower.prime((float)this->skirt_first_layer_height(), m_wipe_tower_data.tool_ordering.all_extruders(), false));
@@ -3499,7 +3520,8 @@ void Print::_make_wipe_tower()
         size_t cur_nozzle_id = filament_maps[current_filament_id] - 1;
         nozzle_cur_filament_ids[cur_nozzle_id] = current_filament_id;
 
-        for (auto& layer_tools : m_wipe_tower_data.tool_ordering.layer_tools()) { // for all layers
+        for (size_t layer_idx = 0; layer_idx < m_wipe_tower_data.tool_ordering.layer_tools().size(); ++layer_idx) {
+            auto& layer_tools = m_wipe_tower_data.tool_ordering.layer_tools()[layer_idx];
             if (!layer_tools.has_wipe_tower) continue;
             bool first_layer = &layer_tools == &m_wipe_tower_data.tool_ordering.front();
             wipe_tower.plan_toolchange((float)layer_tools.print_z, (float)layer_tools.wipe_tower_layer_height, current_filament_id, current_filament_id);
@@ -3525,8 +3547,22 @@ void Print::_make_wipe_tower()
                 float grab_purge_volume = m_config.grab_length.get_at(nozzle_id) * 2.4; //(diameter/2)^2*PI=2.4
                 volume_to_purge = std::max(0.f, volume_to_purge - grab_purge_volume);
 
+                float wipe_volume = m_config.prime_volume;
+                if (auto group_result = get_layered_nozzle_group_result()) {
+                    bool is_nozzle_change = group_result->are_filaments_same_extruder(current_filament_id, filament_id, layer_idx) &&
+                                           !group_result->are_filaments_same_nozzle(current_filament_id, filament_id, layer_idx);
+                    if (is_nozzle_change) {
+                        wipe_volume = filament_id < m_config.filament_prime_volume_nc.values.size() ? m_config.filament_prime_volume_nc.values[filament_id] : (float)m_config.prime_volume;
+                    } else {
+                        wipe_volume = filament_id < m_config.filament_prime_volume.values.size() ? m_config.filament_prime_volume.values[filament_id] : (float)m_config.prime_volume;
+                    }
+                }
+                if (m_config.prime_volume_mode == pvmSaving) {
+                    wipe_volume = 15.f;
+                }
+
                 wipe_tower.plan_toolchange((float)layer_tools.print_z, (float)layer_tools.wipe_tower_layer_height, current_filament_id, filament_id,
-                    m_config.prime_volume, volume_to_purge);
+                    wipe_volume, volume_to_purge);
                 current_filament_id = filament_id;
                 nozzle_cur_filament_ids[nozzle_id] = filament_id;
             }
@@ -5265,6 +5301,31 @@ void WipeTowerData::construct_mesh(float width, float depth, float height, float
     }
     //wipe_tower_mesh_data->real_wipe_tower_mesh.write_ascii("../wipe_tower_mesh.obj");
    //wipe_tower_mesh_data->real_brim_mesh.write_ascii("../wipe_tower_brim_mesh.obj");
+}
+
+void Print::set_nozzle_group_result(std::shared_ptr<MultiNozzleUtils::NozzleGroupResultBase> result)
+{
+    m_nozzle_group_result = result;
+}
+
+const std::shared_ptr<MultiNozzleUtils::NozzleGroupResultBase> Print::get_nozzle_group_result() const
+{
+    return m_nozzle_group_result;
+}
+
+std::shared_ptr<MultiNozzleUtils::LayeredNozzleGroupResult> Print::get_layered_nozzle_group_result() const
+{
+    return std::dynamic_pointer_cast<MultiNozzleUtils::LayeredNozzleGroupResult>(m_nozzle_group_result);
+}
+
+void Print::update_filament_maps_to_config(std::vector<int> f_maps, std::vector<int> f_volume_maps, std::vector<int> f_nozzle_maps)
+{
+    ::Vortek::PrintHooks::update_filament_maps_to_config(*this, f_maps, f_volume_maps, f_nozzle_maps);
+}
+
+void Print::update_to_config_by_nozzle_group_result(const MultiNozzleUtils::NozzleGroupResultBase& group_result)
+{
+    ::Vortek::PrintHooks::update_to_config_by_nozzle_group_result(*this, group_result);
 }
 
 } // namespace Slic3r

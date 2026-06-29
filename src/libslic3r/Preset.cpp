@@ -886,7 +886,7 @@ std::string Preset::get_filament_type(std::string &display_filament_type)
     return config.get_filament_type(display_filament_type);
 }
 
-std::string Preset::get_printer_type(PresetBundle *preset_bundle)
+std::string Preset::get_printer_type(PresetBundle *preset_bundle) const
 {
     if (preset_bundle) {
         auto config = &preset_bundle->printers.get_edited_preset().config;
@@ -903,7 +903,7 @@ std::string Preset::get_printer_type(PresetBundle *preset_bundle)
     return "";
 }
 
-std::string Preset::get_current_printer_type(PresetBundle *preset_bundle)
+std::string Preset::get_current_printer_type(PresetBundle *preset_bundle) const
 {
     if (preset_bundle) {
         auto config = &(this->config);
