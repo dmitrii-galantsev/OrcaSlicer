@@ -102,7 +102,9 @@ static bool is_bambu_x2d_printer(const FullPrintConfig &config)
 
 static int hotend_id_for_gcode_placeholder(const FullPrintConfig &config, int hotend_id)
 {
-    return is_bambu_x2d_printer(config) ? -1 : hotend_id;
+    if (is_bambu_x2d_printer(config))
+        return -1;
+    return ::Vortek::GCodeHooks::hotend_id_override(config, hotend_id);
 }
 
 Vec2d travel_point_1;

@@ -58,7 +58,18 @@ void register_vortek_placeholders(
     const Slic3r::FullPrintConfig& config,
     const Slic3r::Print* print);
 
-
+/**
+ * @brief Overrides the hotend ID for G-code placeholders.
+ * 
+ * If FTS (filament track switcher) is disabled (has_filament_switcher = false), 
+ * it returns -1 so that H-1/B-1 is emitted in the G-code.
+ * If FTS is enabled, it returns the physical hotend ID.
+ *
+ * @param config Full print configuration
+ * @param hotend_id Original hotend ID
+ * @return Overridden hotend ID
+ */
+int hotend_id_override(const Slic3r::FullPrintConfig& config, int hotend_id);
 
 } // namespace GCodeHooks
 } // namespace Vortek

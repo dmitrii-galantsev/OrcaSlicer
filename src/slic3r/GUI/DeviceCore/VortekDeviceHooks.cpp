@@ -130,16 +130,29 @@ bool handle_ams_extruder_binding(
     std::set<int>& binded_extruder_set,
     std::optional<int>& binded_switcher_pos)
 {
+    // Extruder ID 0xE (14) is a virtual extruder ID sent by the printer.
+    // It indicates that the filament is fed via AMS in H2C mode (two-channel feed).
     if (extruder_id == 0xE) {
         auto fs = get_fila_switch(obj);
-        if (obj && fs && fs->IsInstalled()) {
-            extruder_id = MAIN_EXTRUDER_ID;
+        bool fts_installed = fs && fs->IsInstalled();
+        
+        // 1. MUTATE ID: Replace virtual 0xE with physical MAIN_EXTRUDER_ID (0).
+        // This is necessary so the OrcaSlicer core (DevFilaSystem class) does not erase
+        // or ignore the AMS in the device list, as 0xE is not a valid extruder ID for UI.
+        extruder_id = MAIN_EXTRUDER_ID;
+        
+        if (fts_installed) {
+            // ── FTS MODE BRANCH ──────────────────────────────────────────────
+            // If the physical FTS switcher is installed and active,
+            // this AMS slot can route to both MAIN (0) and DEPUTY (1) extruders.
             if (ams_item.contains("info")) {
                 const std::string& info = ams_item["info"].get<std::string>();
+                // Physical channel number (0 or 1) is encoded in bits 24:4 of the info field.
                 int bind_switch_in = Slic3r::DevUtil::get_flag_bits(info, 24, 4);
                 if (bind_switch_in == 0 || bind_switch_in == 1) {
                     binded_extruder_set = { MAIN_EXTRUDER_ID, DEPUTY_EXTRUDER_ID };
                 }
+                // Switcher direction: 0 -> POS_IN_B (Deputy), 1 -> POS_IN_A (Main)
                 if (bind_switch_in == 0) {
                     binded_switcher_pos = Slic3r::VortekFilaSwitch::SwitchPos::POS_IN_B;
                 } else if (bind_switch_in == 1) {
@@ -148,12 +161,18 @@ bool handle_ams_extruder_binding(
                 VORTEK_LOG(info, "handle_ams_extruder_binding: mapped 0xE to MAIN/DEPUTY, SwitchPos=" 
                            << (binded_switcher_pos.has_value() ? std::to_string(binded_switcher_pos.value()) : "nullopt"));
             }
-            return true;
         } else {
-            VORTEK_LOG(warning, "handle_ams_extruder_binding: 0xE detected but FTS is not installed, ignoring AMS");
-            return false;
+            // ── NO-FTS MODE BRANCH ───────────────────────────────────────────
+            // If FTS is physically absent on the printer,
+            // this AMS slot is bound exclusively to the single available
+            // extruder (MAIN_EXTRUDER_ID = 0). Switcher position is std::nullopt.
+            binded_extruder_set = { MAIN_EXTRUDER_ID };
+            binded_switcher_pos = std::nullopt;
+            VORTEK_LOG(info, "handle_ams_extruder_binding: mapped 0xE to MAIN only (no-FTS)");
         }
+        return true;
     } else {
+        // Standard single extruder (non-H2C)
         binded_extruder_set = { extruder_id };
         return true;
     }
@@ -469,10 +488,14 @@ void preprocess_filament_json(Slic3r::MachineObject* obj, nlohmann::json& filame
         std::string ams_id = ams_item["id"].get<std::string>();
 
         if (ext_id == 0xE) {
+            // Mutate extruder_id in incoming JSON from 0xE to 0 (MAIN_EXTRUDER_ID).
+            // This bypasses the strict core check in DevFilaSystem.cpp (line 375),
+            // which erases the AMS if it sees an unmapped extruder_id of 0xE.
+            ams_item["extruder_id"] = MAIN_EXTRUDER_ID;
+            
             if (fts_installed) {
-                // Mutate extruder_id to 0 so the original parser does not erase it
-                ams_item["extruder_id"] = MAIN_EXTRUDER_ID;
-                
+                // ── FTS MODE BRANCH ──────────────────────────────────────────
+                // Store pending bindings to both physical extruders and resolve the FTS direction.
                 std::set<int> binded_extruder_set = { MAIN_EXTRUDER_ID, DEPUTY_EXTRUDER_ID };
                 std::optional<int> binded_switcher_pos = std::nullopt;
                 if (ams_item.contains("info")) {
@@ -486,8 +509,16 @@ void preprocess_filament_json(Slic3r::MachineObject* obj, nlohmann::json& filame
                 }
                 s_pending_ams_bindings[ams_id] = { binded_extruder_set, binded_switcher_pos };
                 VORTEK_LOG(info, "preprocess_filament_json: mapped 0xE to MAIN/DEPUTY for ams_id=" << ams_id);
+            } else {
+                // ── NO-FTS MODE BRANCH ───────────────────────────────────────
+                // If FTS is not installed, bind slots only to the MAIN extruder (0),
+                // and clear switcher position.
+                std::set<int> binded_extruder_set = { MAIN_EXTRUDER_ID };
+                s_pending_ams_bindings[ams_id] = { binded_extruder_set, std::nullopt };
+                VORTEK_LOG(info, "preprocess_filament_json: mapped 0xE to MAIN only (no-FTS) for ams_id=" << ams_id);
             }
         } else {
+            // Ordinary single extruders
             std::set<int> binded_extruder_set = { ext_id };
             s_pending_ams_bindings[ams_id] = { binded_extruder_set, std::nullopt };
         }

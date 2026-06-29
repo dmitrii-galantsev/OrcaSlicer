@@ -214,5 +214,37 @@ void patch_toolchange_dyn_config(
     }
 }
 
+/**
+ * @brief Overrides the hotend ID for G-code placeholder calculation.
+ * 
+ * In the original OrcaSlicer/BambuStudio for H2C printers, physical hotend IDs 
+ * (H0/H1) are output by default. However, if the Filament Track Switch (FTS) 
+ * hardware is absent or disabled, the printer firmware expects legacy H-1 and B-1.
+ * Emitting H0/H1 on a machine without FTS will trigger firmware error [0700-8029].
+ *
+ * This hook divides behavior based on `has_filament_switcher`:
+ * - has_filament_switcher = false (Classic mode / No-FTS):
+ *   Returns -1, which forces the G-code placeholders to evaluate to H-1 and B-1.
+ *   The printer accepts this job and prints without requiring FTS.
+ * - has_filament_switcher = true (FTS mode):
+ *   Returns the original hotend_id (0 or 1), enabling FTS-based A/B (MAIN/DEPUTY) channel switching.
+ */
+int hotend_id_override(const Slic3r::FullPrintConfig& config, int hotend_id)
+{
+    // ── NO-FTS BRANCH (default path) ─────────────────────────────────────────
+    // `has_filament_switcher` defaults to false.
+    // If the FTS module is not installed, force returning -1
+    // so OrcaSlicer emits H-1 / B-1 in the generated G-code.
+    if (!config.has_filament_switcher.value) {
+        return -1;
+    }
+
+    // ── FTS BRANCH ──────────────────────────────────────────────────────────
+    // Executed only when `has_filament_switcher` is explicitly true.
+    // Maps hotend_id 0 to physical channel A (MAIN) and hotend_id 1 to channel B (DEPUTY).
+    // Place any FTS-specific validation or override logic here.
+    return hotend_id;
+}
+
 } // namespace GCodeHooks
 } // namespace Vortek
