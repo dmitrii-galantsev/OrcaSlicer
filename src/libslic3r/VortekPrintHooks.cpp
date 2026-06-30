@@ -194,33 +194,47 @@ void PrintHooks::update_filament_maps_to_config(
 
     // Step 4: Rebuild filament_map_2 and extruder retract overrides (only when something changed).
     {
-        print.m_config.filament_map_2.values = f_maps;
-        auto opt_extruder_type = dynamic_cast<const Slic3r::ConfigOptionEnumsGeneric*>(
-            print.m_ori_full_print_config.option("extruder_type"));
-        auto opt_nozzle_volume_type = dynamic_cast<const Slic3r::ConfigOptionEnumsGeneric*>(
-            print.m_ori_full_print_config.option("nozzle_volume_type"));
-
-        for (size_t index = 0; index < f_maps.size(); index++) {
-            Slic3r::ExtruderType extruder_type = Slic3r::etDirectDrive;
-            if (opt_extruder_type && (int)index < (int)opt_extruder_type->size())
-                extruder_type = (Slic3r::ExtruderType)(opt_extruder_type->get_at(f_maps[index] - 1));
-
-            Slic3r::NozzleVolumeType nozzle_volume_type = Slic3r::nvtStandard;
-            if (!final_volume_maps.empty() && index < final_volume_maps.size())
-                nozzle_volume_type = (Slic3r::NozzleVolumeType)(final_volume_maps[index]);
-            else if (opt_nozzle_volume_type && (int)(f_maps[index] - 1) < (int)opt_nozzle_volume_type->size())
-                nozzle_volume_type = (Slic3r::NozzleVolumeType)(opt_nozzle_volume_type->get_at(f_maps[index] - 1));
-
-            print.m_config.filament_map_2.values[index] = print.m_ori_full_print_config.get_index_for_extruder(
-                f_maps[index], "print_extruder_id", extruder_type, nozzle_volume_type, "print_extruder_variant");
-        }
-
+        // Rebuild m_full_print_config so that print_extruder_id / print_extruder_variant
+        // are populated by update_values_to_printer_extruders_for_multiple_filaments.
+        // This MUST happen before we call get_index_for_extruder — otherwise it falls back
+        // to generated_extruder_id (via extruder_variant_list with 2 variants/extruder)
+        // and returns the position in the flattened list (e.g., 2 for Ext2/Standard)
+        // instead of the 0-based extruder index (1 for Ext2).
         print.m_full_print_config = print.m_ori_full_print_config;
 
         std::set<std::string> filament_keys = Slic3r::filament_options_with_variant;
         filament_keys.insert("filament_self_index");
         print.m_full_print_config.update_values_to_printer_extruders_for_multiple_filaments(
             print.m_full_print_config, filament_keys, "filament_self_index", "filament_extruder_variant");
+
+        // Now compute filament_map_2 using m_full_print_config (has print_extruder_id set).
+        // get_index_for_extruder returns the 0-based extruder index matching f_maps[i].
+        // E.g.: f_maps=[2,1,2,2,2] → filament_map_2=[1,0,1,1,1]
+        {
+            print.m_config.filament_map_2.values = f_maps;
+            auto opt_extruder_type = dynamic_cast<const Slic3r::ConfigOptionEnumsGeneric*>(
+                print.m_ori_full_print_config.option("extruder_type"));
+            auto opt_nozzle_volume_type = dynamic_cast<const Slic3r::ConfigOptionEnumsGeneric*>(
+                print.m_ori_full_print_config.option("nozzle_volume_type"));
+
+            for (size_t index = 0; index < f_maps.size(); index++) {
+                Slic3r::ExtruderType extruder_type = Slic3r::etDirectDrive;
+                if (opt_extruder_type && (int)index < (int)opt_extruder_type->size())
+                    extruder_type = (Slic3r::ExtruderType)(opt_extruder_type->get_at(f_maps[index] - 1));
+
+                Slic3r::NozzleVolumeType nozzle_volume_type = Slic3r::nvtStandard;
+                if (!final_volume_maps.empty() && index < final_volume_maps.size())
+                    nozzle_volume_type = (Slic3r::NozzleVolumeType)(final_volume_maps[index]);
+                else if (opt_nozzle_volume_type && (int)(f_maps[index] - 1) < (int)opt_nozzle_volume_type->size())
+                    nozzle_volume_type = (Slic3r::NozzleVolumeType)(opt_nozzle_volume_type->get_at(f_maps[index] - 1));
+
+                // Use m_full_print_config (not m_ori) — print_extruder_id is now set.
+                int idx = print.m_full_print_config.get_index_for_extruder(
+                    f_maps[index], "print_extruder_id", extruder_type, nozzle_volume_type, "print_extruder_variant");
+                // Fallback: if get_index_for_extruder fails (-1), use simple 0-based formula.
+                print.m_config.filament_map_2.values[index] = (idx >= 0) ? idx : (f_maps[index] - 1);
+            }
+        }
 
         const std::vector<std::string>& extruder_retract_keys = Slic3r::print_config_def.extruder_retract_keys();
         const std::string               filament_prefix       = "filament_";
@@ -247,6 +261,7 @@ void PrintHooks::update_filament_maps_to_config(
         }
     }
 }
+
 
 void PrintHooks::update_to_config_by_nozzle_group_result(
     Slic3r::Print& print,
