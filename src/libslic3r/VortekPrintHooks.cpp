@@ -296,6 +296,22 @@ void PrintHooks::update_filament_maps_to_config(
             print.m_placeholder_parser.apply_config(filament_overrides);
             print.m_config.apply(filament_overrides);
         }
+
+        // Dynamically initialize physical_extruder_map based on print_extruder_id
+        // Left (1) -> 0 (T0), Right (2) -> 1 (T1)
+        std::vector<int> calculated_physical_map;
+        const auto* opt_extruder_ids = print.m_full_print_config.option<Slic3r::ConfigOptionInts>("print_extruder_id");
+        if (opt_extruder_ids) {
+            for (int ext_id : opt_extruder_ids->values) {
+                calculated_physical_map.push_back(ext_id - 1);
+            }
+        }
+        if (print.m_config.physical_extruder_map.values != calculated_physical_map) {
+            print.m_config.physical_extruder_map.values = calculated_physical_map;
+            if (auto* opt = print.m_ori_full_print_config.option<Slic3r::ConfigOptionInts>("physical_extruder_map", true)) {
+                opt->values = calculated_physical_map;
+            }
+        }
     }
 }
 
