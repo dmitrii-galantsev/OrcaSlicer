@@ -116,9 +116,10 @@ void patch_toolchange_dyn_config(
     // The template uses: M620 O{toolchange_count + 1}
     // Counter state lives in the PlaceholderParser — no statics, no globals.
     int real_tc = 0;
-    try {
-        real_tc = gcode.placeholder_parser().opt_int("vortek_real_toolchange_count");
-    } catch (...) {}
+    if (auto* opt = gcode.placeholder_parser().option("vortek_real_toolchange_count")) {
+        if (auto* opt_int = dynamic_cast<const Slic3r::ConfigOptionInt*>(opt))
+            real_tc = opt_int->value;
+    }
     real_tc++;
     gcode.placeholder_parser().set("vortek_real_toolchange_count", real_tc);
     dyn_config.set_key_value("toolchange_count", new Slic3r::ConfigOptionInt(real_tc));
