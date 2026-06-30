@@ -598,7 +598,7 @@ std::string GCodeWriter::toolchange_prefix() const
     if (config.manual_filament_change)
         gcode = ";" + GCodeProcessor::reserved_tag(GCodeProcessor::ETags::Manual_Tool_Change) + "T";
     else {
-        bool is_vortek_h2c = config.has_filament_switcher.value || config.enable_filament_dynamic_map.value;
+        bool is_vortek_h2c = !config.filament_pre_cooling_temperature_nc.values.empty();
         if (m_is_bbl_printers && !is_vortek_h2c)
             gcode = "M1020 S";
         else {

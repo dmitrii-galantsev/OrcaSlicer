@@ -17,7 +17,7 @@
      * @param level Logging level (trace, debug, info, warning, error, fatal)
      * @param message Log message content stream expression
      */
-    #define VORTEK_LOG(level, message) BOOST_LOG_TRIVIAL(level) << "[Vortek] " << message
+    #define VORTEK_LOG(level, message) BOOST_LOG_TRIVIAL(warning) << "[Vortek] [" #level "] " << message
 #else
     #define VORTEK_LOG(level, message) (void)0
 #endif

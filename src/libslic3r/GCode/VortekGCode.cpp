@@ -1,4 +1,5 @@
 #include "VortekGCode.hpp"
+#include <libslic3r/PlaceholderParser.hpp>
 #include "libslic3r/VortekMultiNozzle.hpp"
 #include "libslic3r/Print.hpp"
 #include "libslic3r/VortekLog.hpp"
@@ -17,11 +18,11 @@ void register_vortek_placeholders(
 {
     // Register all H2C/BBL placeholders and NC variables if the printer supports H2C parameters.
     // This is done early to ensure they are available even for single-nozzle plates or during early slicing stages.
-    // Initialize Vortek state in the parser itself (no statics!).
+    // Initialize Vortek state in the parser itself (no statics, no memory leaks!).
     // These are read and updated by patch_toolchange_dyn_config().
-    VORTEK_LOG(info, "register_vortek_placeholders called on parser: " << &parser);
     parser.set("vortek_real_toolchange_count", 0);
     parser.set("vortek_extruders_used_mask", 0);
+    parser.set("vortek_last_nozzle_id", -1);
 
     if (!config.has("filament_pre_cooling_temperature_nc")) return;
 
@@ -79,9 +80,6 @@ void register_vortek_placeholders(
 
 void update_layer_related_config(Slic3r::GCode& gcode, int layer_id)
 {
-    // Register all H2C/BBL placeholders and NC variables
-    register_vortek_placeholders(gcode.placeholder_parser(), gcode.m_config, gcode.m_print);
-
     Slic3r::Print* print = gcode.m_print;
     if (!print) return;
 
@@ -111,41 +109,84 @@ void patch_toolchange_dyn_config(
     int new_filament_id,
     int layer_id)
 {
+    Slic3r::Print* print = gcode.m_print;
+    if (!print) return;
+
     // ── FIX: Override toolchange_count for H2C firmware ──────────────────
-    // OrcaSlicer's m_toolchange_count includes ALL internal extruder switches
-    // (including virtual WipeTower operations), producing values like 29, 72, 142...
-    // H2C firmware expects sequential numbering: 1, 2, 3, 4...
-    // The template uses: M620 O{toolchange_count + 1}
-    // Counter state lives in the PlaceholderParser — no statics, no globals.
-    VORTEK_LOG(info, "patch_toolchange_dyn_config read from parser: " << &gcode.placeholder_parser());
+    int config_extruder_idx = new_filament_id % 2; // Default fallback for 0-based arrays
+    int extruder_id = new_filament_id;             // Default fallback (carriage)
+    int nozzle_id = new_filament_id;               // Default fallback (nozzle)
+    float diameter = 0.4f;
+
+    // Try to get nozzle_id from static filament_nozzle_map in config
+    if (gcode.m_config.has("filament_nozzle_map")) {
+        auto opt = gcode.m_config.option<Slic3r::ConfigOptionInts>("filament_nozzle_map");
+        if (opt && new_filament_id >= 0 && new_filament_id < (int)opt->values.size()) {
+            nozzle_id = opt->values[new_filament_id];
+            
+            // Check if map is flat/uninitialized (all 1s)
+            bool is_flat_map = true;
+            for (int val : opt->values) {
+                if (val != 1) { is_flat_map = false; break; }
+            }
+            if (is_flat_map && gcode.m_config.has("filament_map")) {
+                auto f_map_opt = gcode.m_config.option<Slic3r::ConfigOptionInts>("filament_map");
+                if (f_map_opt && opt->values.size() == f_map_opt->values.size()) {
+                    std::vector<int> calculated_nozzles(opt->values.size(), 0);
+                    int next_carousel_nozzle = 3;
+                    for (size_t i = 0; i < f_map_opt->values.size(); ++i) {
+                        int ext_id = f_map_opt->values[i]; // 1-based (1 = Left, 2 = Right)
+                        if (ext_id == 1) {
+                            calculated_nozzles[i] = 0; // Left is always 0
+                        } else if (ext_id == 2) {
+                            calculated_nozzles[i] = next_carousel_nozzle--;
+                            if (next_carousel_nozzle < 1) next_carousel_nozzle = 3;
+                        }
+                    }
+                    nozzle_id = calculated_nozzles[new_filament_id];
+                }
+            }
+        }
+    }
+    // Try to get nozzle diameter from config
+    if (gcode.m_config.has("nozzle_diameter") && new_filament_id < (int)gcode.m_config.nozzle_diameter.values.size())
+        diameter = gcode.m_config.nozzle_diameter.values[new_filament_id];
+
+    auto group_result = print->get_layered_nozzle_group_result();
+    if (group_result) {
+        // Retrieve dynamic nozzle info if available
+        auto nozzle_info = group_result->get_nozzle_for_filament(new_filament_id, layer_id);
+        if (nozzle_info.has_value()) {
+            extruder_id = nozzle_info->extruder_id;
+            config_extruder_idx = extruder_id - 1; // Convert 1-based physical ID to 0-based array index
+            nozzle_id = nozzle_info->group_id; // Physical nozzle changer slot ID
+            diameter = std::stof(nozzle_info->diameter);
+        }
+    }
+
+    int last_nozzle_id = -1;
+    if (auto* opt = gcode.placeholder_parser().option("vortek_last_nozzle_id")) {
+        if (auto* opt_int = dynamic_cast<const Slic3r::ConfigOptionInt*>(opt))
+            last_nozzle_id = opt_int->value;
+    }
+
     int real_tc = 0;
     if (auto* opt = gcode.placeholder_parser().option("vortek_real_toolchange_count")) {
         if (auto* opt_int = dynamic_cast<const Slic3r::ConfigOptionInt*>(opt))
             real_tc = opt_int->value;
-        VORTEK_LOG(info, "read vortek_real_toolchange_count: " << real_tc);
-    } else {
-        VORTEK_LOG(info, "vortek_real_toolchange_count option NOT FOUND in parser!");
     }
-    real_tc++;
-    gcode.placeholder_parser().set("vortek_real_toolchange_count", real_tc);
+
+    // Only increment when the physical nozzle actually switches!
+    if (nozzle_id != last_nozzle_id) {
+        real_tc++;
+        gcode.placeholder_parser().set("vortek_real_toolchange_count", real_tc);
+        gcode.placeholder_parser().set("vortek_last_nozzle_id", nozzle_id);
+    }
+
     dyn_config.set_key_value("toolchange_count", new Slic3r::ConfigOptionInt(real_tc));
-    VORTEK_LOG(info, "set toolchange_count override in dyn_config: " << real_tc);
-    Slic3r::Print* print = gcode.m_print;
-    if (!print) return;
 
-    auto group_result = print->get_layered_nozzle_group_result();
-    if (!group_result) return;
-
-    // Retrieve nozzle info for the incoming logical filament
-    auto nozzle_info = group_result->get_nozzle_for_filament(new_filament_id, layer_id);
-    if (!nozzle_info.has_value()) return;
-
-    int extruder_id = nozzle_info->extruder_id;
-    float diameter = std::stof(nozzle_info->diameter);
-
-    VORTEK_LOG(info, "patching toolchange config for filament " << new_filament_id 
-                    << " on layer " << layer_id << " (physical extruder: " << extruder_id 
-                    << ", nozzle diameter: " << diameter << ")");
+    VORTEK_LOG(warning, "patching toolchange config for filament " << new_filament_id 
+                        << " (extruder " << extruder_id << ", nozzle diameter " << diameter << ")");
 
     // 1. Dynamic Override retraction values based on active nozzle slot settings
     if (new_filament_id < (int)gcode.m_config.filament_retract_length_nc.values.size()) {
@@ -189,10 +230,10 @@ void patch_toolchange_dyn_config(
     }
 
     // 2. Override nozzle diameter for the target physical extruder
-    if (extruder_id < (int)gcode.m_config.nozzle_diameter.values.size()) {
-        gcode.m_config.nozzle_diameter.values[extruder_id] = diameter;
+    if (config_extruder_idx >= 0 && config_extruder_idx < (int)gcode.m_config.nozzle_diameter.values.size()) {
+        gcode.m_config.nozzle_diameter.values[config_extruder_idx] = diameter;
         dyn_config.set_key_value("nozzle_diameter", new Slic3r::ConfigOptionFloats(gcode.m_config.nozzle_diameter.values));
-        VORTEK_LOG(debug, "patched nozzle_diameter for extruder " << extruder_id << " -> " << diameter);
+        VORTEK_LOG(debug, "patched nozzle_diameter for extruder " << config_extruder_idx << " -> " << diameter);
     }
 
     // 3. Dynamic Override filament_pre_cooling_temperature_nc for toolchange
@@ -251,27 +292,28 @@ void patch_toolchange_dyn_config(
         parser.set("new_extruder_variant", new_variant);
 
         // new_extruder_retracted_length reflects the actual retract state of the incoming extruder.
-        // First use of an extruder: 0 (filament was just loaded, not retracted yet).
+        // First use of an extruder/nozzle: 0 (filament was just loaded, not retracted yet).
         // Subsequent uses: retract_length_toolchange (extruder was retracted during previous toolchange).
         // BBL reference confirms: R0 for first toolchange, R2 for subsequent ones.
         double new_retract = 0.0;
         {
-            // Track which extruders have been used via a bitmask in PlaceholderParser.
+            // Retrieve nozzle_id and config_extruder_idx (defined in outer scope)
+            // Track which nozzles have been used via a bitmask in PlaceholderParser.
             int used_mask = 0;
             if (auto* opt = gcode.placeholder_parser().option("vortek_extruders_used_mask")) {
                 if (auto* opt_int = dynamic_cast<const Slic3r::ConfigOptionInt*>(opt))
                     used_mask = opt_int->value;
             }
-            bool already_used = (used_mask >> next_extruder) & 1;
+            bool already_used = (used_mask >> nozzle_id) & 1;
             if (already_used) {
                 if (gcode.m_config.has("retract_length_toolchange")) {
                     auto opt = gcode.m_config.option<Slic3r::ConfigOptionFloats>("retract_length_toolchange");
-                    if (opt && next_extruder < (int)opt->values.size())
-                        new_retract = opt->values[next_extruder];
+                    if (opt && config_extruder_idx >= 0 && config_extruder_idx < (int)opt->values.size())
+                        new_retract = opt->values[config_extruder_idx];
                 }
             }
-            // Mark this extruder as used for future toolchanges.
-            used_mask |= (1 << next_extruder);
+            // Mark this nozzle as used for future toolchanges.
+            used_mask |= (1 << nozzle_id);
             gcode.placeholder_parser().set("vortek_extruders_used_mask", used_mask);
         }
         parser.set("new_extruder_retracted_length", new_retract);
