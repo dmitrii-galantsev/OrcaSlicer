@@ -3232,6 +3232,10 @@ void Print::update_filament_maps_to_config(std::vector<int> f_maps)
         }
     }
     m_has_auto_filament_map_result = true;
+
+    // Vortek: compute and apply filament_nozzle_map and filament_volume_map.
+    // The hook is idempotent — on 2nd re-slice the computed values already match m_config → guard skips → no invalidation.
+    ::Vortek::PrintHooks::update_filament_maps_to_config(*this, f_maps, std::vector<int>(), std::vector<int>());
 }
 
 void Print::apply_config_for_render(const DynamicConfig &config)

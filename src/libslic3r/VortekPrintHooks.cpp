@@ -129,72 +129,116 @@ void PrintHooks::update_filament_maps_to_config(
     const std::vector<int>& f_nozzle_maps
 )
 {
-    if ((print.m_config.filament_map.values != f_maps) || (print.m_config.filament_volume_map.values != f_volume_maps) || (print.m_config.filament_nozzle_map.values != f_nozzle_maps))
-    {
-        VORTEK_LOG(info, "filament maps changed after pre-slicing. Remapping config...");
-        print.m_ori_full_print_config.option<Slic3r::ConfigOptionInts>("filament_map", true)->values = f_maps;
-        print.m_config.filament_map.values = f_maps;
-
-        if (!f_volume_maps.empty()) {
-            print.m_ori_full_print_config.option<Slic3r::ConfigOptionInts>("filament_volume_map", true)->values = f_volume_maps;
-            print.m_config.filament_volume_map.values = f_volume_maps;
-        }
-        else {
-            print.m_ori_full_print_config.option<Slic3r::ConfigOptionInts>("filament_volume_map", true)->values.resize(f_maps.size(), Slic3r::nvtStandard);
-            print.m_config.filament_volume_map.values.resize(f_maps.size(), Slic3r::nvtStandard);
-        }
-
-        if (!f_nozzle_maps.empty()) {
-            print.m_ori_full_print_config.option<Slic3r::ConfigOptionInts>("filament_nozzle_map", true)->values = f_nozzle_maps;
-            print.m_config.filament_nozzle_map.values = f_nozzle_maps;
+    // Step 1: Compute final_nozzle_maps FIRST so we can use them in the idempotency guard.
+    // If f_nozzle_maps is empty, derive nozzle assignments from filament_map using the H2C carousel rule:
+    //   extruder 1 (Left)  → fixed slot 0
+    //   extruder 2 (Right) → carousel slots 3, 2, 1 (in order of first assignment)
+    std::vector<int> final_nozzle_maps = f_nozzle_maps;
+    if (final_nozzle_maps.empty() && !f_maps.empty()) {
+        final_nozzle_maps.resize(f_maps.size(), 0);
+        int next_carousel_nozzle = 3;
+        for (size_t i = 0; i < f_maps.size(); ++i) {
+            int ext_id = f_maps[i]; // 1-based (1 = Left, 2 = Right)
+            if (ext_id == 1) {
+                final_nozzle_maps[i] = 0;
+            } else if (ext_id == 2) {
+                final_nozzle_maps[i] = next_carousel_nozzle--;
+                if (next_carousel_nozzle < 1)
+                    next_carousel_nozzle = 3;
+            }
         }
     }
 
-    {
-        int extruder_count = print.m_config.nozzle_diameter.values.size();
-        int extruder_volume_type_count = 1;
-
-        // filament_map_2
-        print.m_config.filament_map_2.values = f_maps;
-        auto opt_extruder_type = dynamic_cast<const Slic3r::ConfigOptionEnumsGeneric*>(print.m_ori_full_print_config.option("extruder_type"));
-        auto opt_nozzle_volume_type = dynamic_cast<const Slic3r::ConfigOptionEnumsGeneric*>(print.m_ori_full_print_config.option("nozzle_volume_type"));
-        for (size_t index = 0; index < f_maps.size(); index++)
-        {
-            Slic3r::ExtruderType extruder_type = Slic3r::etDirectDrive;
-            if (opt_extruder_type && index < opt_extruder_type->size())
-                extruder_type = (Slic3r::ExtruderType)(opt_extruder_type->get_at(f_maps[index] - 1));
-            Slic3r::NozzleVolumeType nozzle_volume_type = Slic3r::nvtStandard;
-            if (opt_nozzle_volume_type && index < opt_nozzle_volume_type->size())
-                nozzle_volume_type = (Slic3r::NozzleVolumeType)(opt_nozzle_volume_type->get_at(f_maps[index] - 1));
-            if (f_volume_maps.empty()) {
-                print.m_config.filament_volume_map.values[index] = nozzle_volume_type;
-                print.m_ori_full_print_config.option<Slic3r::ConfigOptionInts>("filament_volume_map")->values[index] = nozzle_volume_type;
-            }
-            else if (print.m_config.filament_volume_map.values.size() > index)
-                nozzle_volume_type = (Slic3r::NozzleVolumeType)(print.m_config.filament_volume_map.values[index]);
-            print.m_config.filament_map_2.values[index] = print.m_ori_full_print_config.get_index_for_extruder(f_maps[index], "print_extruder_id", extruder_type, nozzle_volume_type, "print_extruder_variant");
+    // Step 2: Compute final_volume_maps from printer nozzle_volume_type per extruder (if not provided).
+    std::vector<int> final_volume_maps = f_volume_maps;
+    if (final_volume_maps.empty() && !f_maps.empty()) {
+        auto opt_nozzle_volume_type = dynamic_cast<const Slic3r::ConfigOptionEnumsGeneric*>(
+            print.m_ori_full_print_config.option("nozzle_volume_type"));
+        final_volume_maps.resize(f_maps.size(), Slic3r::nvtStandard);
+        for (size_t i = 0; i < f_maps.size(); ++i) {
+            int ext_idx = f_maps[i] - 1; // 0-based
+            if (opt_nozzle_volume_type && ext_idx >= 0 && ext_idx < (int)opt_nozzle_volume_type->size())
+                final_volume_maps[i] = opt_nozzle_volume_type->get_at(ext_idx);
         }
+    }
+
+    // Step 3: Idempotency guard — compare m_config against COMPUTED values.
+    // This ensures that on the 2nd re-slice the values already match → no write → no invalidation → cycle stops.
+    bool maps_changed   = (print.m_config.filament_map.values        != f_maps);
+    bool volume_changed = (print.m_config.filament_volume_map.values != final_volume_maps);
+    bool nozzle_changed = (!final_nozzle_maps.empty() &&
+                           print.m_config.filament_nozzle_map.values != final_nozzle_maps);
+
+    if (maps_changed || volume_changed || nozzle_changed) {
+        VORTEK_LOG(info, "update_filament_maps_to_config: maps changed, applying...");
+
+        if (maps_changed) {
+            print.m_ori_full_print_config.option<Slic3r::ConfigOptionInts>("filament_map", true)->values = f_maps;
+            print.m_config.filament_map.values = f_maps;
+        }
+
+        if (volume_changed) {
+            print.m_ori_full_print_config.option<Slic3r::ConfigOptionInts>("filament_volume_map", true)->values = final_volume_maps;
+            print.m_config.filament_volume_map.values = final_volume_maps;
+        }
+
+        if (nozzle_changed) {
+            VORTEK_LOG(info, "update_filament_maps_to_config: applying filament_nozzle_map");
+            print.m_ori_full_print_config.option<Slic3r::ConfigOptionInts>("filament_nozzle_map", true)->values = final_nozzle_maps;
+            print.m_config.filament_nozzle_map.values = final_nozzle_maps;
+        }
+    } else {
+        VORTEK_LOG(debug, "update_filament_maps_to_config: all maps unchanged, skipping (idempotent)");
+        return; // Nothing to do — stop here to avoid unnecessary work and invalidation
+    }
+
+    // Step 4: Rebuild filament_map_2 and extruder retract overrides (only when something changed).
+    {
+        print.m_config.filament_map_2.values = f_maps;
+        auto opt_extruder_type = dynamic_cast<const Slic3r::ConfigOptionEnumsGeneric*>(
+            print.m_ori_full_print_config.option("extruder_type"));
+        auto opt_nozzle_volume_type = dynamic_cast<const Slic3r::ConfigOptionEnumsGeneric*>(
+            print.m_ori_full_print_config.option("nozzle_volume_type"));
+
+        for (size_t index = 0; index < f_maps.size(); index++) {
+            Slic3r::ExtruderType extruder_type = Slic3r::etDirectDrive;
+            if (opt_extruder_type && (int)index < (int)opt_extruder_type->size())
+                extruder_type = (Slic3r::ExtruderType)(opt_extruder_type->get_at(f_maps[index] - 1));
+
+            Slic3r::NozzleVolumeType nozzle_volume_type = Slic3r::nvtStandard;
+            if (!final_volume_maps.empty() && index < final_volume_maps.size())
+                nozzle_volume_type = (Slic3r::NozzleVolumeType)(final_volume_maps[index]);
+            else if (opt_nozzle_volume_type && (int)(f_maps[index] - 1) < (int)opt_nozzle_volume_type->size())
+                nozzle_volume_type = (Slic3r::NozzleVolumeType)(opt_nozzle_volume_type->get_at(f_maps[index] - 1));
+
+            print.m_config.filament_map_2.values[index] = print.m_ori_full_print_config.get_index_for_extruder(
+                f_maps[index], "print_extruder_id", extruder_type, nozzle_volume_type, "print_extruder_variant");
+        }
+
         print.m_full_print_config = print.m_ori_full_print_config;
 
         std::set<std::string> filament_keys = Slic3r::filament_options_with_variant;
         filament_keys.insert("filament_self_index");
-        print.m_full_print_config.update_values_to_printer_extruders_for_multiple_filaments(print.m_full_print_config, filament_keys, "filament_self_index", "filament_extruder_variant");
+        print.m_full_print_config.update_values_to_printer_extruders_for_multiple_filaments(
+            print.m_full_print_config, filament_keys, "filament_self_index", "filament_extruder_variant");
 
-        const std::vector<std::string> &extruder_retract_keys = Slic3r::print_config_def.extruder_retract_keys();
+        const std::vector<std::string>& extruder_retract_keys = Slic3r::print_config_def.extruder_retract_keys();
         const std::string               filament_prefix       = "filament_";
-        Slic3r::t_config_option_keys            print_diff;
-        Slic3r::DynamicPrintConfig              filament_overrides;
-        for (auto& opt_key: extruder_retract_keys)
-        {
-            const Slic3r::ConfigOption *opt_new_filament = print.m_full_print_config.option(filament_prefix + opt_key);
-            const Slic3r::ConfigOption *opt_new_machine = print.m_full_print_config.option(opt_key);
-            const Slic3r::ConfigOption *opt_old_machine = print.m_config.option(opt_key);
+        Slic3r::t_config_option_keys    print_diff;
+        Slic3r::DynamicPrintConfig      filament_overrides;
 
+        for (auto& opt_key : extruder_retract_keys) {
+            const Slic3r::ConfigOption* opt_new_filament = print.m_full_print_config.option(filament_prefix + opt_key);
+            const Slic3r::ConfigOption* opt_new_machine  = print.m_full_print_config.option(opt_key);
+            const Slic3r::ConfigOption* opt_old_machine  = print.m_config.option(opt_key);
             if (opt_new_filament)
-                Slic3r::compute_filament_override_value(opt_key, opt_old_machine, opt_new_machine, opt_new_filament, print.m_full_print_config, print_diff, filament_overrides, print.m_config.filament_map_2.values);
+                Slic3r::compute_filament_override_value(opt_key, opt_old_machine, opt_new_machine,
+                    opt_new_filament, print.m_full_print_config, print_diff, filament_overrides,
+                    print.m_config.filament_map_2.values);
         }
 
-        Slic3r::t_config_option_keys keys(Slic3r::filament_options_with_variant.begin(), Slic3r::filament_options_with_variant.end());
+        Slic3r::t_config_option_keys keys(Slic3r::filament_options_with_variant.begin(),
+                                          Slic3r::filament_options_with_variant.end());
         keys.push_back("filament_self_index");
         print.m_config.apply_only(print.m_full_print_config, keys, true);
         if (!print_diff.empty()) {
@@ -209,6 +253,16 @@ void PrintHooks::update_to_config_by_nozzle_group_result(
     const Slic3r::MultiNozzleUtils::NozzleGroupResultBase& group_result
 )
 {
+    const auto* layered_result = dynamic_cast<const Slic3r::MultiNozzleUtils::LayeredNozzleGroupResult*>(&group_result);
+    if (layered_result) {
+        std::vector<int> nozzle_map = layered_result->get_nozzle_map(-1);
+        print.m_config.filament_nozzle_map.values = nozzle_map;
+        if (auto* opt = print.m_ori_full_print_config.option<Slic3r::ConfigOptionInts>("filament_nozzle_map", true)) {
+            opt->values = nozzle_map;
+        }
+        VORTEK_LOG(info, "update_to_config_by_nozzle_group_result: updated filament_nozzle_map in config");
+    }
+
     int extruder_count = print.m_config.nozzle_diameter.values.size();
     VORTEK_LOG(info, "update_to_config_by_nozzle_group_result: carriage count = " << extruder_count);
     int extruder_volume_type_count = 1;
