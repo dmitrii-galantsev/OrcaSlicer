@@ -9,9 +9,6 @@
 namespace Vortek {
 namespace GCodeHooks {
 
-// Sequential counter for real filament changes (used by M620 O{toolchange_count + 1}).
-// Reset at the start of each slicing export in register_vortek_placeholders().
-static int s_vortek_real_toolchange_count = 0;
 
 void register_vortek_placeholders(
     Slic3r::PlaceholderParser& parser,
@@ -20,8 +17,9 @@ void register_vortek_placeholders(
 {
     // Register all H2C/BBL placeholders and NC variables if the printer supports H2C parameters.
     // This is done early to ensure they are available even for single-nozzle plates or during early slicing stages.
-    // Reset real toolchange counter at the start of each slicing export.
-    s_vortek_real_toolchange_count = 0;
+    // Initialize the real toolchange counter in the parser itself (no statics!).
+    // This counter is read and incremented by patch_toolchange_dyn_config().
+    parser.set("vortek_real_toolchange_count", 0);
 
     if (!config.has("filament_pre_cooling_temperature_nc")) return;
 
@@ -116,9 +114,14 @@ void patch_toolchange_dyn_config(
     // (including virtual WipeTower operations), producing values like 29, 72, 142...
     // H2C firmware expects sequential numbering: 1, 2, 3, 4...
     // The template uses: M620 O{toolchange_count + 1}
-    // We maintain our own sequential counter and override the value in dyn_config.
-    s_vortek_real_toolchange_count++;
-    dyn_config.set_key_value("toolchange_count", new Slic3r::ConfigOptionInt(s_vortek_real_toolchange_count));
+    // Counter state lives in the PlaceholderParser — no statics, no globals.
+    int real_tc = 0;
+    try {
+        real_tc = gcode.placeholder_parser().opt_int("vortek_real_toolchange_count");
+    } catch (...) {}
+    real_tc++;
+    gcode.placeholder_parser().set("vortek_real_toolchange_count", real_tc);
+    dyn_config.set_key_value("toolchange_count", new Slic3r::ConfigOptionInt(real_tc));
     Slic3r::Print* print = gcode.m_print;
     if (!print) return;
 
