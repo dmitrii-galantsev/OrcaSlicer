@@ -260,6 +260,36 @@ void PrintHooks::update_filament_maps_to_config(
             print.m_config.apply(filament_overrides);
         }
     }
+
+    // Vortek: Always build and set LayeredNozzleGroupResult on the print object
+    // to enable the GCodeProcessor's PreCooling and PreHeating post-processors.
+    if (!f_maps.empty()) {
+        std::vector<unsigned int> used_filaments;
+        for (size_t i = 0; i < f_maps.size(); ++i) {
+            used_filaments.push_back(i);
+        }
+        auto nozzle_stats = Slic3r::MultiNozzleUtils::get_extruder_nozzle_stats(print.m_config.extruder_nozzle_stats.values);
+        float nozzle_dia = print.m_config.nozzle_diameter.values.empty() ? 0.4f : print.m_config.nozzle_diameter.values.front();
+
+        std::vector<int> zero_based_filament_map = f_maps;
+        std::transform(zero_based_filament_map.begin(), zero_based_filament_map.end(), zero_based_filament_map.begin(), [](int v) { return v - 1; });
+
+        auto nozzle_result = Slic3r::MultiNozzleUtils::LayeredNozzleGroupResult::create(
+            used_filaments,
+            zero_based_filament_map,
+            final_volume_maps,
+            final_nozzle_maps,
+            nozzle_stats,
+            nozzle_dia
+        );
+
+        if (nozzle_result) {
+            print.set_nozzle_group_result(std::make_shared<Slic3r::MultiNozzleUtils::LayeredNozzleGroupResult>(*nozzle_result));
+            VORTEK_LOG(info, "update_filament_maps_to_config: initialized m_nozzle_group_result in Print");
+        } else {
+            VORTEK_LOG(error, "update_filament_maps_to_config: failed to create LayeredNozzleGroupResult");
+        }
+    }
 }
 
 

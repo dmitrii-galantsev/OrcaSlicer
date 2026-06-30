@@ -470,52 +470,75 @@ std::vector<std::map<NozzleVolumeType, int>> get_extruder_nozzle_stats(const std
     std::vector<std::map<NozzleVolumeType, int>> ret;
     for (const auto& stat_str : stats_strings) {
         std::map<NozzleVolumeType, int> extruder_stats;
-        // Parse a string like "0.4:Standard:4,0.6:High Flow:4" or similar
-        // Let's implement a robust parser based on ':' and ','
-        std::stringstream ss(stat_str);
-        std::string group_token;
-        while (std::getline(ss, group_token, ',')) {
-            if (group_token.empty()) continue;
-            std::stringstream gss(group_token);
-            std::vector<std::string> parts;
-            std::string part;
-            while (std::getline(gss, part, ':')) {
-                parts.push_back(part);
-            }
-            if (parts.size() >= 3) {
-                // Format: diameter:volume_type:count
-                try {
-                    int vol_type_val = std::stoi(parts[1]);
-                    int count = std::stoi(parts[2]);
-                    extruder_stats[static_cast<NozzleVolumeType>(vol_type_val)] = count;
-                } catch (...) {
-                    // Fallback to text parsing
-                    std::string vol_str = parts[1];
+        if (stat_str.empty()) {
+            ret.push_back(extruder_stats);
+            continue;
+        }
+
+        // Check if it is the BBL format (Standard#7|High Flow#0)
+        if (stat_str.find('#') != std::string::npos || stat_str.find('|') != std::string::npos) {
+            std::stringstream ss(stat_str);
+            std::string token;
+            while (std::getline(ss, token, '|')) {
+                if (token.empty()) continue;
+                size_t hash_pos = token.find('#');
+                if (hash_pos != std::string::npos) {
+                    std::string vol_str = token.substr(0, hash_pos);
+                    std::string count_str = token.substr(hash_pos + 1);
                     NozzleVolumeType type = NozzleVolumeType::nvtStandard;
                     if (vol_str == "High Flow" || vol_str == "1") {
                         type = NozzleVolumeType::nvtHighFlow;
                     }
                     try {
-                        int count = std::stoi(parts[2]);
+                        int count = std::stoi(count_str);
                         extruder_stats[type] = count;
                     } catch (...) {}
                 }
-            } else if (parts.size() == 2) {
-                // Format: volume_type:count (fallback)
-                try {
-                    int vol_type_val = std::stoi(parts[0]);
-                    int count = std::stoi(parts[1]);
-                    extruder_stats[static_cast<NozzleVolumeType>(vol_type_val)] = count;
-                } catch (...) {
-                    std::string vol_str = parts[0];
-                    NozzleVolumeType type = NozzleVolumeType::nvtStandard;
-                    if (vol_str == "High Flow" || vol_str == "1") {
-                        type = NozzleVolumeType::nvtHighFlow;
-                    }
+            }
+        } else {
+            // Old format: e.g. "0.4:Standard:4,0.6:High Flow:4" or "0.4:4,0.6:4"
+            std::stringstream ss(stat_str);
+            std::string group_token;
+            while (std::getline(ss, group_token, ',')) {
+                if (group_token.empty()) continue;
+                std::stringstream gss(group_token);
+                std::vector<std::string> parts;
+                std::string part;
+                while (std::getline(gss, part, ':')) {
+                    parts.push_back(part);
+                }
+                if (parts.size() >= 3) {
                     try {
+                        int vol_type_val = std::stoi(parts[1]);
+                        int count = std::stoi(parts[2]);
+                        extruder_stats[static_cast<NozzleVolumeType>(vol_type_val)] = count;
+                    } catch (...) {
+                        std::string vol_str = parts[1];
+                        NozzleVolumeType type = NozzleVolumeType::nvtStandard;
+                        if (vol_str == "High Flow" || vol_str == "1") {
+                            type = NozzleVolumeType::nvtHighFlow;
+                        }
+                        try {
+                            int count = std::stoi(parts[2]);
+                            extruder_stats[type] = count;
+                        } catch (...) {}
+                    }
+                } else if (parts.size() == 2) {
+                    try {
+                        int vol_type_val = std::stoi(parts[0]);
                         int count = std::stoi(parts[1]);
-                        extruder_stats[type] = count;
-                    } catch (...) {}
+                        extruder_stats[static_cast<NozzleVolumeType>(vol_type_val)] = count;
+                    } catch (...) {
+                        std::string vol_str = parts[0];
+                        NozzleVolumeType type = NozzleVolumeType::nvtStandard;
+                        if (vol_str == "High Flow" || vol_str == "1") {
+                            type = NozzleVolumeType::nvtHighFlow;
+                        }
+                        try {
+                            int count = std::stoi(parts[1]);
+                            extruder_stats[type] = count;
+                        } catch (...) {}
+                    }
                 }
             }
         }

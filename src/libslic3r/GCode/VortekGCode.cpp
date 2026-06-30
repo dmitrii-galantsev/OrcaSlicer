@@ -201,47 +201,6 @@ void patch_toolchange_dyn_config(
                         << " (extruder " << extruder_id << ", nozzle diameter " << diameter
                         << ", tc=" << tc << ")");
 
-    // 1. Dynamic Override retraction values based on active nozzle slot settings
-    if (new_filament_id < (int)gcode.m_config.filament_retract_length_nc.values.size()) {
-        float nc_len = gcode.m_config.filament_retract_length_nc.values[new_filament_id];
-        if (nc_len > 0.0f) {
-            gcode.m_config.retraction_length.values[new_filament_id] = nc_len;
-            gcode.m_writer.config.retraction_length.values[new_filament_id] = nc_len;
-            dyn_config.set_key_value("retraction_length", new Slic3r::ConfigOptionFloats({(double)nc_len}));
-            VORTEK_LOG(debug, "patched retraction_length -> " << nc_len);
-        }
-    }
-
-    if (new_filament_id < (int)gcode.m_config.filament_retract_lift_nc.values.size()) {
-        float nc_lift = gcode.m_config.filament_retract_lift_nc.values[new_filament_id];
-        if (nc_lift > 0.0f) {
-            gcode.m_config.z_hop.values[new_filament_id] = nc_lift;
-            gcode.m_writer.config.z_hop.values[new_filament_id] = nc_lift;
-            dyn_config.set_key_value("z_hop", new Slic3r::ConfigOptionFloats({(double)nc_lift}));
-            VORTEK_LOG(debug, "patched z_hop -> " << nc_lift);
-        }
-    }
-
-    if (new_filament_id < (int)gcode.m_config.filament_retract_speed_nc.values.size()) {
-        int nc_speed = gcode.m_config.filament_retract_speed_nc.values[new_filament_id];
-        if (nc_speed > 0) {
-            gcode.m_config.retraction_speed.values[new_filament_id] = nc_speed;
-            gcode.m_writer.config.retraction_speed.values[new_filament_id] = nc_speed;
-            dyn_config.set_key_value("retraction_speed", new Slic3r::ConfigOptionFloats({(double)nc_speed}));
-            VORTEK_LOG(debug, "patched retraction_speed -> " << nc_speed);
-        }
-    }
-
-    if (new_filament_id < (int)gcode.m_config.filament_deretract_speed_nc.values.size()) {
-        int nc_deretract_speed = gcode.m_config.filament_deretract_speed_nc.values[new_filament_id];
-        if (nc_deretract_speed > 0) {
-            gcode.m_config.deretraction_speed.values[new_filament_id] = nc_deretract_speed;
-            gcode.m_writer.config.deretraction_speed.values[new_filament_id] = nc_deretract_speed;
-            dyn_config.set_key_value("deretraction_speed", new Slic3r::ConfigOptionFloats({(double)nc_deretract_speed}));
-            VORTEK_LOG(debug, "patched deretraction_speed -> " << nc_deretract_speed);
-        }
-    }
-
     // 2. Override nozzle diameter for the target physical extruder
     if (config_extruder_idx >= 0 && config_extruder_idx < (int)gcode.m_config.nozzle_diameter.values.size()) {
         gcode.m_config.nozzle_diameter.values[config_extruder_idx] = diameter;
