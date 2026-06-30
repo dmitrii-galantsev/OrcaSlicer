@@ -29,14 +29,33 @@ void PlateMapping::sync_after_slicing(
     auto group_result = print->get_layered_nozzle_group_result();
     if (!group_result) return;
 
+    if (filament_map_mode != Slic3r::fmmManual && filament_map_mode != Slic3r::fmmNozzleManual) {
+        VORTEK_LOG(info, "sync_after_slicing: auto map mode active, skipping write to plate config to prevent loop");
+        return;
+    }
+
     VORTEK_LOG(info, "sync_after_slicing: updating nozzle maps in plate config");
 
-    // Copy resolved mappings back into the plate configuration
     auto nozzle_map = group_result->get_nozzle_map(-1);
     auto volume_map = group_result->get_volume_map(-1);
 
-    plate_config.set_key_value("filament_nozzle_map", new Slic3r::ConfigOptionInts(nozzle_map));
-    plate_config.set_key_value("filament_volume_map", new Slic3r::ConfigOptionInts(volume_map));
+    bool changed = false;
+    auto* opt_nozzle = plate_config.option<Slic3r::ConfigOptionInts>("filament_nozzle_map");
+    if (!opt_nozzle || opt_nozzle->values != nozzle_map) {
+        plate_config.set_key_value("filament_nozzle_map", new Slic3r::ConfigOptionInts(nozzle_map));
+        changed = true;
+    }
+    auto* opt_volume = plate_config.option<Slic3r::ConfigOptionInts>("filament_volume_map");
+    if (!opt_volume || opt_volume->values != volume_map) {
+        plate_config.set_key_value("filament_volume_map", new Slic3r::ConfigOptionInts(volume_map));
+        changed = true;
+    }
+
+    if (changed) {
+        VORTEK_LOG(info, "sync_after_slicing: nozzle maps changed, updated plate config");
+    } else {
+        VORTEK_LOG(info, "sync_after_slicing: nozzle maps unchanged, skipped updating plate config");
+    }
 }
 
 void PlateMapping::handle_filament_count_changed(Slic3r::DynamicPrintConfig* config, int filament_count)

@@ -162,7 +162,41 @@ void PrintHooks::update_filament_maps_to_config(
         }
     }
 
-    // Step 3: Idempotency guard — compare m_config against COMPUTED values.
+    // Step 3: Always build and set LayeredNozzleGroupResult on the print object
+    // to enable the GCodeProcessor's PreCooling and PreHeating post-processors.
+    if (!f_maps.empty()) {
+        std::vector<unsigned int> used_filaments;
+        for (size_t i = 0; i < f_maps.size(); ++i) {
+            used_filaments.push_back(i);
+        }
+        auto opt_stats = print.m_full_print_config.option<Slic3r::ConfigOptionStrings>("extruder_nozzle_stats");
+        std::vector<std::string> stats_values = opt_stats ? opt_stats->values : std::vector<std::string>();
+        auto nozzle_stats = Slic3r::MultiNozzleUtils::get_extruder_nozzle_stats(stats_values);
+
+        auto opt_dia = print.m_full_print_config.option<Slic3r::ConfigOptionFloats>("nozzle_diameter");
+        float nozzle_dia = (opt_dia && !opt_dia->values.empty()) ? (float)opt_dia->values.front() : 0.4f;
+
+        std::vector<int> zero_based_filament_map = f_maps;
+        std::transform(zero_based_filament_map.begin(), zero_based_filament_map.end(), zero_based_filament_map.begin(), [](int v) { return v - 1; });
+
+        auto nozzle_result = Slic3r::MultiNozzleUtils::LayeredNozzleGroupResult::create(
+            used_filaments,
+            zero_based_filament_map,
+            final_volume_maps,
+            final_nozzle_maps,
+            nozzle_stats,
+            nozzle_dia
+        );
+
+        if (nozzle_result) {
+            print.set_nozzle_group_result(std::make_shared<Slic3r::MultiNozzleUtils::LayeredNozzleGroupResult>(*nozzle_result));
+            VORTEK_LOG(info, "update_filament_maps_to_config: initialized m_nozzle_group_result in Print");
+        } else {
+            VORTEK_LOG(error, "update_filament_maps_to_config: failed to create LayeredNozzleGroupResult");
+        }
+    }
+
+    // Step 4: Idempotency guard — compare m_config against COMPUTED values.
     // This ensures that on the 2nd re-slice the values already match → no write → no invalidation → cycle stops.
     bool maps_changed   = (print.m_config.filament_map.values        != f_maps);
     bool volume_changed = (print.m_config.filament_volume_map.values != final_volume_maps);
@@ -192,7 +226,7 @@ void PrintHooks::update_filament_maps_to_config(
         return; // Nothing to do — stop here to avoid unnecessary work and invalidation
     }
 
-    // Step 4: Rebuild filament_map_2 and extruder retract overrides (only when something changed).
+    // Step 5: Rebuild filament_map_2 and extruder retract overrides (only when something changed).
     {
         // Rebuild m_full_print_config so that print_extruder_id / print_extruder_variant
         // are populated by update_values_to_printer_extruders_for_multiple_filaments.
@@ -258,36 +292,6 @@ void PrintHooks::update_filament_maps_to_config(
         if (!print_diff.empty()) {
             print.m_placeholder_parser.apply_config(filament_overrides);
             print.m_config.apply(filament_overrides);
-        }
-    }
-
-    // Vortek: Always build and set LayeredNozzleGroupResult on the print object
-    // to enable the GCodeProcessor's PreCooling and PreHeating post-processors.
-    if (!f_maps.empty()) {
-        std::vector<unsigned int> used_filaments;
-        for (size_t i = 0; i < f_maps.size(); ++i) {
-            used_filaments.push_back(i);
-        }
-        auto nozzle_stats = Slic3r::MultiNozzleUtils::get_extruder_nozzle_stats(print.m_config.extruder_nozzle_stats.values);
-        float nozzle_dia = print.m_config.nozzle_diameter.values.empty() ? 0.4f : print.m_config.nozzle_diameter.values.front();
-
-        std::vector<int> zero_based_filament_map = f_maps;
-        std::transform(zero_based_filament_map.begin(), zero_based_filament_map.end(), zero_based_filament_map.begin(), [](int v) { return v - 1; });
-
-        auto nozzle_result = Slic3r::MultiNozzleUtils::LayeredNozzleGroupResult::create(
-            used_filaments,
-            zero_based_filament_map,
-            final_volume_maps,
-            final_nozzle_maps,
-            nozzle_stats,
-            nozzle_dia
-        );
-
-        if (nozzle_result) {
-            print.set_nozzle_group_result(std::make_shared<Slic3r::MultiNozzleUtils::LayeredNozzleGroupResult>(*nozzle_result));
-            VORTEK_LOG(info, "update_filament_maps_to_config: initialized m_nozzle_group_result in Print");
-        } else {
-            VORTEK_LOG(error, "update_filament_maps_to_config: failed to create LayeredNozzleGroupResult");
         }
     }
 }
