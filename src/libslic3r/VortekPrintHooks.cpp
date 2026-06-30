@@ -268,6 +268,9 @@ void PrintHooks::update_filament_maps_to_config(
                 // Fallback: if get_index_for_extruder fails (-1), use simple 0-based formula.
                 print.m_config.filament_map_2.values[index] = (idx >= 0) ? idx : (f_maps[index] - 1);
             }
+            if (auto* opt = print.m_ori_full_print_config.option<Slic3r::ConfigOptionInts>("filament_map_2", true)) {
+                opt->values = print.m_config.filament_map_2.values;
+            }
         }
 
         const std::vector<std::string>& extruder_retract_keys = Slic3r::print_config_def.extruder_retract_keys();
