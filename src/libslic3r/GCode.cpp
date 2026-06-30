@@ -971,7 +971,10 @@ static std::vector<Vec2d> get_path_of_change_filament(const Print& print)
                     config.set_key_value(key_value, new ConfigOptionFloat(0.f));
                 }
             }
-            ::Vortek::GCodeHooks::patch_toolchange_dyn_config(gcodegen, config, new_filament_id, gcodegen.m_layer_index);
+            // Vortek: call site 1 (WipeTowerIntegration) — is_actual_toolchange=false.
+            // BBS equivalent: m_toolchange_count is NOT incremented here (GCode.cpp:783 commented out).
+            ::Vortek::GCodeHooks::patch_toolchange_dyn_config(gcodegen, config, new_filament_id, gcodegen.m_layer_index, /*is_actual_toolchange=*/false);
+
             toolchange_gcode_str = gcodegen.placeholder_parser_process("change_filament_gcode", change_filament_gcode, new_filament_id, &config);
 
             check_add_eol(toolchange_gcode_str);
@@ -8003,7 +8006,10 @@ std::string GCode::set_extruder(unsigned int new_filament_id, double print_z, bo
     if (!change_filament_gcode.empty() && !(m_config.manual_filament_change.value && m_toolchange_count == 1)) {
         dyn_config.set_key_value("toolchange_z", new ConfigOptionFloat(print_z));
 
-        ::Vortek::GCodeHooks::patch_toolchange_dyn_config(*this, dyn_config, new_filament_id, m_layer_index);
+        // Vortek: call site 2 (GCode::tool_change) — is_actual_toolchange=true.
+        // BBS equivalent: m_toolchange_count IS incremented at GCode.cpp:7615 before this call.
+        ::Vortek::GCodeHooks::patch_toolchange_dyn_config(*this, dyn_config, new_filament_id, m_layer_index, /*is_actual_toolchange=*/true);
+
         toolchange_gcode_parsed = placeholder_parser_process("change_filament_gcode", change_filament_gcode, new_filament_id, &dyn_config);
         check_add_eol(toolchange_gcode_parsed);
         gcode += toolchange_gcode_parsed;

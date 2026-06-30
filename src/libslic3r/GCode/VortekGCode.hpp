@@ -35,12 +35,19 @@ void update_layer_related_config(Slic3r::GCode& gcode, int layer_id);
  * @param dyn_config Reference to the dynamic configuration being sent to the G-code generator
  * @param new_filament_id The logical filament ID we are switching to
  * @param layer_id 0-based layer index
+ * @param is_actual_toolchange true = actual printing toolchange (GCode::tool_change, call site 2);
+ *                             false = wipe-tower segment or startup prep (WipeTowerIntegration, call site 1).
+ *                             Only actual toolchanges increment vortek_toolchange_count and override
+ *                             toolchange_count, matching BambuStudio where m_toolchange_count is
+ *                             NOT incremented for wipe-tower segments (line 783 is commented out).
  */
 void patch_toolchange_dyn_config(
     Slic3r::GCode& gcode,
     Slic3r::DynamicConfig& dyn_config,
     int new_filament_id,
-    int layer_id);
+    int layer_id,
+    bool is_actual_toolchange = false);
+
 
 /**
  * @brief Registers all H2C/BBL-specific placeholder variables into a PlaceholderParser instance.
