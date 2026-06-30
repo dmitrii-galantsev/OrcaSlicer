@@ -19,9 +19,8 @@ void register_vortek_placeholders(
     // Register all H2C/BBL placeholders and NC variables if the printer supports H2C parameters.
     // This is done early to ensure they are available even for single-nozzle plates or during early slicing stages.
     // Initialize Vortek state in the parser itself (no statics, no memory leaks!).
-    // vortek_extruders_used_mask: bit N=1 means nozzle slot N has been used at least once.
-    // Used for new_extruder_retracted_length: R0 on first use, R{retract_length} on subsequent uses.
-    parser.set("vortek_extruders_used_mask", 0);
+    // vortek_extruders_unloaded_mask: bit N=1 means nozzle slot N has been unloaded and is in parking box.
+    parser.set("vortek_extruders_unloaded_mask", 0);
     // vortek_toolchange_count: our own counter that matches BBS m_toolchange_count semantics.
     parser.set("vortek_toolchange_count", 0);
     // vortek_last_filament_id: tracks physical switches to increment count only when changing filament IDs.
@@ -284,14 +283,13 @@ void patch_toolchange_dyn_config(
             return def_val;
         };
 
-        auto& parser = gcode.placeholder_parser();
-        parser.set("long_retraction_when_cut", get_vec_bool("long_retractions_when_cut", current_extruder, false));
-        parser.set("retraction_distance_when_cut", get_vec_float("retraction_distances_when_cut", current_extruder, 0.0));
-        parser.set("long_retraction_when_ec", get_vec_bool("long_retractions_when_ec", current_extruder, false));
-        parser.set("retraction_distance_when_ec", get_vec_float("retraction_distances_when_ec", current_extruder, 0.0));
+        dyn_config.set_key_value("long_retraction_when_cut", new Slic3r::ConfigOptionBool(get_vec_bool("long_retractions_when_cut", current_extruder, false)));
+        dyn_config.set_key_value("retraction_distance_when_cut", new Slic3r::ConfigOptionFloat(get_vec_float("retraction_distances_when_cut", current_extruder, 0.0)));
+        dyn_config.set_key_value("long_retraction_when_ec", new Slic3r::ConfigOptionBool(get_vec_bool("long_retractions_when_ec", current_extruder, false)));
+        dyn_config.set_key_value("retraction_distance_when_ec", new Slic3r::ConfigOptionFloat(get_vec_float("retraction_distances_when_ec", current_extruder, 0.0)));
 
         // filament_retract_length_nc is evaluated as a scalar of the incoming filament in BBL template!
-        parser.set("filament_retract_length_nc", get_vec_float("filament_retract_length_nc", next_extruder, 0.0));
+        dyn_config.set_key_value("filament_retract_length_nc", new Slic3r::ConfigOptionFloat(get_vec_float("filament_retract_length_nc", next_extruder, 0.0)));
 
         std::string old_variant = "Direct Drive Standard";
         std::string new_variant = "Direct Drive Standard";
@@ -302,42 +300,94 @@ void patch_toolchange_dyn_config(
                 if (next_extruder < (int)opt->values.size()) new_variant = opt->values[next_extruder];
             }
         }
-        parser.set("old_extruder_variant", old_variant);
-        parser.set("new_extruder_variant", new_variant);
+        dyn_config.set_key_value("old_extruder_variant", new Slic3r::ConfigOptionString(old_variant));
+        dyn_config.set_key_value("new_extruder_variant", new Slic3r::ConfigOptionString(new_variant));
 
         // new_extruder_retracted_length reflects the actual retract state of the incoming extruder.
-        // First use of an extruder/nozzle: 0 (filament was just loaded, not retracted yet).
-        // Subsequent uses: retract_length_toolchange (extruder was retracted during previous toolchange).
-        // BBL reference confirms: R0 for first toolchange, R2 for subsequent ones.
         double new_retract = 0.0;
         {
-            // Retrieve nozzle_id and config_extruder_idx (defined in outer scope)
-            // Track which nozzles have been used via a bitmask in PlaceholderParser.
-            int used_mask = 0;
-            if (auto* opt = gcode.placeholder_parser().option("vortek_extruders_used_mask")) {
+            // Track which nozzles have been unloaded and parked in the carousel box.
+            int unloaded_mask = 0;
+            if (auto* opt = gcode.placeholder_parser().option("vortek_extruders_unloaded_mask")) {
                 if (auto* opt_int = dynamic_cast<const Slic3r::ConfigOptionInt*>(opt))
-                    used_mask = opt_int->value;
+                    unloaded_mask = opt_int->value;
             }
-            bool already_used = (used_mask >> nozzle_id) & 1;
-            VORTEK_LOG(info, "retract_length override check: nozzle_id=" << nozzle_id 
-                             << ", used_mask=" << used_mask << ", already_used=" << already_used 
-                             << ", config_extruder_idx=" << config_extruder_idx);
-            if (already_used) {
+
+            // Identify initial (start) nozzle ID
+            int initial_tool = 0;
+            if (auto* opt = gcode.placeholder_parser().option("initial_tool")) {
+                if (auto* opt_int = dynamic_cast<const Slic3r::ConfigOptionInt*>(opt))
+                    initial_tool = opt_int->value;
+            }
+            int initial_nozzle_id = initial_tool;
+            if (gcode.m_config.has("filament_nozzle_map")) {
+                auto opt = gcode.m_config.option<Slic3r::ConfigOptionInts>("filament_nozzle_map");
+                if (opt && initial_tool >= 0 && initial_tool < (int)opt->values.size()) {
+                    initial_nozzle_id = opt->values[initial_tool];
+                }
+            }
+            auto group_result = print->get_layered_nozzle_group_result();
+            if (group_result) {
+                auto nozzle_info = group_result->get_nozzle_for_filament(initial_tool, 0);
+                if (nozzle_info.has_value()) {
+                    initial_nozzle_id = nozzle_info->group_id;
+                }
+            }
+
+            // If there was a previous tool active, mark its nozzle as unloaded (parked in carousel)
+            if (last_filament_id != -1) {
+                int old_nozzle_id = last_filament_id;
+                if (gcode.m_config.has("filament_nozzle_map")) {
+                    auto opt = gcode.m_config.option<Slic3r::ConfigOptionInts>("filament_nozzle_map");
+                    if (opt && last_filament_id >= 0 && last_filament_id < (int)opt->values.size()) {
+                        old_nozzle_id = opt->values[last_filament_id];
+                    }
+                }
+                if (group_result) {
+                    auto nozzle_info = group_result->get_nozzle_for_filament(last_filament_id, layer_id);
+                    if (nozzle_info.has_value()) {
+                        old_nozzle_id = nozzle_info->group_id;
+                    }
+                }
+                if (old_nozzle_id != nozzle_id) {
+                    unloaded_mask |= (1 << old_nozzle_id);
+                    gcode.placeholder_parser().set("vortek_extruders_unloaded_mask", unloaded_mask);
+                    VORTEK_LOG(info, "nozzle parked: old_nozzle_id=" << old_nozzle_id << ", unloaded_mask=" << unloaded_mask);
+                }
+            }
+
+            // Determine retracted state for the target nozzle_id
+            bool already_unloaded = (unloaded_mask >> nozzle_id) & 1;
+            bool is_parked_type = (nozzle_id > 0); // Nozzle 0 is static, nozzle 1,2,3 are in carousel
+
+            bool requires_unretract = false;
+            if (is_parked_type) {
+                if (already_unloaded) {
+                    requires_unretract = true;
+                } else {
+                    // First load check: is it the start nozzle or carousel parked nozzle?
+                    if (nozzle_id != initial_nozzle_id) {
+                        requires_unretract = true; // Carousel nozzle starts in the parked state
+                    }
+                }
+            }
+
+            if (requires_unretract) {
                 if (gcode.m_config.has("retract_length_toolchange")) {
                     auto opt = gcode.m_config.option<Slic3r::ConfigOptionFloats>("retract_length_toolchange");
                     if (opt && config_extruder_idx >= 0 && config_extruder_idx < (int)opt->values.size()) {
                         new_retract = opt->values[config_extruder_idx];
-                        VORTEK_LOG(info, "retract_length found in config: " << new_retract);
-                    } else {
-                        VORTEK_LOG(warning, "retract_length NOT found or index out of range in config");
                     }
                 }
             }
-            // Mark this nozzle as used for future toolchanges.
-            used_mask |= (1 << nozzle_id);
-            gcode.placeholder_parser().set("vortek_extruders_used_mask", used_mask);
+
+            VORTEK_LOG(info, "new_extruder_retracted_length: nozzle_id=" << nozzle_id 
+                             << ", initial_nozzle_id=" << initial_nozzle_id
+                             << ", already_unloaded=" << already_unloaded 
+                             << ", requires_unretract=" << requires_unretract
+                             << ", new_retract=" << new_retract);
         }
-        parser.set("new_extruder_retracted_length", new_retract);
+        dyn_config.set_key_value("new_extruder_retracted_length", new Slic3r::ConfigOptionFloat(new_retract));
     }
 }
 
