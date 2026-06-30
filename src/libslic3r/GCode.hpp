@@ -47,8 +47,7 @@ namespace Vortek {
             ::Slic3r::GCode& gcode,
             ::Slic3r::DynamicConfig& dyn_config,
             int new_filament_id,
-            int layer_id,
-            bool is_actual_toolchange = false);
+            int layer_id);
     }
 }
 
@@ -713,7 +712,7 @@ private:
     friend class SmallAreaInfillFlowCompensator;
 
     friend void ::Vortek::GCodeHooks::update_layer_related_config(::Slic3r::GCode& gcode, int layer_id);
-    friend void ::Vortek::GCodeHooks::patch_toolchange_dyn_config(::Slic3r::GCode& gcode, ::Slic3r::DynamicConfig& dyn_config, int new_filament_id, int layer_id, bool is_actual_toolchange);
+    friend void ::Vortek::GCodeHooks::patch_toolchange_dyn_config(::Slic3r::GCode& gcode, ::Slic3r::DynamicConfig& dyn_config, int new_filament_id, int layer_id);
 };
 
 std::vector<const PrintInstance*> sort_object_instances_by_model_order(const Print& print, bool init_order = false);

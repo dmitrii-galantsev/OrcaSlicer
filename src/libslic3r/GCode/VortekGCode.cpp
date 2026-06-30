@@ -23,9 +23,9 @@ void register_vortek_placeholders(
     // Used for new_extruder_retracted_length: R0 on first use, R{retract_length} on subsequent uses.
     parser.set("vortek_extruders_used_mask", 0);
     // vortek_toolchange_count: our own counter that matches BBS m_toolchange_count semantics.
-    // Only incremented at GCode::tool_change (is_actual_toolchange=true), NOT at wipe-tower segments.
     parser.set("vortek_toolchange_count", 0);
-    // toolchange_count is NOT tracked here — OrcaSlicer's m_toolchange_count is already correct.
+    // vortek_last_filament_id: tracks physical switches to increment count only when changing filament IDs.
+    parser.set("vortek_last_filament_id", -1);
 
     if (!config.has("filament_pre_cooling_temperature_nc")) return;
 
@@ -110,8 +110,7 @@ void patch_toolchange_dyn_config(
     Slic3r::GCode& gcode,
     Slic3r::DynamicConfig& dyn_config,
     int new_filament_id,
-    int layer_id,
-    bool is_actual_toolchange)
+    int layer_id)
 {
     Slic3r::Print* print = gcode.m_print;
     if (!print) return;
@@ -169,33 +168,39 @@ void patch_toolchange_dyn_config(
     }
 
     // ── toolchange_count (M620 O{...}) ───────────────────────────────────────
-    // BambuStudio: m_toolchange_count is incremented ONLY at GCode::tool_change
-    //   (BBS GCode.cpp:7615), NOT in WipeTowerIntegration::append_tcr
-    //   (BBS GCode.cpp:783 is commented out: //gcodegen.m_toolchange_count++)
-    // OrcaSlicer: m_toolchange_count IS incremented for every wipe-tower segment
-    //   (OrcaSlicer GCode.cpp:798), so by the first real toolchange it's already
-    //   28+ — giving wrong M620 O29, O72, O142.
+    // BambuStudio: m_toolchange_count is incremented ONLY when actually changing filaments,
+    //   while OrcaSlicer's native counter gets inflated by wipe tower segments.
     //
-    // Fix: maintain vortek_toolchange_count that only increments when called from
-    //   GCode::tool_change (is_actual_toolchange=true, call site 2, GCode.cpp:8006).
-    //   Wipe-tower/startup calls (is_actual_toolchange=false, call site 1, GCode.cpp:974)
-    //   don't touch toolchange_count — OrcaSlicer's native value (m_toolchange_count=0
-    //   for startup) flows through → M620 O1 correct.
-    if (is_actual_toolchange) {
-        int tc = 0;
-        if (auto* opt = gcode.placeholder_parser().option("vortek_toolchange_count")) {
-            if (auto* opt_int = dynamic_cast<const Slic3r::ConfigOptionInt*>(opt))
-                tc = opt_int->value;
-        }
-        tc++;
-        gcode.placeholder_parser().set("vortek_toolchange_count", tc);
-        dyn_config.set_key_value("toolchange_count", new Slic3r::ConfigOptionInt(tc));
-        VORTEK_LOG(info, "toolchange_count (actual) -> " << tc << " (M620 O" << tc + 1 << ")");
+    // Fix: Track the last processed filament ID. Increment the counter ONLY when
+    //   new_filament_id differs from the last successfully processed filament.
+    //   The first tool load (transition from last_filament_id=-1) updates the state
+    //   but does not increment the counter, keeping the start count at 0 (gives M620 O1).
+    int last_filament_id = -1;
+    if (auto* opt = gcode.placeholder_parser().option("vortek_last_filament_id")) {
+        if (auto* opt_int = dynamic_cast<const Slic3r::ConfigOptionInt*>(opt))
+            last_filament_id = opt_int->value;
     }
+
+    int tc = 0;
+    if (auto* opt = gcode.placeholder_parser().option("vortek_toolchange_count")) {
+        if (auto* opt_int = dynamic_cast<const Slic3r::ConfigOptionInt*>(opt))
+            tc = opt_int->value;
+    }
+
+    if (new_filament_id != last_filament_id) {
+        if (last_filament_id != -1) {
+            tc++; // Physical switch transition occurred
+        }
+        gcode.placeholder_parser().set("vortek_last_filament_id", new_filament_id);
+        gcode.placeholder_parser().set("vortek_toolchange_count", tc);
+        VORTEK_LOG(info, "toolchange_count transition: " << last_filament_id << " -> " << new_filament_id << ", tc=" << tc);
+    }
+
+    dyn_config.set_key_value("toolchange_count", new Slic3r::ConfigOptionInt(tc));
 
     VORTEK_LOG(warning, "patching toolchange config for filament " << new_filament_id
                         << " (extruder " << extruder_id << ", nozzle diameter " << diameter
-                        << ", is_actual=" << is_actual_toolchange << ")");
+                        << ", tc=" << tc << ")");
 
     // 1. Dynamic Override retraction values based on active nozzle slot settings
     if (new_filament_id < (int)gcode.m_config.filament_retract_length_nc.values.size()) {
@@ -314,11 +319,18 @@ void patch_toolchange_dyn_config(
                     used_mask = opt_int->value;
             }
             bool already_used = (used_mask >> nozzle_id) & 1;
+            VORTEK_LOG(info, "retract_length override check: nozzle_id=" << nozzle_id 
+                             << ", used_mask=" << used_mask << ", already_used=" << already_used 
+                             << ", config_extruder_idx=" << config_extruder_idx);
             if (already_used) {
                 if (gcode.m_config.has("retract_length_toolchange")) {
                     auto opt = gcode.m_config.option<Slic3r::ConfigOptionFloats>("retract_length_toolchange");
-                    if (opt && config_extruder_idx >= 0 && config_extruder_idx < (int)opt->values.size())
+                    if (opt && config_extruder_idx >= 0 && config_extruder_idx < (int)opt->values.size()) {
                         new_retract = opt->values[config_extruder_idx];
+                        VORTEK_LOG(info, "retract_length found in config: " << new_retract);
+                    } else {
+                        VORTEK_LOG(warning, "retract_length NOT found or index out of range in config");
+                    }
                 }
             }
             // Mark this nozzle as used for future toolchanges.
