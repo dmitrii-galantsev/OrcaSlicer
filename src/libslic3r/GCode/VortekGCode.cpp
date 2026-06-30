@@ -19,10 +19,10 @@ void register_vortek_placeholders(
     // Register all H2C/BBL placeholders and NC variables if the printer supports H2C parameters.
     // This is done early to ensure they are available even for single-nozzle plates or during early slicing stages.
     // Initialize Vortek state in the parser itself (no statics, no memory leaks!).
-    // These are read and updated by patch_toolchange_dyn_config().
-    parser.set("vortek_real_toolchange_count", 0);
+    // vortek_extruders_used_mask: bit N=1 means nozzle slot N has been used at least once.
+    // Used for new_extruder_retracted_length: R0 on first use, R{retract_length} on subsequent uses.
     parser.set("vortek_extruders_used_mask", 0);
-    parser.set("vortek_last_nozzle_id", -1);
+    // toolchange_count is NOT tracked here — OrcaSlicer's m_toolchange_count is already correct.
 
     if (!config.has("filament_pre_cooling_temperature_nc")) return;
 
@@ -164,28 +164,12 @@ void patch_toolchange_dyn_config(
         }
     }
 
-    int last_nozzle_id = -1;
-    if (auto* opt = gcode.placeholder_parser().option("vortek_last_nozzle_id")) {
-        if (auto* opt_int = dynamic_cast<const Slic3r::ConfigOptionInt*>(opt))
-            last_nozzle_id = opt_int->value;
-    }
+    // toolchange_count is set by OrcaSlicer at GCode.cpp:7914 / GCode.cpp:894 as m_toolchange_count.
+    // We must NOT override it here — our old real_tc tracking was broken because patch_toolchange_dyn_config
+    // is called for BOTH startup and actual printing toolchanges, causing real_tc to drift ahead of
+    // OrcaSlicer's native counter and producing wrong values (1,1,3,4,5 instead of 1,1,2,3,4).
 
-    int real_tc = 0;
-    if (auto* opt = gcode.placeholder_parser().option("vortek_real_toolchange_count")) {
-        if (auto* opt_int = dynamic_cast<const Slic3r::ConfigOptionInt*>(opt))
-            real_tc = opt_int->value;
-    }
-
-    // Only increment when the physical nozzle actually switches!
-    if (nozzle_id != last_nozzle_id) {
-        real_tc++;
-        gcode.placeholder_parser().set("vortek_real_toolchange_count", real_tc);
-        gcode.placeholder_parser().set("vortek_last_nozzle_id", nozzle_id);
-    }
-
-    dyn_config.set_key_value("toolchange_count", new Slic3r::ConfigOptionInt(real_tc));
-
-    VORTEK_LOG(warning, "patching toolchange config for filament " << new_filament_id 
+    VORTEK_LOG(warning, "patching toolchange config for filament " << new_filament_id
                         << " (extruder " << extruder_id << ", nozzle diameter " << diameter << ")");
 
     // 1. Dynamic Override retraction values based on active nozzle slot settings
