@@ -17,9 +17,10 @@ void register_vortek_placeholders(
 {
     // Register all H2C/BBL placeholders and NC variables if the printer supports H2C parameters.
     // This is done early to ensure they are available even for single-nozzle plates or during early slicing stages.
-    // Initialize the real toolchange counter in the parser itself (no statics!).
-    // This counter is read and incremented by patch_toolchange_dyn_config().
+    // Initialize Vortek state in the parser itself (no statics!).
+    // These are read and updated by patch_toolchange_dyn_config().
     parser.set("vortek_real_toolchange_count", 0);
+    parser.set("vortek_extruders_used_mask", 0);
 
     if (!config.has("filament_pre_cooling_temperature_nc")) return;
 
@@ -243,9 +244,31 @@ void patch_toolchange_dyn_config(
         parser.set("old_extruder_variant", old_variant);
         parser.set("new_extruder_variant", new_variant);
 
-        // new_extruder_retracted_length is always 0.0 in BBL reference G-code (M620.10 R0).
-        // This was verified by comparing real BBL and 3orca gcode outputs.
-        parser.set("new_extruder_retracted_length", 0.0);
+        // new_extruder_retracted_length reflects the actual retract state of the incoming extruder.
+        // First use of an extruder: 0 (filament was just loaded, not retracted yet).
+        // Subsequent uses: retract_length_toolchange (extruder was retracted during previous toolchange).
+        // BBL reference confirms: R0 for first toolchange, R2 for subsequent ones.
+        double new_retract = 0.0;
+        {
+            // Track which extruders have been used via a bitmask in PlaceholderParser.
+            int used_mask = 0;
+            if (auto* opt = gcode.placeholder_parser().option("vortek_extruders_used_mask")) {
+                if (auto* opt_int = dynamic_cast<const Slic3r::ConfigOptionInt*>(opt))
+                    used_mask = opt_int->value;
+            }
+            bool already_used = (used_mask >> next_extruder) & 1;
+            if (already_used) {
+                if (gcode.m_config.has("retract_length_toolchange")) {
+                    auto opt = gcode.m_config.option<Slic3r::ConfigOptionFloats>("retract_length_toolchange");
+                    if (opt && next_extruder < (int)opt->values.size())
+                        new_retract = opt->values[next_extruder];
+                }
+            }
+            // Mark this extruder as used for future toolchanges.
+            used_mask |= (1 << next_extruder);
+            gcode.placeholder_parser().set("vortek_extruders_used_mask", used_mask);
+        }
+        parser.set("new_extruder_retracted_length", new_retract);
     }
 }
 
