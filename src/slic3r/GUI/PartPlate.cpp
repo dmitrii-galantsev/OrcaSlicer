@@ -6265,6 +6265,16 @@ int PartPlateList::store_to_3mf_structure(PlateDataPtrs& plate_data_list, bool w
 					}
 					//parse filament info
 					plate_data_item->parse_filament_info(m_plate_list[i]->get_slice_result());
+                    // Vortek: set group_id in slice_filaments_info from filament_nozzle_map.
+                    // MUST be called after parse_filament_info() — that call clears and
+                    // rebuilds slice_filaments_info, leaving group_id empty. Without this,
+                    // bbs_3mf.cpp falls back to f_maps[i]-1 (extruder index) as group_id.
+                    Vortek::PlateMapping::patch_slice_filament_nozzle_groups(
+                        plate_data_item,
+                        m_plate_list[i]->config()->has("filament_nozzle_map")
+                            ? m_plate_list[i]->config()->option<ConfigOptionInts>("filament_nozzle_map")->values
+                            : std::vector<int>{}
+                    );
 				} else {
 					BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << "slice result = " << m_plate_list[i]->get_slice_result()
 										<< ", result valid = " << m_plate_list[i]->is_slice_result_valid();

@@ -86,6 +86,21 @@ public:
     static void patch_export_config(Slic3r::DynamicPrintConfig& cfg);
 
     /**
+     * @brief Sets group_id in slice_filaments_info from filament_nozzle_map after parse_filament_info.
+     *
+     * Must be called AFTER PlateData::parse_filament_info(), as parse_filament_info() overwrites
+     * slice_filaments_info and leaves group_id empty. Without group_id set, bbs_3mf.cpp falls
+     * back to filament_maps[i]-1 (0-based extruder index) instead of carousel nozzle slot ID.
+     *
+     * @param plate_data  PlateData whose slice_filaments_info will be patched
+     * @param filament_nozzle_map  Per-filament nozzle slot IDs (0=Left, 1-3=Right carousel)
+     */
+    static void patch_slice_filament_nozzle_groups(
+        Slic3r::PlateData* plate_data,
+        const std::vector<int>& filament_nozzle_map
+    );
+
+    /**
      * @brief Formats and patches nozzle configurations inside PlateData during project export.
      */
     static void patch_plate_data_for_export(
