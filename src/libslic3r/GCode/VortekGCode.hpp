@@ -46,7 +46,7 @@ void patch_toolchange_dyn_config(
     Slic3r::DynamicConfig& dyn_config,
     int new_filament_id,
     int layer_id,
-    bool is_actual_toolchange = false);
+    bool is_actual_toolchange);
 
 
 /**
