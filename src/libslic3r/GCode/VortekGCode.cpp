@@ -19,6 +19,7 @@ void register_vortek_placeholders(
     // This is done early to ensure they are available even for single-nozzle plates or during early slicing stages.
     // Initialize Vortek state in the parser itself (no statics!).
     // These are read and updated by patch_toolchange_dyn_config().
+    VORTEK_LOG(info, "register_vortek_placeholders called on parser: " << &parser);
     parser.set("vortek_real_toolchange_count", 0);
     parser.set("vortek_extruders_used_mask", 0);
 
@@ -116,14 +117,19 @@ void patch_toolchange_dyn_config(
     // H2C firmware expects sequential numbering: 1, 2, 3, 4...
     // The template uses: M620 O{toolchange_count + 1}
     // Counter state lives in the PlaceholderParser — no statics, no globals.
+    VORTEK_LOG(info, "patch_toolchange_dyn_config read from parser: " << &gcode.placeholder_parser());
     int real_tc = 0;
     if (auto* opt = gcode.placeholder_parser().option("vortek_real_toolchange_count")) {
         if (auto* opt_int = dynamic_cast<const Slic3r::ConfigOptionInt*>(opt))
             real_tc = opt_int->value;
+        VORTEK_LOG(info, "read vortek_real_toolchange_count: " << real_tc);
+    } else {
+        VORTEK_LOG(info, "vortek_real_toolchange_count option NOT FOUND in parser!");
     }
     real_tc++;
     gcode.placeholder_parser().set("vortek_real_toolchange_count", real_tc);
     dyn_config.set_key_value("toolchange_count", new Slic3r::ConfigOptionInt(real_tc));
+    VORTEK_LOG(info, "set toolchange_count override in dyn_config: " << real_tc);
     Slic3r::Print* print = gcode.m_print;
     if (!print) return;
 
