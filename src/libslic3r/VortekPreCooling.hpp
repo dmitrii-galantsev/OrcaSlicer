@@ -159,7 +159,7 @@ private:
     void build_by_extruder_blocks(const std::vector<ExtruderUsageBlock>& extruder_usage_blocks);
 
     std::vector<ExtruderFreeBlock> m_extruder_free_blocks;
-    const std::vector<Slic3r::GCodeProcessorResult::MoveVertex>& m_moves;
+    std::vector<Slic3r::GCodeProcessorResult::MoveVertex> m_moves;
     const std::vector<std::string>& m_filament_types;
     const Slic3r::MultiNozzleUtils::LayeredNozzleGroupResult& m_nozzle_group_result;
     std::vector<int> m_filament_nozzle_temps;

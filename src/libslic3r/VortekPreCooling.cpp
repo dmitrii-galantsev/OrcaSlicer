@@ -55,6 +55,9 @@ PreCooling::PreCooling(
     m_extruder_types(extruder_types),
     m_nozzle_diameter(nozzle_diameter)
 {
+    std::sort(m_moves.begin(), m_moves.end(), [](const auto& a, const auto& b) {
+        return a.gcode_id < b.gcode_id;
+    });
 }
 
 void PreCooling::process_pre_cooling_and_heating(InsertedLinesMap& inserted_operation_lines)
@@ -116,7 +119,7 @@ void PreCooling::build_by_filament_blocks(const std::vector<FilamentUsageBlock>&
     m_extruder_free_blocks.clear();
     std::map<int, std::vector<FilamentUsageBlock>> per_extruder_usage_blocks;
     for (auto& block : filament_usage_blocks) {
-        per_extruder_usage_blocks[block.extruder_id].emplace_back(block);
+        per_extruder_usage_blocks[block.nozzle_id].emplace_back(block);
     }
 
     FilamentUsageBlock start_filament_block(-1, -1, -1, 0, m_machine_start_gcode_end_id);
@@ -129,7 +132,7 @@ void PreCooling::build_by_filament_blocks(const std::vector<FilamentUsageBlock>&
     }
 
     for (auto& elem : per_extruder_usage_blocks) {
-        size_t extruder_id = elem.first;
+        size_t nozzle_id = elem.first;
         const auto& filament_blocks = elem.second;
 
         for (auto iter = filament_blocks.begin(); iter < filament_blocks.end(); ++iter) {
@@ -145,7 +148,7 @@ void PreCooling::build_by_filament_blocks(const std::vector<FilamentUsageBlock>&
             block.next_nozzle_id = niter->nozzle_id;
             if (block.last_nozzle_id == -1)
                 block.last_nozzle_id = block.next_nozzle_id;
-            block.extruder_id = extruder_id;
+            block.extruder_id = nozzle_id;
             block.partial_free_lower_id = block.free_lower_gcode_id;
             block.partial_free_upper_id = block.free_lower_gcode_id;
             m_extruder_free_blocks.emplace_back(block);
@@ -219,7 +222,7 @@ void PreCooling::inject_cooling_heating_command(
     bool pre_heating
 )
 {
-    VORTEK_LOG(debug, "inject_cooling_heating_command: extruder " << block.extruder_id 
+    VORTEK_LOG(warning, "inject_cooling_heating_command: extruder " << block.extruder_id 
                       << ", curr_temp = " << curr_temp << ", target_temp = " << target_temp 
                       << ", pre_cooling = " << pre_cooling << ", pre_heating = " << pre_heating);
     auto get_valid_extruder_id = [&](int last_nozzle_id) {
@@ -299,44 +302,12 @@ void PreCooling::inject_cooling_heating_command(
         return iter;
     };
 
-    if (!pre_cooling && !pre_heating && block.free_upper_gcode_id <= block.free_lower_gcode_id)
+    if (!pre_cooling && !pre_heating && block.free_upper_gcode_id <= block.free_lower_gcode_id) {
+        VORTEK_LOG(warning, "inject: skipped because pre_cooling/heating is false and free_upper <= free_lower");
         return;
+    }
 
-    auto move_iter_lower = std::lower_bound(m_moves.begin(), m_moves.end(), block.free_lower_gcode_id, gcode_move_comp);
-    auto move_iter_upper = std::lower_bound(m_moves.begin(), m_moves.end(), block.free_upper_gcode_id, gcode_move_comp);
-
-    if (move_iter_lower == m_moves.end() || move_iter_upper == m_moves.begin())
-        return;
-    --move_iter_upper;
-
-    float complete_free_time_gap = 0;
-    if (move_iter_lower == m_moves.begin())
-        complete_free_time_gap = move_iter_upper->time[m_valid_machine_id];
-    else
-        complete_free_time_gap = move_iter_upper->time[m_valid_machine_id] - std::prev(move_iter_lower)->time[m_valid_machine_id];
-
-    auto partial_free_move_lower = std::lower_bound(m_moves.begin(), m_moves.end(), block.partial_free_lower_id, gcode_move_comp);
-    auto partial_free_move_upper = std::lower_bound(m_moves.begin(), m_moves.end(), block.partial_free_upper_id, gcode_move_comp);
-    if (partial_free_move_lower == m_moves.end() || partial_free_move_upper == m_moves.begin())
-        return;
-    --partial_free_move_upper;
-
-    float partial_free_time_gap = 0;
-    if (partial_free_move_lower == m_moves.begin())
-        partial_free_time_gap = partial_free_move_upper->time[m_valid_machine_id];
-    else
-        partial_free_time_gap = partial_free_move_upper->time[m_valid_machine_id] - std::prev(partial_free_move_lower)->time[m_valid_machine_id];
-
-    if (move_iter_lower >= move_iter_upper)
-        return;
-
-    bool apply_cooling_when_partial_free = is_pre_cooling_valid(block.last_filament_id) && pre_cooling;
-
-    if (apply_cooling_when_partial_free && partial_free_time_gap + complete_free_time_gap < m_inject_time_threshold)
-        return;
-
-    if (!apply_cooling_when_partial_free && complete_free_time_gap < m_inject_time_threshold)
-        return;
+    constexpr float room_temperature = 25.f;
 
     int extruder_id = get_valid_extruder_id(block.last_nozzle_id);
     float ext_heating_rate = m_heating_rate.size() > (size_t)extruder_id ? m_heating_rate[extruder_id] : 2.0f;
@@ -384,7 +355,75 @@ void PreCooling::inject_cooling_heating_command(
             inserted_operation_lines[gcode_id].emplace_back(line, type);
     };
 
-    constexpr float room_temperature = 25.f;
+    // PARKING: nozzle goes to carousel slot — M104 is inserted right at T H-1 line, no timing needed
+    if (pre_cooling && !pre_heating) {
+        int standby_temp = 180;
+        if (block.last_filament_id >= 0 && block.last_filament_id < (int)m_filament_pre_cooling_temps.size()) {
+            int temp_nc = m_filament_pre_cooling_temps[block.last_filament_id];
+            if (temp_nc > 0) {
+                standby_temp = temp_nc;
+            }
+        }
+        if (block.free_lower_gcode_id >= 4000000000) {
+            standby_temp = std::max((int)room_temperature, (int)target_temp);
+        }
+        if (standby_temp >= curr_temp)
+            return;
+
+        int clamped_target = standby_temp;
+        VORTEK_LOG(warning, "inject: parking nozzle ext=" << extruder_id
+                            << " curr=" << curr_temp << " standby=" << clamped_target
+                            << " at gcode_id=" << block.free_lower_gcode_id);
+        add_M104_lines(block.free_lower_gcode_id, extruder_id, clamped_target, block.last_filament_id, false, block.next_filament_id, block.next_nozzle_id, 1, "Multi extruder pre cooling");
+        return;
+    }
+
+    // Pre-heating cases require timing from m_moves
+    auto move_iter_lower = std::lower_bound(m_moves.cbegin(), m_moves.cend(), block.free_lower_gcode_id, gcode_move_comp);
+    auto move_iter_upper = std::lower_bound(m_moves.cbegin(), m_moves.cend(), block.free_upper_gcode_id, gcode_move_comp);
+
+    if (move_iter_lower == m_moves.cend() || move_iter_upper == m_moves.cbegin()) {
+        VORTEK_LOG(warning, "inject: skipped because move_iter is at boundary. lower=" << (move_iter_lower == m_moves.cend()) << ", upper=" << (move_iter_upper == m_moves.cbegin()));
+        return;
+    }
+    --move_iter_upper;
+
+    float complete_free_time_gap = 0;
+    if (move_iter_lower == m_moves.cbegin())
+        complete_free_time_gap = move_iter_upper->time[m_valid_machine_id];
+    else
+        complete_free_time_gap = move_iter_upper->time[m_valid_machine_id] - std::prev(move_iter_lower)->time[m_valid_machine_id];
+
+    auto partial_free_move_lower = std::lower_bound(m_moves.cbegin(), m_moves.cend(), block.partial_free_lower_id, gcode_move_comp);
+    auto partial_free_move_upper = std::lower_bound(m_moves.cbegin(), m_moves.cend(), block.partial_free_upper_id, gcode_move_comp);
+    if (partial_free_move_lower == m_moves.cend() || partial_free_move_upper == m_moves.cbegin()) {
+        VORTEK_LOG(warning, "inject: skipped because partial_free_move is at boundary. lower=" << (partial_free_move_lower == m_moves.cend()) << ", upper=" << (partial_free_move_upper == m_moves.cbegin()));
+        return;
+    }
+    --partial_free_move_upper;
+
+    float partial_free_time_gap = 0;
+    if (partial_free_move_lower == m_moves.cbegin())
+        partial_free_time_gap = partial_free_move_upper->time[m_valid_machine_id];
+    else
+        partial_free_time_gap = partial_free_move_upper->time[m_valid_machine_id] - std::prev(partial_free_move_lower)->time[m_valid_machine_id];
+
+    if (move_iter_lower >= move_iter_upper) {
+        VORTEK_LOG(warning, "inject: skipped because move_iter_lower >= move_iter_upper. lower_id=" << move_iter_lower->gcode_id << ", upper_id=" << move_iter_upper->gcode_id);
+        return;
+    }
+
+    bool apply_cooling_when_partial_free = is_pre_cooling_valid(block.last_filament_id) && pre_cooling;
+
+    if (apply_cooling_when_partial_free && partial_free_time_gap + complete_free_time_gap < m_inject_time_threshold) {
+        VORTEK_LOG(warning, "inject: skipped because partial_free_time_gap + complete_free_time_gap (" << (partial_free_time_gap + complete_free_time_gap) << ") < thres (" << m_inject_time_threshold << ")");
+        return;
+    }
+
+    if (!apply_cooling_when_partial_free && complete_free_time_gap < m_inject_time_threshold) {
+        VORTEK_LOG(warning, "inject: skipped because complete_free_time_gap (" << complete_free_time_gap << ") < thres (" << m_inject_time_threshold << ")");
+        return;
+    }
 
     if (apply_cooling_when_partial_free) {
         float max_cooling_temp = std::min(curr_temp, std::min(get_partial_free_cooling_thres(block.last_filament_id), partial_free_time_gap * ext_cooling_rate));
@@ -392,18 +431,17 @@ void PreCooling::inject_cooling_heating_command(
         add_M104_lines(block.partial_free_lower_id, extruder_id, curr_temp, block.last_filament_id, false, block.next_filament_id, block.next_nozzle_id, 1, "Multi extruder pre cooling in post extrusion");
     }
 
-    if (pre_cooling && !pre_heating) {
-        if (target_temp >= curr_temp)
-            return;
-        int clamped_target = std::max((int)room_temperature, (int)target_temp);
-        add_M104_lines(block.free_lower_gcode_id, extruder_id, clamped_target, block.last_filament_id, false, block.next_filament_id, block.next_nozzle_id, 1, "Multi extruder pre cooling");
-        return;
-    }
     if (!pre_cooling && pre_heating) {
         if (target_temp <= curr_temp)
             return;
         float heating_start_time = move_iter_upper->time[m_valid_machine_id] - (target_temp - curr_temp) / ext_heating_rate;
-        auto heating_move_iter = std::upper_bound(move_iter_lower, move_iter_upper + 1, heating_start_time, [this](float time, const Slic3r::GCodeProcessorResult::MoveVertex& a) { return time < a.time[m_valid_machine_id]; });
+        std::vector<Slic3r::GCodeProcessorResult::MoveVertex>::const_iterator heating_move_iter = move_iter_lower;
+        for (auto it = move_iter_lower; it != move_iter_upper + 1; ++it) {
+            if (it->time[m_valid_machine_id] >= heating_start_time) {
+                heating_move_iter = it;
+                break;
+            }
+        }
         if (heating_move_iter == move_iter_lower) {
             add_M104_lines(block.free_lower_gcode_id, extruder_id, target_temp, block.next_filament_id, true, block.next_filament_id, block.next_nozzle_id, 2, "Multi extruder pre heating");
         }
@@ -418,7 +456,13 @@ void PreCooling::inject_cooling_heating_command(
     float mid_temp = std::max(room_temperature, (curr_temp * ext_heating_rate + target_temp * ext_cooling_rate - complete_free_time_gap * ext_cooling_rate * ext_heating_rate) / (ext_cooling_rate + ext_heating_rate));
     float heating_temp = target_temp - mid_temp;
     float heating_start_time = move_iter_upper->time[m_valid_machine_id] - heating_temp / ext_heating_rate;
-    auto heating_move_iter = std::upper_bound(move_iter_lower, move_iter_upper + 1, heating_start_time, [this](float time, const Slic3r::GCodeProcessorResult::MoveVertex& a) { return time < a.time[m_valid_machine_id]; });
+    std::vector<Slic3r::GCodeProcessorResult::MoveVertex>::const_iterator heating_move_iter = move_iter_lower;
+    for (auto it = move_iter_lower; it != move_iter_upper + 1; ++it) {
+        if (it->time[m_valid_machine_id] >= heating_start_time) {
+            heating_move_iter = it;
+            break;
+        }
+    }
     if (heating_move_iter == move_iter_lower)
         return;
     --heating_move_iter;
@@ -470,17 +514,27 @@ PreCooling::InsertedLinesMap PreCooling::run_pre_scan(Slic3r::GCodeProcessor& pr
     };
 
     auto handle_filament_change = [&](int filament_id, int current_line_id, int nozzle_id = -1) {
-        if (current_line_id < (int)machine_start_gcode_end_line_id || current_line_id > (int)machine_end_gcode_start_line_id)
+        VORTEK_LOG(warning, "handle_filament_change: fid=" << filament_id 
+            << ", line=" << current_line_id 
+            << ", start_end=" << machine_start_gcode_end_line_id 
+            << ", end_start=" << machine_end_gcode_start_line_id);
+        if (static_cast<unsigned int>(current_line_id) < machine_start_gcode_end_line_id || 
+            static_cast<unsigned int>(current_line_id) > machine_end_gcode_start_line_id) {
+            VORTEK_LOG(warning, "handle_filament_change: skipped due to start/end boundaries");
             return;
+        }
         if (!filament_blocks.empty())
             filament_blocks.back().upper_gcode_id = current_line_id;
-        if (nozzle_id == -1)
+        if (nozzle_id == -1) {
             nozzle_id = nozzle_group.get_nozzle_id(filament_id, current_layer_id);
+            VORTEK_LOG(warning, "handle_filament_change: nozzle_id evaluated to " << nozzle_id << " from nozzle_group");
+        }
         int extruder_id = 0;
         auto nozzle_ptr = nozzle_group.get_nozzle_from_id(nozzle_id);
         if (nozzle_ptr)
             extruder_id = nozzle_ptr->extruder_id;
         filament_blocks.emplace_back(filament_id, extruder_id, nozzle_id, current_line_id, -1);
+        VORTEK_LOG(warning, "handle_filament_change: added block: fid=" << filament_id << ", ext=" << extruder_id << ", nozzle=" << nozzle_id);
     };
 
     Slic3r::GCodeReader parser;
@@ -488,7 +542,8 @@ PreCooling::InsertedLinesMap PreCooling::run_pre_scan(Slic3r::GCodeProcessor& pr
         ++line_id;
         const std::string& raw_line = line.raw();
 
-        if (Slic3r::GCodeReader::GCodeLine::cmd_is(raw_line, "T")) {
+        if (Slic3r::GCodeReader::GCodeLine::cmd_starts_with(raw_line, "T")) {
+            VORTEK_LOG(warning, "run_pre_scan: raw T line = " << raw_line);
             int fid = -1;
             const char* p_space = raw_line.data();
             while (*p_space == ' ' || *p_space == '\t') ++p_space;
