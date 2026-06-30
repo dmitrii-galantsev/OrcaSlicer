@@ -8361,7 +8361,11 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
 
                 for (auto it = plate_data->slice_filaments_info.begin(); it != plate_data->slice_filaments_info.end(); it++)
                 {
-                    int nozzle_group_id = get_nozzle_group_id(it->id);
+                    // H2C carousel: group_id[0] is the carousel slot (0-3); fall back to
+                    // physical extruder index for non-carousel printers.
+                    int nozzle_group_id = (!it->group_id.empty())
+                        ? it->group_id[0]
+                        : get_nozzle_group_id(it->id);
                     if (std::find(used_nozzle_groups.begin(), used_nozzle_groups.end(), nozzle_group_id) == used_nozzle_groups.end())
                         used_nozzle_groups.push_back(nozzle_group_id);
                     const std::string filament_nozzle_group_id = it->group_id.empty() ? std::to_string(nozzle_group_id) : join_int_list_comma(it->group_id);
@@ -8385,10 +8389,31 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
                     stream << "    <" << SLICE_WARNING_TAG << " msg=\"" << it->msg << "\" level=\"" << std::to_string(it->level) << "\" error_code =\"" << it->error_code << "\"  />\n";
                 }
 
+                // Build carousel-slot → physical extruder_id map from slice_filaments_info.
+                // For H2C: slot IDs come from group_id; extruder_id comes from filament_maps.
+                // For legacy printers: slot == physical_extruder-1, so extruder_id = slot+1.
+                std::map<int, int> nozzle_slot_extruder_map;
+                for (const auto& fi : plate_data->slice_filaments_info) {
+                    if (!fi.group_id.empty()) {
+                        int slot = fi.group_id[0];
+                        int ext_id = (fi.id >= 0 && fi.id < (int)filament_maps.size() && filament_maps[fi.id] > 0)
+                            ? filament_maps[fi.id]
+                            : (slot == 0 ? 1 : 2);
+                        nozzle_slot_extruder_map.emplace(slot, ext_id);
+                    }
+                }
+                // Sort nozzle groups for stable/reproducible output (matches BBL order).
+                std::sort(used_nozzle_groups.begin(), used_nozzle_groups.end());
                 for (int nozzle_group_id : used_nozzle_groups) {
+                    // extruder_id: use slot→extruder map when available (carousel),
+                    // otherwise fall back to nozzle_group_id+1 (legacy 2-extruder printers).
+                    int extruder_id = nozzle_group_id + 1;
+                    auto eit = nozzle_slot_extruder_map.find(nozzle_group_id);
+                    if (eit != nozzle_slot_extruder_map.end())
+                        extruder_id = eit->second;
                     stream << "    <" << NOZZLE_TAG << " "
                            << "id=\"" << nozzle_group_id << "\" "
-                           << "extruder_id=\"" << nozzle_group_id + 1 << "\" "
+                           << "extruder_id=\"" << extruder_id << "\" "
                            << "nozzle_diameter=\"" << get_nozzle_diameter_str(nozzle_group_id) << "\" "
                            << "volume_type=\"" << get_nozzle_volume_type(nozzle_group_id) << "\"/>\n";
                 }
