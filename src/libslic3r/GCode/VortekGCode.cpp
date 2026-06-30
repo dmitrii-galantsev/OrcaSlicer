@@ -55,6 +55,73 @@ void register_vortek_placeholders(
 
     int first_non_support_extruder_id = 0;
     if (print) {
+        auto& mutable_config = const_cast<Slic3r::FullPrintConfig&>(config);
+        const auto& full_cfg = print->full_print_config();
+        
+        // Check if maps were already computed during slicing
+        auto* opt_map_2 = full_cfg.option<Slic3r::ConfigOptionInts>("filament_map_2");
+        auto* opt_phys = full_cfg.option<Slic3r::ConfigOptionInts>("physical_extruder_map");
+        
+        std::vector<int> computed_map_2;
+        std::vector<int> calculated_physical_map;
+        bool already_computed = false;
+
+        if (opt_map_2 && opt_phys && 
+            opt_map_2->values.size() == config.filament_map.values.size()) {
+            computed_map_2 = opt_map_2->values;
+            calculated_physical_map = opt_phys->values;
+            already_computed = true;
+        }
+
+        if (!already_computed) {
+            // Calculate derived maps on the fly using centralized logic only when skipped in slicing
+            Vortek::PrintHooks::compute_vortek_derived_maps(
+                *print, config.filament_map.values, config.filament_volume_map.values,
+                computed_map_2, calculated_physical_map
+            );
+        }
+        
+        if (!computed_map_2.empty()) {
+            // Apply calculated filament_map_2 to exporter config
+            if (auto* opt = mutable_config.option<Slic3r::ConfigOptionInts>("filament_map_2", true)) {
+                opt->values = computed_map_2;
+            }
+            
+            // Apply calculated physical_extruder_map to exporter config
+            if (auto* opt = mutable_config.option<Slic3r::ConfigOptionInts>("physical_extruder_map", true)) {
+                opt->values = calculated_physical_map;
+            }
+
+            // Sync these calculated maps back to print's full and ori configs using a public static helper
+            // from PrintHooks, which is a friend of Print and can modify protected fields safely.
+            auto* mutable_print = const_cast<Slic3r::Print*>(print);
+            Vortek::PrintHooks::silent_update_derived_maps(*mutable_print, config.filament_map.values, config.filament_volume_map.values);
+        }
+
+        // List of other keys to sync from print's full config to gcode generator config (overrides, etc.)
+        std::vector<std::string> keys_to_sync = {
+            "filament_nozzle_map",
+            "filament_volume_map",
+            "filament_self_index"
+        };
+        for (const auto& key : Slic3r::filament_options_with_variant) {
+            keys_to_sync.push_back(key);
+        }
+        for (const auto& key : Slic3r::print_config_def.extruder_retract_keys()) {
+            keys_to_sync.push_back(key);
+            keys_to_sync.push_back("filament_" + key);
+        }
+
+        for (const auto& key : keys_to_sync) {
+            if (full_cfg.has(key)) {
+                if (auto* opt_src = full_cfg.option(key)) {
+                    if (auto* opt_dst = mutable_config.option(key, true)) {
+                        opt_dst->set(opt_src);
+                    }
+                }
+            }
+        }
+
         auto non_support_extruders = print->extruders(false);
         if (!non_support_extruders.empty()) {
             first_non_support_extruder_id = non_support_extruders.front();
@@ -125,29 +192,6 @@ void patch_toolchange_dyn_config(
         auto opt = gcode.m_config.option<Slic3r::ConfigOptionInts>("filament_nozzle_map");
         if (opt && new_filament_id >= 0 && new_filament_id < (int)opt->values.size()) {
             nozzle_id = opt->values[new_filament_id];
-            
-            // Check if map is flat/uninitialized (all 1s)
-            bool is_flat_map = true;
-            for (int val : opt->values) {
-                if (val != 1) { is_flat_map = false; break; }
-            }
-            if (is_flat_map && gcode.m_config.has("filament_map")) {
-                auto f_map_opt = gcode.m_config.option<Slic3r::ConfigOptionInts>("filament_map");
-                if (f_map_opt && opt->values.size() == f_map_opt->values.size()) {
-                    std::vector<int> calculated_nozzles(opt->values.size(), 0);
-                    int next_carousel_nozzle = 3;
-                    for (size_t i = 0; i < f_map_opt->values.size(); ++i) {
-                        int ext_id = f_map_opt->values[i]; // 1-based (1 = Left, 2 = Right)
-                        if (ext_id == 1) {
-                            calculated_nozzles[i] = 0; // Left is always 0
-                        } else if (ext_id == 2) {
-                            calculated_nozzles[i] = next_carousel_nozzle--;
-                            if (next_carousel_nozzle < 1) next_carousel_nozzle = 3;
-                        }
-                    }
-                    nozzle_id = calculated_nozzles[new_filament_id];
-                }
-            }
         }
     }
     // Try to get nozzle diameter from config

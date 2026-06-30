@@ -1,6 +1,7 @@
 #include "ClipperUtils.hpp"
 #include "Model.hpp"
 #include "Print.hpp"
+#include "VortekPlateMapping.hpp"
 
 #include <boost/log/trivial.hpp>
 #include <cfloat>
@@ -1190,12 +1191,17 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
     //BBS: add plate index
     t_config_option_keys print_diff       = print_config_diffs(m_config, new_full_config, filament_overrides, this->m_plate_index, filament_maps);
     t_config_option_keys full_config_diff = full_print_config_diffs(m_full_print_config, new_full_config, this->m_plate_index);
+    // [Vortek] Filter variant-transformed keys that diverge mid-slice (H2C multi-nozzle only)
+    Vortek::PlateMapping::filter_full_config_diff(full_config_diff, m_config);
+
     // Collect changes to object and region configs.
     t_config_option_keys object_diff      = m_default_object_config.diff(new_full_config);
     t_config_option_keys region_diff      = m_default_region_config.diff(new_full_config);
 
     //BBS: process the filament_map related logic
     std::unordered_set<std::string> print_diff_set(print_diff.begin(), print_diff.end());
+    // [Vortek] Filter computed map keys from print_diff to prevent sync_after_slicing re-slice loop
+    Vortek::PlateMapping::filter_print_diff_set(print_diff_set, m_config, m_full_print_config, new_full_config);
     if (print_diff_set.find("filament_map_mode") == print_diff_set.end())
     {
         FilamentMapMode map_mode = new_full_config.option<ConfigOptionEnum<FilamentMapMode>>("filament_map_mode", true)->value;
@@ -1243,6 +1249,12 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
         update_apply_status(false);
         //BBS: add more logs
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(", got print_diff %1%, object_diff %2%, region_diff %3%, set status to APPLY_STATUS_CHANGED")%print_diff.size() %object_diff.size() %region_diff.size();
+        // [Vortek] Diagnostic: dump exact keys causing config diff (visible at warning level)
+        if (!print_diff.empty()) {
+            std::string keys_str;
+            for (const auto& k : print_diff) { if (!keys_str.empty()) keys_str += ", "; keys_str += k; }
+            BOOST_LOG_TRIVIAL(warning) << "[Vortek] Print::apply print_diff keys (" << print_diff.size() << "): " << keys_str;
+        }
     }
 
     // Grab the lock for the Print / PrintObject milestones.
@@ -1259,6 +1271,12 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
     if (! full_config_diff.empty()) {
         //BBS: add more logs
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(" %1%: found full_config_diff changed.")%__LINE__;
+        // [Vortek] Diagnostic: dump exact keys causing full config diff
+        {
+            std::string keys_str;
+            for (const auto& k : full_config_diff) { if (!keys_str.empty()) keys_str += ", "; keys_str += k; }
+            BOOST_LOG_TRIVIAL(warning) << "[Vortek] Print::apply full_config_diff keys (" << full_config_diff.size() << "): " << keys_str;
+        }
         update_apply_status(this->invalidate_step(psGCodeExport));
         m_placeholder_parser.clear_config();
         // clear_config() wiped the constructor-set "version"; restore it for custom G-code.

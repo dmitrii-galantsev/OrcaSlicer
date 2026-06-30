@@ -29,15 +29,35 @@ void PlateMapping::sync_after_slicing(
     auto group_result = print->get_layered_nozzle_group_result();
     if (!group_result) return;
 
+    auto nozzle_map = group_result->get_nozzle_map(-1);
+    auto volume_map = group_result->get_volume_map(-1);
+
+    // Retrieve derived maps from print's full config (computed by silent_update_derived_maps)
+    const auto& full_cfg = print->full_print_config();
+    std::vector<int> map_2;
+    std::vector<int> phys_map;
+    if (auto* opt = full_cfg.option<Slic3r::ConfigOptionInts>("filament_map_2"))
+        map_2 = opt->values;
+    if (auto* opt = full_cfg.option<Slic3r::ConfigOptionInts>("physical_extruder_map"))
+        phys_map = opt->values;
+
+    // CRITICAL: Sync ALL computed maps to preset_bundle.project_config.
+    // full_config() is built from project_config (NOT plate_config), so without this
+    // the next Print::apply() gets stale defaults → config drift → double-slicing.
+    auto& proj = preset_bundle.project_config;
+    proj.set_key_value("filament_nozzle_map", new Slic3r::ConfigOptionInts(nozzle_map));
+    proj.set_key_value("filament_volume_map", new Slic3r::ConfigOptionInts(volume_map));
+    if (!map_2.empty())
+        proj.set_key_value("filament_map_2", new Slic3r::ConfigOptionInts(map_2));
+    if (!phys_map.empty())
+        proj.set_key_value("physical_extruder_map", new Slic3r::ConfigOptionInts(phys_map));
+
     if (filament_map_mode != Slic3r::fmmManual && filament_map_mode != Slic3r::fmmNozzleManual) {
-        VORTEK_LOG(info, "sync_after_slicing: auto map mode active, skipping write to plate config to prevent loop");
+        VORTEK_LOG(info, "sync_after_slicing: auto mode — synced project_config only (plate_config skipped)");
         return;
     }
 
-    VORTEK_LOG(info, "sync_after_slicing: updating nozzle maps in plate config");
-
-    auto nozzle_map = group_result->get_nozzle_map(-1);
-    auto volume_map = group_result->get_volume_map(-1);
+    VORTEK_LOG(info, "sync_after_slicing: updating nozzle maps in plate config and project config");
 
     bool changed = false;
     auto* opt_nozzle = plate_config.option<Slic3r::ConfigOptionInts>("filament_nozzle_map");
@@ -52,9 +72,9 @@ void PlateMapping::sync_after_slicing(
     }
 
     if (changed) {
-        VORTEK_LOG(info, "sync_after_slicing: nozzle maps changed, updated plate config");
+        VORTEK_LOG(info, "sync_after_slicing: nozzle maps changed, updated plate + project config");
     } else {
-        VORTEK_LOG(info, "sync_after_slicing: nozzle maps unchanged, skipped updating plate config");
+        VORTEK_LOG(info, "sync_after_slicing: nozzle maps unchanged in plate config, synced to project config");
     }
 }
 
@@ -269,6 +289,79 @@ bool PlateMapping::are_models_compatible(const std::string& model1, const std::s
         return true;
     }
     return false;
+}
+
+void PlateMapping::filter_full_config_diff(Slic3r::t_config_option_keys& full_config_diff, const Slic3r::PrintConfig& config)
+{
+    if (full_config_diff.empty()) return;
+
+    // Only filter for Vortek H2C — P2S/H2D and standard printers must NOT be affected.
+    // filament_nozzle_map is a Vortek-only key, absent on all non-Vortek printers.
+    if (!config.has("filament_nozzle_map")) return;
+
+    // Build the suppression set once (lazy init).
+    // Sources: extruder_retract_keys (retraction_length, z_hop, etc.) + Vortek computed maps.
+    // These keys are recomputed mid-slice by update_to_config_by_nozzle_group_result
+    // with multi-nozzle variant logic that differs from full_fff_config's per-filament logic.
+    static std::unordered_set<std::string> s_suppressed_keys;
+    if (s_suppressed_keys.empty()) {
+        // Retract keys from PrintConfigDef — same set used by compute_filament_override_value
+        for (const auto& k : Slic3r::print_config_def.extruder_retract_keys())
+            s_suppressed_keys.insert(k);
+        // Vortek computed map keys
+        s_suppressed_keys.insert("filament_nozzle_map");
+        s_suppressed_keys.insert("filament_volume_map");
+        s_suppressed_keys.insert("filament_map_2");
+        s_suppressed_keys.insert("physical_extruder_map");
+        s_suppressed_keys.insert("filament_self_index");
+    }
+
+    Slic3r::t_config_option_keys filtered;
+    filtered.reserve(full_config_diff.size());
+    for (const auto& k : full_config_diff) {
+        if (s_suppressed_keys.find(k) == s_suppressed_keys.end())
+            filtered.push_back(k);
+    }
+
+    size_t suppressed = full_config_diff.size() - filtered.size();
+    if (suppressed > 0) {
+        VORTEK_LOG(info, "filter_full_config_diff: suppressed " << suppressed
+                         << " variant-transformed keys from full_config_diff");
+        full_config_diff = std::move(filtered);
+    }
+}
+
+void PlateMapping::filter_print_diff_set(
+    std::unordered_set<std::string>& print_diff_set,
+    const Slic3r::PrintConfig& config,
+    Slic3r::DynamicPrintConfig& full_print_config,
+    const Slic3r::DynamicPrintConfig& new_full_config)
+{
+    if (print_diff_set.empty()) return;
+
+    // Only for Vortek H2C — P2S/H2D and standard printers must NOT be affected.
+    if (!config.has("filament_nozzle_map")) return;
+
+    // Vortek computed map keys injected by sync_after_slicing — must not trigger re-slice
+    static const std::vector<std::string> s_vortek_map_keys = {
+        "filament_nozzle_map", "filament_volume_map",
+        "filament_map_2", "physical_extruder_map",
+        "filament_self_index"
+    };
+
+    for (const auto& k : s_vortek_map_keys) {
+        if (print_diff_set.erase(k) > 0) {
+            // Sync the value in full_print_config to match new_full_config,
+            // so next Print::apply won't see this key in diff again
+            if (new_full_config.has(k)) {
+                auto* new_opt = new_full_config.option(k);
+                if (new_opt) {
+                    full_print_config.set_key_value(k, new_opt->clone());
+                }
+            }
+            VORTEK_LOG(info, "filter_print_diff_set: suppressed and synced key '" << k << "'");
+        }
+    }
 }
 
 } // namespace Vortek

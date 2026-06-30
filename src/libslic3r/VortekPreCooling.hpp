@@ -94,7 +94,6 @@ public:
      */
     PreCooling(
         const std::vector<Slic3r::GCodeProcessorResult::MoveVertex>& moves,
-        const std::vector<std::string>& filament_types,
         const Slic3r::MultiNozzleUtils::LayeredNozzleGroupResult& nozzle_group_result,
         const std::vector<int>& filament_nozzle_temps,
         const std::vector<int>& filament_nozzle_temps_initial_layer,
@@ -160,7 +159,6 @@ private:
 
     std::vector<ExtruderFreeBlock> m_extruder_free_blocks;
     std::vector<Slic3r::GCodeProcessorResult::MoveVertex> m_moves;
-    const std::vector<std::string>& m_filament_types;
     const Slic3r::MultiNozzleUtils::LayeredNozzleGroupResult& m_nozzle_group_result;
     std::vector<int> m_filament_nozzle_temps;
     std::vector<int> m_filament_nozzle_temps_initial_layer;

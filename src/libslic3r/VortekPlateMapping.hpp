@@ -143,6 +143,26 @@ public:
     static bool get_variant_override_values(const Slic3r::ConfigBase* config, const std::string& opt_key, std::vector<std::string>& out_values);
 
     /**
+     * @brief Filters variant-transformed keys from full_config_diff to prevent false re-slicing.
+     *
+     * Keys in filament_options_with_variant and Vortek computed maps are recomputed mid-slice
+     * by update_to_config_by_nozzle_group_result. Their values in m_full_print_config diverge
+     * from new_full_config (built by full_fff_config's simpler per-filament logic).
+     * This is expected — not a real config change.
+     */
+    static void filter_full_config_diff(Slic3r::t_config_option_keys& full_config_diff, const Slic3r::PrintConfig& config);
+
+    /**
+     * @brief Filters Vortek computed map keys from print_diff_set and syncs their values
+     *        in full_print_config to prevent sync_after_slicing re-slice loop.
+     */
+    static void filter_print_diff_set(
+        std::unordered_set<std::string>& print_diff_set,
+        const Slic3r::PrintConfig& config,
+        Slic3r::DynamicPrintConfig& full_print_config,
+        const Slic3r::DynamicPrintConfig& new_full_config);
+
+    /**
      * @brief Checks if two printer models are compatible (with fallback mapping like O1C <-> O1C2).
      * 
      * @param model1 First printer model name

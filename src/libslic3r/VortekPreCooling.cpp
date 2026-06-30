@@ -12,7 +12,6 @@ namespace Vortek {
 
 PreCooling::PreCooling(
     const std::vector<Slic3r::GCodeProcessorResult::MoveVertex>& moves,
-    const std::vector<std::string>& filament_types,
     const Slic3r::MultiNozzleUtils::LayeredNozzleGroupResult& nozzle_group_result,
     const std::vector<int>& filament_nozzle_temps,
     const std::vector<int>& filament_nozzle_temps_initial_layer,
@@ -34,7 +33,6 @@ PreCooling::PreCooling(
     const std::vector<double>& nozzle_diameter
 ) :
     m_moves(moves),
-    m_filament_types(filament_types),
     m_nozzle_group_result(nozzle_group_result),
     m_filament_nozzle_temps(filament_nozzle_temps),
     m_filament_nozzle_temps_initial_layer(filament_nozzle_temps_initial_layer),
@@ -661,7 +659,6 @@ PreCooling::InsertedLinesMap PreCooling::run_pre_scan(Slic3r::GCodeProcessor& pr
     }
 
     // Retrieve values from print configuration
-    std::vector<std::string> filament_types(print_config.filament_type.values);
     std::vector<int> filament_nozzle_temps(print_config.nozzle_temperature.values);
     std::vector<int> filament_nozzle_temps_initial_layer(print_config.nozzle_temperature_initial_layer.values);
     std::vector<int> physical_extruder_map(print_config.physical_extruder_map.values);
@@ -716,7 +713,6 @@ PreCooling::InsertedLinesMap PreCooling::run_pre_scan(Slic3r::GCodeProcessor& pr
 
     PreCooling pre_cooling_processor(
         processor.m_result.moves,
-        filament_types,
         nozzle_group,
         filament_nozzle_temps,
         filament_nozzle_temps_initial_layer,

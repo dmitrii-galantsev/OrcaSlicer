@@ -65,6 +65,26 @@ public:
      * @brief Reads the filament volume mapping from the Print config.
      */
     static std::vector<int> get_filament_volume_maps(const Slic3r::Print& print);
+
+    /**
+     * @brief Computes derived mappings (filament_map_2 and physical_extruder_map) from raw filament maps.
+     */
+    static void compute_vortek_derived_maps(
+        const Slic3r::Print& print,
+        const std::vector<int>& f_maps,
+        const std::vector<int>& final_volume_maps,
+        std::vector<int>& out_filament_map_2,
+        std::vector<int>& out_physical_extruder_map
+    );
+
+    /**
+     * @brief Silently applies derived mappings to the Print object config without triggering slicer invalidation.
+     */
+    static void silent_update_derived_maps(
+        Slic3r::Print& print,
+        const std::vector<int>& f_maps,
+        const std::vector<int>& final_volume_maps
+    );
 };
 
 } // namespace Vortek
