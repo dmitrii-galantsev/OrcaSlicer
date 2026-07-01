@@ -240,16 +240,17 @@ void sync_machine_nozzle_inventory_to_preset(const Slic3r::MachineObject* obj, S
     if (nozzle_rack && nozzle_rack->IsSupported()) {
         // Nozzle rack is supported (Vortek tool-changer)
         // Count nozzles of each volume type on the rack + the active nozzles in toolhead(s)
-        std::map<Slic3r::NozzleVolumeType, int> counts;
+        std::map<Slic3r::NozzleVolumeType, int> counts_left;
+        std::map<Slic3r::NozzleVolumeType, int> counts_right;
 
-        // Iterate through rack nozzles
+        // Iterate through rack nozzles (all belong to Right extruder)
         for (const auto& pair : nozzle_rack->GetRackNozzles()) {
             const auto& dev_nozzle = pair.second;
             Slic3r::NozzleVolumeType vol_type = Slic3r::nvtStandard;
             if (dev_nozzle.m_nozzle_flow == Slic3r::NozzleFlowType::H_FLOW) {
                 vol_type = Slic3r::nvtHighFlow;
             }
-            counts[vol_type]++;
+            counts_right[vol_type]++;
             VORTEK_LOG(debug, "sync_machine_nozzle_inventory_to_preset: found rack nozzle id=" 
                        << dev_nozzle.m_nozzle_id << ", diameter=" << dev_nozzle.m_diameter 
                        << ", flow=" << (int)dev_nozzle.m_nozzle_flow);
@@ -262,7 +263,12 @@ void sync_machine_nozzle_inventory_to_preset(const Slic3r::MachineObject* obj, S
             if (dev_nozzle.m_nozzle_flow == Slic3r::NozzleFlowType::H_FLOW) {
                 vol_type = Slic3r::nvtHighFlow;
             }
-            counts[vol_type]++;
+            // Left nozzle has physical id 0, right nozzle has physical id >= 1
+            if (dev_nozzle.m_nozzle_id == 0) {
+                counts_left[vol_type]++;
+            } else {
+                counts_right[vol_type]++;
+            }
             VORTEK_LOG(debug, "sync_machine_nozzle_inventory_to_preset: found active head nozzle id=" 
                        << dev_nozzle.m_nozzle_id << ", diameter=" << dev_nozzle.m_diameter 
                        << ", flow=" << (int)dev_nozzle.m_nozzle_flow);
@@ -273,7 +279,12 @@ void sync_machine_nozzle_inventory_to_preset(const Slic3r::MachineObject* obj, S
             bool clear = true;
             for (int idx = 0; idx <= (int)Slic3r::nvtMaxNozzleVolumeType; ++idx) {
                 Slic3r::NozzleVolumeType vol_type = static_cast<Slic3r::NozzleVolumeType>(idx);
-                int count = counts[vol_type];
+                int count = 0;
+                if (eid == 0) {
+                    count = counts_left[vol_type];
+                } else if (eid == 1) {
+                    count = counts_right[vol_type];
+                }
                 stat.set_extruder_nozzle_count(eid, vol_type, count, clear);
                 clear = false;
                 VORTEK_LOG(debug, "sync_machine_nozzle_inventory_to_preset: set extruder=" << eid 

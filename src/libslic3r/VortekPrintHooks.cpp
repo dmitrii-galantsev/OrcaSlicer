@@ -147,6 +147,26 @@ void PrintHooks::update_filament_maps_to_config(
                     next_carousel_nozzle = 3;
             }
         }
+    } else if (!final_nozzle_maps.empty() && !f_maps.empty()) {
+        // Sanitize nozzle map to ensure no slot ID exceeds the H2C physical limit of 0..5.
+        // If a loaded project contains invalid slots (e.g. [7, 8, 9] from previous bug),
+        // we clamp/reset them to valid slots (0 for Left, 1..3 cyclic for Right).
+        for (size_t i = 0; i < final_nozzle_maps.size() && i < f_maps.size(); ++i) {
+            int ext_id = f_maps[i]; // 1-based (1 = Left, 2 = Right)
+            if (ext_id == 1) { // Left
+                if (final_nozzle_maps[i] != 0) {
+                    VORTEK_LOG(warning, "update_filament_maps_to_config: invalid left nozzle slot " 
+                               << final_nozzle_maps[i] << " reset to 0");
+                    final_nozzle_maps[i] = 0;
+                }
+            } else if (ext_id == 2) { // Right
+                if (final_nozzle_maps[i] < 1 || final_nozzle_maps[i] > 5) {
+                    VORTEK_LOG(warning, "update_filament_maps_to_config: invalid right nozzle slot " 
+                               << final_nozzle_maps[i] << " reset to default carousel slot");
+                    final_nozzle_maps[i] = 1 + (i % 3);
+                }
+            }
+        }
     }
 
     // Step 2: Compute final_volume_maps from printer nozzle_volume_type per extruder (if not provided).
