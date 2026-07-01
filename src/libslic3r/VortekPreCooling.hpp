@@ -102,7 +102,9 @@ public:
         float inject_time_threshold,
         bool handle_hotend_as_extruder,
         bool has_filament_switcher,
-        const std::vector<int>& pre_cooling_temp,
+        int standby_temp_delta,
+        const std::vector<int>& pre_cooling_temp_nc,
+        const std::vector<int>& filament_idle_temps,
         const std::vector<double>& cooling_rate,
         const std::vector<double>& heating_rate,
         const std::vector<std::pair<unsigned int, unsigned int>>& skippable_blocks,
@@ -153,6 +155,24 @@ private:
         bool pre_cooling,
         bool pre_heating
     );
+
+    void inject_cooling_heating_command_bbs(
+        InsertedLinesMap& inserted_operation_lines,
+        const ExtruderFreeBlock& block,
+        float curr_temp,
+        float target_temp,
+        bool pre_cooling,
+        bool pre_heating
+    );
+
+    void inject_cooling_heating_command_orca(
+        InsertedLinesMap& inserted_operation_lines,
+        const ExtruderFreeBlock& block,
+        float curr_temp,
+        float target_temp,
+        bool pre_cooling,
+        bool pre_heating
+    );
     
     void build_by_filament_blocks(const std::vector<FilamentUsageBlock>& filament_usage_blocks);
     void build_by_extruder_blocks(const std::vector<ExtruderUsageBlock>& extruder_usage_blocks);
@@ -167,7 +187,9 @@ private:
     float m_inject_time_threshold;
     bool m_handle_hotend_as_extruder;
     bool m_has_filament_switcher;
-    std::vector<int> m_filament_pre_cooling_temps;
+    int m_standby_temp_delta;
+    std::vector<int> m_filament_pre_cooling_temps_nc;
+    std::vector<int> m_filament_idle_temps;
     std::vector<double> m_cooling_rate;
     std::vector<double> m_heating_rate;
     std::vector<std::pair<unsigned int, unsigned int>> m_skippable_blocks;
