@@ -2,7 +2,10 @@
 #include "Print.hpp"
 #include "PrintConfig.hpp"
 #include "VortekLog.hpp"
+#include "PresetBundle.hpp"
+#include "AppConfig.hpp"
 #include <boost/format.hpp>
+#include <boost/algorithm/string.hpp>
 #include <set>
 #include <unordered_map>
 
@@ -605,6 +608,67 @@ void PrintHooks::silent_update_derived_maps(
 }
 
 #undef L
+
+// Reference to BBS: BambuStudio/src/libslic3r/PresetBundle.cpp
+void PresetBundleHooks::load_nozzle_stats_from_config(
+    Slic3r::PresetBundle* preset_bundle, 
+    Slic3r::AppConfig& config, 
+    const std::string& initial_printer_profile_name) 
+{
+    // Hook for H2C only
+    if (preset_bundle->printers.get_edited_preset().config.opt_string("printer_model") != "Bambu Lab H2C") {
+        return;
+    }
+
+    std::vector<std::string> extruder_nozzle_stats_str;
+    if (config.has_printer_setting(initial_printer_profile_name, "extruder_nozzle_stats")) {
+        boost::algorithm::split(extruder_nozzle_stats_str, config.get_printer_setting(initial_printer_profile_name, "extruder_nozzle_stats"), boost::algorithm::is_any_of(","));
+    }
+    preset_bundle->extruder_nozzle_stat.set_raw_stat(Slic3r::MultiNozzleUtils::get_extruder_nozzle_stats(extruder_nozzle_stats_str));
+}
+
+void PresetBundleHooks::save_nozzle_stats_to_config(
+    const Slic3r::PresetBundle* preset_bundle, 
+    Slic3r::AppConfig& config, 
+    const std::string& printer_name) 
+{
+    // Hook for H2C only
+    if (preset_bundle->printers.get_edited_preset().config.opt_string("printer_model") != "Bambu Lab H2C") {
+        return;
+    }
+
+    std::string extruder_nozzle_stats_str = boost::algorithm::join(
+        Slic3r::save_extruder_nozzle_stats_to_string(preset_bundle->extruder_nozzle_stat.get_raw_stat()), 
+        ","
+    );
+    config.set_printer_setting(printer_name, "extruder_nozzle_stats", extruder_nozzle_stats_str);
+}
+
+void PresetBundleHooks::load_nozzle_stats_from_dynamic_config(
+    Slic3r::PresetBundle* preset_bundle, 
+    Slic3r::DynamicPrintConfig& config) 
+{
+    // Hook for H2C only
+    if (preset_bundle->printers.get_edited_preset().config.opt_string("printer_model") != "Bambu Lab H2C") {
+        return;
+    }
+
+    if (config.has("extruder_nozzle_stats")) {
+        std::vector<std::string> extruder_nozzle_stats = std::move(config.option<Slic3r::ConfigOptionStrings>("extruder_nozzle_stats", true)->values);
+        config.erase("extruder_nozzle_stats");
+        preset_bundle->extruder_nozzle_stat.set_raw_stat(Slic3r::MultiNozzleUtils::get_extruder_nozzle_stats(extruder_nozzle_stats));
+    }
+}
+
+void PresetBundleHooks::update_nozzle_stat_on_compatibility_change(
+    Slic3r::PresetBundle* preset_bundle) 
+{
+    // Hook for H2C only
+    const Slic3r::Preset &printer_preset = preset_bundle->printers.get_edited_preset();
+    if (printer_preset.config.opt_string("printer_model") == "Bambu Lab H2C") {
+        preset_bundle->extruder_nozzle_stat.on_printer_model_change(preset_bundle);
+    }
+}
 
 } // namespace Vortek
 

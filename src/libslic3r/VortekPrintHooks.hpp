@@ -7,6 +7,9 @@
 namespace Slic3r {
     class Print;
     class PrintConfigDef;
+    class PresetBundle;
+    class AppConfig;
+    class DynamicPrintConfig;
     namespace MultiNozzleUtils {
         class NozzleGroupResultBase;
     }
@@ -84,6 +87,31 @@ public:
         Slic3r::Print& print,
         const std::vector<int>& f_maps,
         const std::vector<int>& final_volume_maps
+    );
+};
+
+// Reference to BBS: BambuStudio/src/libslic3r/PresetBundle.hpp
+class PresetBundleHooks {
+public:
+    static void load_nozzle_stats_from_config(
+        Slic3r::PresetBundle* preset_bundle, 
+        Slic3r::AppConfig& config, 
+        const std::string& initial_printer_profile_name
+    );
+
+    static void save_nozzle_stats_to_config(
+        const Slic3r::PresetBundle* preset_bundle, 
+        Slic3r::AppConfig& config, 
+        const std::string& printer_name
+    );
+
+    static void load_nozzle_stats_from_dynamic_config(
+        Slic3r::PresetBundle* preset_bundle, 
+        Slic3r::DynamicPrintConfig& config
+    );
+
+    static void update_nozzle_stat_on_compatibility_change(
+        Slic3r::PresetBundle* preset_bundle
     );
 };
 

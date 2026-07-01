@@ -2,6 +2,7 @@
 #include <ctime>
 
 #include "PresetBundle.hpp"
+#include "VortekPrintHooks.hpp"
 #include "PrintConfig.hpp"
 #include "libslic3r.h"
 #include "I18N.hpp"
@@ -2665,6 +2666,8 @@ void PresetBundle::update_selections(AppConfig &config)
         boost::algorithm::split(extruder_ams_count_str, config.get_printer_setting(initial_printer_profile_name, "extruder_ams_count"), boost::algorithm::is_any_of(","));
     }
     this->extruder_ams_counts = get_extruder_ams_count(extruder_ams_count_str);
+    // Reference to BBS: BambuStudio/src/libslic3r/PresetBundle.cpp:215
+    Vortek::PresetBundleHooks::load_nozzle_stats_from_config(this, config, initial_printer_profile_name);
 
     std::vector<std::string> matrix;
     if (config.has_printer_setting(initial_printer_profile_name, "flush_volumes_matrix")) {
@@ -2809,6 +2812,8 @@ void PresetBundle::load_selections(AppConfig &config, const PresetPreferences& p
         boost::algorithm::split(extruder_ams_count_str, config.get_printer_setting(initial_printer_profile_name, "extruder_ams_count"), boost::algorithm::is_any_of(","));
     }
     this->extruder_ams_counts = get_extruder_ams_count(extruder_ams_count_str);
+    // Reference to BBS: BambuStudio/src/libslic3r/PresetBundle.cpp:215
+    Vortek::PresetBundleHooks::load_nozzle_stats_from_config(this, config, initial_printer_profile_name);
 
     std::vector<std::string> matrix;
     if (config.has_printer_setting(initial_printer_profile_name, "flush_volumes_matrix")) {
@@ -2944,6 +2949,8 @@ void PresetBundle::export_selections(AppConfig &config)
     // Load ams counts data into app config
     std::string           extruder_ams_count_str = boost::algorithm::join(save_extruder_ams_count_to_string(this->extruder_ams_counts), ",");
     config.set_printer_setting(printer_name, "extruder_ams_count", extruder_ams_count_str);
+    // Reference to BBS: BambuStudio/src/libslic3r/PresetBundle.cpp:387
+    Vortek::PresetBundleHooks::save_nozzle_stats_to_config(this, config, printer_name);
 
     std::string flush_volumes_matrix = boost::algorithm::join(project_config.option<ConfigOptionFloats>("flush_volumes_matrix")->values |
                                                              boost::adaptors::transformed(static_cast<std::string (*)(double)>(std::to_string)),
@@ -4364,6 +4371,8 @@ void PresetBundle::load_config_file_config(const std::string &name_or_path, bool
     config.erase("extruder_ams_count");
     if (this->extruder_ams_counts.empty())
         this->extruder_ams_counts = get_extruder_ams_count(extruder_ams_count);
+    // Reference to BBS: BambuStudio/src/libslic3r/PresetBundle.cpp:624
+    Vortek::PresetBundleHooks::load_nozzle_stats_from_dynamic_config(this, config);
 
 
     // 1) Create a name from the file name.
@@ -5416,6 +5425,9 @@ void PresetBundle::update_compatible(PresetSelectCompatibleType select_other_pri
 	}
     default: break;
     }
+
+    // Reference to BBS: BambuStudio/src/libslic3r/PresetBundle.cpp:301
+    Vortek::PresetBundleHooks::update_nozzle_stat_on_compatibility_change(this);
 
     BOOST_LOG_TRIVIAL(info) << boost::format("update_compatibility for all presets exit");
 }
