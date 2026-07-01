@@ -585,6 +585,10 @@ void ExtruderNozzleStat::on_printer_model_change(PresetBundle* preset_bundle)
     BOOST_LOG_TRIVIAL(info)<< __FUNCTION__ << boost::format(": reset extruder nozzle stat by printer model change : %1%") % preset_bundle->printers.get_selected_preset().name;
     auto nozzle_volume_type = preset_bundle->project_config.option<ConfigOptionEnumsGeneric>("nozzle_volume_type");
     auto max_nozzle_count = preset_bundle->printers.get_selected_preset().config.option<ConfigOptionIntsNullable>("extruder_max_nozzle_count");
+    
+    // Reference to BBS: BambuStudio/src/libslic3r/PresetBundle.cpp:301
+    bool is_h2c = (preset_bundle->printers.get_selected_preset().config.opt_string("printer_model") == "Bambu Lab H2C");
+    
     extruder_nozzle_counts.resize(max_nozzle_count->size());
     for (size_t eid = 0; eid < extruder_nozzle_counts.size(); ++eid) {
         NozzleVolumeType type = nvtStandard;
@@ -592,13 +596,24 @@ void ExtruderNozzleStat::on_printer_model_change(PresetBundle* preset_bundle)
             BOOST_LOG_TRIVIAL(error)<< __FUNCTION__ << boost::format(": eid out of bounds, use standard flow");
         else
             type = NozzleVolumeType(nozzle_volume_type->values[eid]);
-        set_extruder_nozzle_count(eid, type, max_nozzle_count->values[eid], true);
+            
+        // For H2C, each extruder has exactly 1 active nozzle at a time in offline mode
+        int count = max_nozzle_count->values[eid];
+        if (is_h2c) {
+            count = 1;
+        }
+        set_extruder_nozzle_count(eid, type, count, true);
     }
 }
 
 void ExtruderNozzleStat::on_printer_model_change_cli(const std::vector<int>& nozzle_volume_type, const std::vector<int>& max_nozzle_count)
 {
     if (force_keep_stat) return;
+    
+    // In CLI / offline mode, check if this is an H2C model
+    // Reference to BBS: BambuStudio/src/libslic3r/PresetBundle.cpp:319
+    bool is_h2c = (max_nozzle_count.size() == 2 && max_nozzle_count[1] == 6);
+    
     extruder_nozzle_counts.resize(max_nozzle_count.size());
     for (size_t eid = 0; eid < extruder_nozzle_counts.size(); ++eid) {
         NozzleVolumeType type = nvtStandard;
@@ -606,7 +621,12 @@ void ExtruderNozzleStat::on_printer_model_change_cli(const std::vector<int>& noz
             BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << boost::format(": eid out of bounds, use standard flow");
         else
             type = NozzleVolumeType(nozzle_volume_type[eid]);
-        set_extruder_nozzle_count(eid, type, max_nozzle_count[eid], true);
+            
+        int count = max_nozzle_count[eid];
+        if (is_h2c) {
+            count = 1;
+        }
+        set_extruder_nozzle_count(eid, type, count, true);
     }
 }
 

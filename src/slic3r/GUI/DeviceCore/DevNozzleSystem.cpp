@@ -23,6 +23,8 @@ void DevNozzleSystem::Reset()
     m_nozzles.clear();
     m_extder_exist = 0;
     m_state = 0; // idle state
+    // Reference to BBS: BambuStudio/src/slic3r/GUI/DeviceCore/DevNozzleSystem.cpp:743 (calls system->ClearNozzles() which resets rack)
+    Vortek::DeviceHooks::reset_nozzle_system(this);
 }
 
 

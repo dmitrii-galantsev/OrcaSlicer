@@ -104,6 +104,9 @@ void process_nozzle_placement(
  */
 void sync_machine_nozzle_inventory_to_preset(const Slic3r::MachineObject* obj, Slic3r::PresetBundle& preset_bundle);
 
+// Reference to BBS equivalent: DevNozzleSystem::ClearNozzles() in BambuStudio/src/slic3r/GUI/DeviceCore/DevNozzleSystem.cpp:458
+void reset_nozzle_system(Slic3r::DevNozzleSystem* system);
+
 void set_support_nozzle_rack(Slic3r::MachineObject* obj, bool supported);
 
 std::shared_ptr<Slic3r::VortekNozzleRack> get_or_create_nozzle_rack(Slic3r::MachineObject* obj);

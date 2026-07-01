@@ -246,6 +246,10 @@ void sync_machine_nozzle_inventory_to_preset(const Slic3r::MachineObject* obj, S
         // Iterate through rack nozzles (all belong to Right extruder)
         for (const auto& pair : nozzle_rack->GetRackNozzles()) {
             const auto& dev_nozzle = pair.second;
+            // Ensure the nozzle is currently on the rack
+            if (!nozzle_rack->IsNozzleOnRack(dev_nozzle.m_nozzle_id)) {
+                continue;
+            }
             Slic3r::NozzleVolumeType vol_type = Slic3r::nvtStandard;
             if (dev_nozzle.m_nozzle_flow == Slic3r::NozzleFlowType::H_FLOW) {
                 vol_type = Slic3r::nvtHighFlow;
@@ -276,19 +280,28 @@ void sync_machine_nozzle_inventory_to_preset(const Slic3r::MachineObject* obj, S
 
         // Update extruder nozzle stats for each extruder
         for (int eid = 0; eid < num_extruders; ++eid) {
+            const auto& counts = (eid == 0) ? counts_left : counts_right;
             bool clear = true;
-            for (int idx = 0; idx <= (int)Slic3r::nvtMaxNozzleVolumeType; ++idx) {
-                Slic3r::NozzleVolumeType vol_type = static_cast<Slic3r::NozzleVolumeType>(idx);
-                int count = 0;
-                if (eid == 0) {
-                    count = counts_left[vol_type];
-                } else if (eid == 1) {
-                    count = counts_right[vol_type];
+            bool added = false;
+            for (const auto& pair : counts) {
+                if (pair.second > 0) {
+                    stat.set_extruder_nozzle_count(eid, pair.first, pair.second, clear);
+                    clear = false;
+                    added = true;
+                    VORTEK_LOG(debug, "sync_machine_nozzle_inventory_to_preset: set extruder=" << eid 
+                               << ", volume_type=" << (int)pair.first << ", count=" << pair.second);
                 }
-                stat.set_extruder_nozzle_count(eid, vol_type, count, clear);
-                clear = false;
-                VORTEK_LOG(debug, "sync_machine_nozzle_inventory_to_preset: set extruder=" << eid 
-                           << ", volume_type=" << idx << ", count=" << count);
+            }
+            if (!added) {
+                // If no nozzles are found, write 1 default nozzle of the type from preset
+                Slic3r::NozzleVolumeType def_type = Slic3r::nvtStandard;
+                auto* nozzle_volume_type_opt = static_cast<const Slic3r::ConfigOptionEnumsGeneric*>(current_printer.config.option("nozzle_volume_type"));
+                if (nozzle_volume_type_opt && eid < (int)nozzle_volume_type_opt->values.size()) {
+                    def_type = static_cast<Slic3r::NozzleVolumeType>(nozzle_volume_type_opt->values[eid]);
+                }
+                stat.set_extruder_nozzle_count(eid, def_type, 1, true);
+                VORTEK_LOG(debug, "sync_machine_nozzle_inventory_to_preset: no active nozzles found for extruder=" << eid 
+                           << ", fallback to 1 default nozzle of type=" << (int)def_type);
             }
         }
     } else {
@@ -580,6 +593,17 @@ bool apply_nozzle_mapping_from_device(Slic3r::MachineObject* obj, Slic3r::GUI::P
     plate->set_filament_nozzle_maps(nozzle_map);
     VORTEK_LOG(info, "apply_nozzle_mapping_from_device: applied nozzle map from MQTT/Device, mode=fmmNozzleManual");
     return true;
+}
+
+// Reference to BBS equivalent: DevNozzleSystem::ClearNozzles() in BambuStudio/src/slic3r/GUI/DeviceCore/DevNozzleSystem.cpp:458
+void reset_nozzle_system(Slic3r::DevNozzleSystem* system)
+{
+    if (!system) return;
+    auto rack = get_nozzle_rack(system);
+    // Execute only for H2C printers with nozzle rack support
+    if (rack && rack->IsSupported()) {
+        rack->ClearRackNozzles();
+    }
 }
 
 } // namespace DeviceHooks
