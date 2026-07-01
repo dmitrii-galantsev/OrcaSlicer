@@ -215,6 +215,36 @@ void PlateMapping::patch_slice_filament_nozzle_groups(
                      << " filaments with nozzle group_ids from filament_nozzle_map");
 }
 
+std::vector<int> PlateMapping::get_nozzle_map_for_export(const Slic3r::Print* print, const Slic3r::DynamicPrintConfig& plate_config)
+{
+    if (print && plate_config.has("filament_nozzle_map")) {
+        const auto& full_cfg = print->full_print_config();
+        if (auto* opt = full_cfg.option<Slic3r::ConfigOptionInts>("filament_nozzle_map")) {
+            VORTEK_LOG(info, "get_nozzle_map_for_export: using print-derived nozzle map");
+            return opt->values;
+        }
+    }
+    if (plate_config.has("filament_nozzle_map")) {
+        return plate_config.option<Slic3r::ConfigOptionInts>("filament_nozzle_map")->values;
+    }
+    return {};
+}
+
+std::vector<int> PlateMapping::get_volume_map_for_export(const Slic3r::Print* print, const Slic3r::DynamicPrintConfig& plate_config)
+{
+    if (print && plate_config.has("filament_volume_map")) {
+        const auto& full_cfg = print->full_print_config();
+        if (auto* opt = full_cfg.option<Slic3r::ConfigOptionInts>("filament_volume_map")) {
+            VORTEK_LOG(info, "get_volume_map_for_export: using print-derived volume map");
+            return opt->values;
+        }
+    }
+    if (plate_config.has("filament_volume_map")) {
+        return plate_config.option<Slic3r::ConfigOptionInts>("filament_volume_map")->values;
+    }
+    return {};
+}
+
 void PlateMapping::patch_plate_data_for_export(
     Slic3r::PlateData* plate_data,
     const std::vector<int>& filament_nozzle_map,
@@ -226,8 +256,17 @@ void PlateMapping::patch_plate_data_for_export(
 {
     if (!plate_data) return;
     VORTEK_LOG(info, "patch_plate_data_for_export for plate index " << plate_data->plate_index);
-    plate_data->config.set_key_value("filament_nozzle_map", new Slic3r::ConfigOptionInts(filament_nozzle_map));
-    plate_data->config.set_key_value("filament_volume_map", new Slic3r::ConfigOptionInts(filament_volume_map));
+
+    std::vector<int> nozzle_map = filament_nozzle_map;
+    std::vector<int> volume_map = filament_volume_map;
+
+    if (print) {
+        nozzle_map = get_nozzle_map_for_export(print, config);
+        volume_map = get_volume_map_for_export(print, config);
+    }
+
+    plate_data->config.set_key_value("filament_nozzle_map", new Slic3r::ConfigOptionInts(nozzle_map));
+    plate_data->config.set_key_value("filament_volume_map", new Slic3r::ConfigOptionInts(volume_map));
 }
 
 void PlateMapping::handle_h2c_mapping_apply(

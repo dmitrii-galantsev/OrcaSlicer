@@ -6202,15 +6202,25 @@ int PartPlateList::store_to_3mf_structure(PlateDataPtrs& plate_data_list, bool w
 		plate_data_item->plate_thumbnail.load_from(m_plate_list[i]->thumbnail_data);
 		BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": plate %1% after load, width %2%, height %3%, size %4%!")
 			%(i+1) %plate_data_item->plate_thumbnail.width %plate_data_item->plate_thumbnail.height %plate_data_item->plate_thumbnail.pixels.size();
+		// Reference to BBS: BambuStudio/src/libslic3r/Format/bbs_3mf.cpp L8496 (get_used_nozzles_in_extruder)
+		Print *print_ptr = nullptr;
+		m_plate_list[i]->get_print((PrintBase **) &print_ptr, nullptr, nullptr);
+
+		std::vector<int> nozzle_map = print_ptr ? Vortek::PlateMapping::get_nozzle_map_for_export(print_ptr, *m_plate_list[i]->config())
+			: (m_plate_list[i]->config()->has("filament_nozzle_map") ? m_plate_list[i]->config()->option<ConfigOptionInts>("filament_nozzle_map")->values : std::vector<int>{});
+
+		std::vector<int> volume_map = print_ptr ? Vortek::PlateMapping::get_volume_map_for_export(print_ptr, *m_plate_list[i]->config())
+			: (m_plate_list[i]->config()->has("filament_volume_map") ? m_plate_list[i]->config()->option<ConfigOptionInts>("filament_volume_map")->values : std::vector<int>{});
+
 		plate_data_item->config.apply(*m_plate_list[i]->config());
-        Vortek::PlateMapping::patch_plate_data_for_export(
-            plate_data_item,
-            m_plate_list[i]->config()->has("filament_nozzle_map") ? m_plate_list[i]->config()->option<ConfigOptionInts>("filament_nozzle_map")->values : std::vector<int>{},
-            m_plate_list[i]->config()->has("filament_volume_map") ? m_plate_list[i]->config()->option<ConfigOptionInts>("filament_volume_map")->values : std::vector<int>{},
-            plate_data_item->filament_maps,
-            plate_data_item->config,
-            nullptr
-        );
+		Vortek::PlateMapping::patch_plate_data_for_export(
+			plate_data_item,
+			nozzle_map,
+			volume_map,
+			plate_data_item->filament_maps,
+			plate_data_item->config,
+			print_ptr
+		);
 
 		if (m_plate_list[i]->no_light_thumbnail_data.is_valid())
 			plate_data_item->no_light_thumbnail_file = "valid_no_light";
@@ -6251,8 +6261,7 @@ int PartPlateList::store_to_3mf_structure(PlateDataPtrs& plate_data_list, bool w
                     plate_data_item->nozzle_change_sequence = m_plate_list[i]->m_gcode_result->nozzle_change_sequence;
                     plate_data_item->optimal_assignment = m_plate_list[i]->m_gcode_result->optimal_assignment;
                     plate_data_item->first_layer_time = std::to_string(m_plate_list[i]->cali_bboxes_data.first_layer_time);
-					Print *print                      = nullptr;
-					m_plate_list[i]->get_print((PrintBase **) &print, nullptr, nullptr);
+					Print *print = print_ptr;
 					if (print) {
 						const PrintStatistics &ps = print->print_statistics();
 						if (ps.total_weight != 0.0) {
@@ -6265,15 +6274,14 @@ int PartPlateList::store_to_3mf_structure(PlateDataPtrs& plate_data_list, bool w
 					}
 					//parse filament info
 					plate_data_item->parse_filament_info(m_plate_list[i]->get_slice_result());
+                    // Reference to BBS: BambuStudio/src/libslic3r/Format/bbs_3mf.cpp L680 (parse_filament_info)
                     // Vortek: set group_id in slice_filaments_info from filament_nozzle_map.
                     // MUST be called after parse_filament_info() — that call clears and
                     // rebuilds slice_filaments_info, leaving group_id empty. Without this,
                     // bbs_3mf.cpp falls back to f_maps[i]-1 (extruder index) as group_id.
                     Vortek::PlateMapping::patch_slice_filament_nozzle_groups(
                         plate_data_item,
-                        m_plate_list[i]->config()->has("filament_nozzle_map")
-                            ? m_plate_list[i]->config()->option<ConfigOptionInts>("filament_nozzle_map")->values
-                            : std::vector<int>{}
+                        nozzle_map
                     );
 				} else {
 					BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << "slice result = " << m_plate_list[i]->get_slice_result()

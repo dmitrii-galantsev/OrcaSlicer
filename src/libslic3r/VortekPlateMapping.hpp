@@ -81,6 +81,16 @@ public:
     static void sync_project_config_on_load(Slic3r::DynamicConfig& proj_cfg, int filament_count);
 
     /**
+     * @brief Retrieves the actual nozzle map from Print if active, otherwise falls back to plate config.
+     */
+    static std::vector<int> get_nozzle_map_for_export(const Slic3r::Print* print, const Slic3r::DynamicPrintConfig& plate_config);
+
+    /**
+     * @brief Retrieves the actual volume map from Print if active, otherwise falls back to plate config.
+     */
+    static std::vector<int> get_volume_map_for_export(const Slic3r::Print* print, const Slic3r::DynamicPrintConfig& plate_config);
+
+    /**
      * @brief Patches config for exporting metadata.
      */
     static void patch_export_config(Slic3r::DynamicPrintConfig& cfg);
