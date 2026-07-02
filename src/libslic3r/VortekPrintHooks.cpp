@@ -133,13 +133,36 @@ void PrintHooks::update_filament_maps_to_config(
 )
 {
     // Step 1: Compute final_nozzle_maps FIRST so we can use them in the idempotency guard.
-    // If f_nozzle_maps is empty, derive nozzle assignments from filament_map using the H2C carousel rule:
+    // If f_nozzle_maps is empty or contains carousel slot collisions (multiple filaments on Extruder 2 mapping to the same slot),
+    // we recalculate and derive nozzle assignments from filament_map using the H2C carousel rule:
     //   extruder 1 (Left)  → fixed slot 0
-    //   extruder 2 (Right) → carousel slots 3, 2, 1 (in order of first assignment)
+    //   extruder 2 (Right) → carousel slots 4, 3, 2, 1 (in order of first assignment)
+    // Reference to BBS: BambuStudio/src/libslic3r/Preset.cpp PresetBundle::update_compatible (H2C carousel mappings)
+    // Reference to BBS: BambuStudio/src/libslic3r/Format/bbs_3mf.cpp (nozzle map initialization)
     std::vector<int> final_nozzle_maps = f_nozzle_maps;
-    if (final_nozzle_maps.empty() && !f_maps.empty()) {
-        final_nozzle_maps.resize(f_maps.size(), 0);
-        int next_carousel_nozzle = 3;
+    bool needs_mapping = final_nozzle_maps.empty();
+    
+    if (!needs_mapping && !f_maps.empty() && final_nozzle_maps.size() == f_maps.size()) {
+        std::set<int> carousel_slots_used;
+        bool has_collision = false;
+        for (size_t i = 0; i < final_nozzle_maps.size(); ++i) {
+            if (f_maps[i] == 2) {
+                int slot = final_nozzle_maps[i];
+                if (carousel_slots_used.count(slot)) {
+                    has_collision = true;
+                }
+                carousel_slots_used.insert(slot);
+            }
+        }
+        if (has_collision) {
+            VORTEK_LOG(info, "update_filament_maps_to_config: detected slot collisions in loaded nozzle map, recalculating...");
+            needs_mapping = true;
+        }
+    }
+
+    if ((needs_mapping || final_nozzle_maps.size() != f_maps.size()) && !f_maps.empty()) {
+        final_nozzle_maps.assign(f_maps.size(), 0);
+        int next_carousel_nozzle = 4;
         for (size_t i = 0; i < f_maps.size(); ++i) {
             int ext_id = f_maps[i]; // 1-based (1 = Left, 2 = Right)
             if (ext_id == 1) {
@@ -147,13 +170,12 @@ void PrintHooks::update_filament_maps_to_config(
             } else if (ext_id == 2) {
                 final_nozzle_maps[i] = next_carousel_nozzle--;
                 if (next_carousel_nozzle < 1)
-                    next_carousel_nozzle = 3;
+                    next_carousel_nozzle = 4;
             }
         }
     } else if (!final_nozzle_maps.empty() && !f_maps.empty()) {
-        // Sanitize nozzle map to ensure no slot ID exceeds the H2C physical limit of 0..5.
-        // If a loaded project contains invalid slots (e.g. [7, 8, 9] from previous bug),
-        // we clamp/reset them to valid slots (0 for Left, 1..3 cyclic for Right).
+        // Sanitize nozzle map to ensure no slot ID exceeds the H2C physical limit of 0..4.
+        // Slots should be: 0 for Left, 1..4 for Right (Carousel).
         for (size_t i = 0; i < final_nozzle_maps.size() && i < f_maps.size(); ++i) {
             int ext_id = f_maps[i]; // 1-based (1 = Left, 2 = Right)
             if (ext_id == 1) { // Left
@@ -162,11 +184,11 @@ void PrintHooks::update_filament_maps_to_config(
                                << final_nozzle_maps[i] << " reset to 0");
                     final_nozzle_maps[i] = 0;
                 }
-            } else if (ext_id == 2) { // Right
-                if (final_nozzle_maps[i] < 1 || final_nozzle_maps[i] > 5) {
+            } else if (ext_id == 2) { // Right (Carousel slots 1..4)
+                if (final_nozzle_maps[i] < 1 || final_nozzle_maps[i] > 4) {
                     VORTEK_LOG(warning, "update_filament_maps_to_config: invalid right nozzle slot " 
                                << final_nozzle_maps[i] << " reset to default carousel slot");
-                    final_nozzle_maps[i] = 1 + (i % 3);
+                    final_nozzle_maps[i] = 1 + (i % 4);
                 }
             }
         }
