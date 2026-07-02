@@ -572,6 +572,15 @@ void wgtDeviceNozzleRackHotendUpdate::UpdateInfo(const DevNozzle& nozzle)
             }
         }
     }
+    if (filamentDisplayName.empty() && GUI::wxGetApp().preset_bundle) {
+        std::string f_id = Vortek::DeviceHooks::get_nozzle_filament_id(nozzle, ns, is_on_rack);
+        if (!f_id.empty()) {
+            auto opt_info = GUI::wxGetApp().preset_bundle->get_filament_by_filament_id(f_id);
+            if (opt_info.has_value()) {
+                filamentDisplayName = wxString::FromUTF8(opt_info->filament_name);
+            }
+        }
+    }
     // Fallback: show filament_id when no matching preset found
     if (filamentDisplayName.empty() && !Vortek::DeviceHooks::get_nozzle_filament_id(nozzle, ns, is_on_rack).empty())
     {
