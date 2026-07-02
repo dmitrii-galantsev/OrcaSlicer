@@ -323,52 +323,6 @@ void PreCooling::inject_cooling_heating_command(
         return iter;
     };
 
-    if (block.free_upper_gcode_id <= block.free_lower_gcode_id) {
-        // Allow zero-length blocks for nozzle changes within same extruder (BBS does partial cool+reheat)
-        if (block.last_nozzle_id != block.next_nozzle_id && block.last_nozzle_id >= 0 && block.next_nozzle_id >= 0) {
-            VORTEK_LOG(warning, "inject_cooling_heating: zero-length but nozzle change (" << block.last_nozzle_id << "->" << block.next_nozzle_id << "), proceeding");
-        } else {
-            VORTEK_LOG(warning, "inject_cooling_heating: SKIP inverted/zero-length block lower=" << block.free_lower_gcode_id << " upper=" << block.free_upper_gcode_id);
-            return;
-        }
-    }
-
-    auto move_iter_lower = std::lower_bound(m_moves.cbegin(), m_moves.cend(), block.free_lower_gcode_id, gcode_move_comp);
-    auto move_iter_upper = std::lower_bound(m_moves.cbegin(), m_moves.cend(), block.free_upper_gcode_id, gcode_move_comp);
-
-    if (move_iter_lower == m_moves.cend() || move_iter_upper == m_moves.cbegin())
-        return;
-    --move_iter_upper;
-
-    float complete_free_time_gap = 0;
-    if (move_iter_lower == m_moves.cbegin())
-        complete_free_time_gap = get_cum_time(move_iter_upper);
-    else
-        complete_free_time_gap = get_cum_time(move_iter_upper) - get_cum_time(std::prev(move_iter_lower));
-
-    auto partial_free_move_lower = std::lower_bound(m_moves.cbegin(), m_moves.cend(), block.partial_free_lower_id, gcode_move_comp);
-    auto partial_free_move_upper = std::lower_bound(m_moves.cbegin(), m_moves.cend(), block.partial_free_upper_id, gcode_move_comp);
-    if (partial_free_move_lower == m_moves.cend() || partial_free_move_upper == m_moves.cbegin())
-        return;
-    --partial_free_move_upper;
-
-    float partial_free_time_gap = 0;
-    if (partial_free_move_lower == m_moves.cbegin())
-        partial_free_time_gap = get_cum_time(partial_free_move_upper);
-    else
-        partial_free_time_gap = get_cum_time(partial_free_move_upper) - get_cum_time(std::prev(partial_free_move_lower));
-
-    if (move_iter_lower >= move_iter_upper)
-        return;
-
-    bool apply_cooling_when_partial_free = is_pre_cooling_valid(block.last_filament_id) && pre_cooling;
-
-    if (apply_cooling_when_partial_free && partial_free_time_gap + complete_free_time_gap < m_inject_time_threshold)
-        return;
-
-    if (!apply_cooling_when_partial_free && complete_free_time_gap < m_inject_time_threshold)
-        return;
-
     int extruder_id = get_valid_extruder_id(block.last_nozzle_id);
     float ext_heating_rate = m_heating_rate.size() > (size_t)extruder_id ? m_heating_rate[extruder_id] : 2.0f;
     float ext_cooling_rate = m_cooling_rate.size() > (size_t)extruder_id ? m_cooling_rate[extruder_id] : 0.5f;
@@ -418,6 +372,82 @@ void PreCooling::inject_cooling_heating_command(
             inserted_operation_lines[gcode_id].emplace_back(line, type);
         }
     };
+
+    if (block.free_upper_gcode_id <= block.free_lower_gcode_id) {
+        // Allow zero-length blocks for nozzle changes within same extruder (BBS does partial cool+reheat)
+        // Reference to BBS: BambuStudio/src/libslic3r/GCode/GCodeProcessor.cpp
+        //   inject_cooling_heating_command — intra-extruder nozzle change with M632/M633 skippable wrapper
+        if (block.last_nozzle_id != block.next_nozzle_id && block.last_nozzle_id >= 0 && block.next_nozzle_id >= 0) {
+            VORTEK_LOG(warning, "inject_cooling_heating: zero-length nozzle change (" << block.last_nozzle_id << "->" << block.next_nozzle_id << "), direct M104 injection");
+
+            // extruder_id already computed above
+
+            // 1. Cooldown to pre_cooling_temp (e.g. 180°C) — skippable with M632/M633
+            int cooldown_temp_nc = 0;
+            if (block.last_filament_id >= 0 && block.last_filament_id < (int)m_filament_pre_cooling_temps_nc.size())
+                cooldown_temp_nc = m_filament_pre_cooling_temps_nc[block.last_filament_id];
+            if (cooldown_temp_nc <= 0)
+                cooldown_temp_nc = 180;  // fallback
+
+            add_M104_lines(block.free_lower_gcode_id, extruder_id, cooldown_temp_nc,
+                           block.last_filament_id, true /*skippable*/,
+                           block.next_filament_id, block.next_nozzle_id, 1,
+                           "Multi extruder nozzle change cooldown");
+
+            // 2. Reheat to nozzle_temp (e.g. 220°C) — after rotation
+            int reheat_temp = 220;
+            if (block.next_filament_id >= 0 && block.next_filament_id < (int)m_filament_nozzle_temps.size())
+                reheat_temp = m_filament_nozzle_temps[block.next_filament_id];
+
+            add_M104_lines(block.free_upper_gcode_id, extruder_id, reheat_temp,
+                           block.next_filament_id, false /*not skippable*/,
+                           block.next_filament_id, block.next_nozzle_id, 2,
+                           "Multi extruder nozzle change reheat");
+
+            return;
+        } else {
+            VORTEK_LOG(warning, "inject_cooling_heating: SKIP inverted/zero-length block lower=" << block.free_lower_gcode_id << " upper=" << block.free_upper_gcode_id);
+            return;
+        }
+    }
+
+    auto move_iter_lower = std::lower_bound(m_moves.cbegin(), m_moves.cend(), block.free_lower_gcode_id, gcode_move_comp);
+    auto move_iter_upper = std::lower_bound(m_moves.cbegin(), m_moves.cend(), block.free_upper_gcode_id, gcode_move_comp);
+
+    if (move_iter_lower == m_moves.cend() || move_iter_upper == m_moves.cbegin())
+        return;
+    --move_iter_upper;
+
+    float complete_free_time_gap = 0;
+    if (move_iter_lower == m_moves.cbegin())
+        complete_free_time_gap = get_cum_time(move_iter_upper);
+    else
+        complete_free_time_gap = get_cum_time(move_iter_upper) - get_cum_time(std::prev(move_iter_lower));
+
+    auto partial_free_move_lower = std::lower_bound(m_moves.cbegin(), m_moves.cend(), block.partial_free_lower_id, gcode_move_comp);
+    auto partial_free_move_upper = std::lower_bound(m_moves.cbegin(), m_moves.cend(), block.partial_free_upper_id, gcode_move_comp);
+    if (partial_free_move_lower == m_moves.cend() || partial_free_move_upper == m_moves.cbegin())
+        return;
+    --partial_free_move_upper;
+
+    float partial_free_time_gap = 0;
+    if (partial_free_move_lower == m_moves.cbegin())
+        partial_free_time_gap = get_cum_time(partial_free_move_upper);
+    else
+        partial_free_time_gap = get_cum_time(partial_free_move_upper) - get_cum_time(std::prev(partial_free_move_lower));
+
+    if (move_iter_lower >= move_iter_upper)
+        return;
+
+    bool apply_cooling_when_partial_free = is_pre_cooling_valid(block.last_filament_id) && pre_cooling;
+
+    if (apply_cooling_when_partial_free && partial_free_time_gap + complete_free_time_gap < m_inject_time_threshold)
+        return;
+
+    if (!apply_cooling_when_partial_free && complete_free_time_gap < m_inject_time_threshold)
+        return;
+
+    // extruder_id, ext_heating_rate, ext_cooling_rate, add_M104_lines already defined above zero-length check
 
     constexpr float room_temperature = 25.f;
 
@@ -484,6 +514,21 @@ void PreCooling::inject_cooling_heating_command(
         VORTEK_LOG(warning, "inject_cooling_heating: suppress full cooling emission (sentinel), would be S" << cooling_temp);
     }
     add_M104_lines(heating_move_iter->gcode_id, extruder_id, target_temp, block.next_filament_id, true, block.next_filament_id, block.next_nozzle_id, 2, "Multi extruder pre heating");
+
+    // Reference to BBS: BambuStudio/src/libslic3r/GCode/GCodeProcessor.cpp
+    // When preheat_temperature_delta is active (target_temp < nozzle_temp), BBS injects
+    // a second M104 at full nozzle_temp during the wipe tower/purge after the toolchange.
+    // This allows the nozzle to warm from preheat (170-200°C) to print temp (220°C) during purge.
+    if (block.next_filament_id >= 0 && block.next_filament_id < (int)m_filament_nozzle_temps.size()) {
+        int nozzle_temp = m_filament_nozzle_temps[block.next_filament_id];
+        if ((int)target_temp < nozzle_temp) {
+            // Use post_tc_gcode_id (after NOZZLE_CHANGE_END) if available,
+            // otherwise fall back to free_upper_gcode_id
+            unsigned int reheat_gcode_id = block.post_tc_gcode_id > 0 ? block.post_tc_gcode_id : block.free_upper_gcode_id;
+            VORTEK_LOG(warning, "inject_cooling_heating: adding post-TC reheat S" << nozzle_temp << " (preheat was S" << (int)target_temp << ") at gcode_id=" << reheat_gcode_id << " (post_tc=" << block.post_tc_gcode_id << ")");
+            add_M104_lines(reheat_gcode_id, extruder_id, nozzle_temp, block.next_filament_id, false, block.next_filament_id, block.next_nozzle_id, 2, "Multi extruder post-TC reheat");
+        }
+    }
 }
 
 void PreCooling::inject_cooling_heating_command_bbs(
@@ -818,6 +863,31 @@ PreCooling::InsertedLinesMap PreCooling::run_pre_scan(Slic3r::GCodeProcessor& pr
     );
 
     pre_cooling_processor.build_extruder_free_blocks(filament_blocks, extruder_blocks);
+
+    // Populate post_tc_gcode_id for each free block.
+    // Each extruder_block (after first) starts at NOZZLE_CHANGE_END gcode_id.
+    // For each free block, find the NC_END that is closest to and >= free_upper_gcode_id.
+    // Reference to BBS: BambuStudio/src/libslic3r/GCode/GCodeProcessor.cpp
+    {
+        std::vector<unsigned int> nc_end_positions;
+        for (size_t i = 1; i < extruder_blocks.size(); ++i) {
+            if (extruder_blocks[i].start_id > 0) {
+                nc_end_positions.push_back(extruder_blocks[i].start_id);
+                VORTEK_LOG(warning, "run_pre_scan: NC_END position=" << extruder_blocks[i].start_id);
+            }
+        }
+        std::sort(nc_end_positions.begin(), nc_end_positions.end());
+
+        for (auto& fb : pre_cooling_processor.m_extruder_free_blocks) {
+            // Find first NC_END that is >= free_upper_gcode_id
+            auto it = std::lower_bound(nc_end_positions.begin(), nc_end_positions.end(), fb.free_upper_gcode_id);
+            if (it != nc_end_positions.end()) {
+                fb.post_tc_gcode_id = *it;
+                VORTEK_LOG(warning, "run_pre_scan: free_block upper=" << fb.free_upper_gcode_id << " → post_tc=" << fb.post_tc_gcode_id);
+            }
+        }
+    }
+
     pre_cooling_processor.process_pre_cooling_and_heating(inserted_operation_lines);
 
     VORTEK_LOG(warning, "run_pre_scan: DONE. inserted_operation_lines=" << inserted_operation_lines.size());

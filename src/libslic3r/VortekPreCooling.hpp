@@ -33,6 +33,7 @@ public:
         unsigned int free_upper_gcode_id;   ///< Upper bound of G-code line index
         unsigned int partial_free_lower_id;
         unsigned int partial_free_upper_id;
+        unsigned int post_tc_gcode_id = 0;  ///< G-code line AFTER NOZZLE_CHANGE_END (for post-TC reheat)
         int last_filament_id;
         int next_filament_id;
         int last_nozzle_id;
