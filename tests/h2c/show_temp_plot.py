@@ -273,8 +273,10 @@ def parse_file_data(filepath):
                                 wipe_start = None
                     break
 
-        # Extract preheat events in raw G-code lines format
-        raw_preheats = compare_slices.analyze_preheat_cooldown_events(track_raw)
+        # Extract preheat events in raw G-code lines format using dynamic nozzle_map
+        filament_maps_str = " ".join([str(extruder_map[i]) for i in sorted(extruder_map.keys())])
+        nozzle_map_for_preheat = compare_slices.get_nozzle_map(filament_maps_str, track_raw)
+        raw_preheats = compare_slices.analyze_preheat_cooldown_events(track_raw, nozzle_map_for_preheat)
 
         track = []
         tool_changes = []
@@ -362,6 +364,8 @@ def parse_file_data(filepath):
             fil_info = filaments.get(fid, {})
             print(f"    T{fid} ({fil_info.get('type','?')} {fil_info.get('color','?')}) → Extruder {ext_id} → Heater {heater}")
 
+        cooldown_count = sum(1 for ev in raw_preheats if ev.get("cooldown_temp") is not None)
+
         return {
             "filename": os.path.basename(filepath),
             "slicer": slicer_name,
@@ -373,6 +377,8 @@ def parse_file_data(filepath):
             "heater_to_ext": heater_to_ext,
             "tool_changes": tool_changes,
             "preheats": preheats,
+            "preheat_count": len(preheats),
+            "cooldown_count": cooldown_count,
             "tc_zones": tc_zones,
             "wipe_zones": wipe_zones,
             "toolchange_zones": toolchange_zones,
@@ -634,15 +640,9 @@ function calculateLayout() {
             const fid = tc.idx;
             if (fid >= 1000) return;
             tc.label = fmtTool(fid) + " " + formatTime(tc.time);
-            tc.hidden = false;
             filtered.push(tc);
         });
         fileData.tool_changes = filtered;
-        let lastTime = -999;
-        fileData.tool_changes.forEach(tc => {
-            if (tc.time - lastTime < 15) tc.hidden = true;
-            else lastTime = tc.time;
-        });
     });
 }
 
@@ -662,6 +662,27 @@ function draw() {
     offsetX = Math.max(0, Math.min(offsetX, Math.max(0, plotW - visibleWidth)));
 
     const scaleX = t => marginLeft + (t / data.total_duration) * plotW - offsetX;
+    
+    // Calculate dynamic visibility of toolchange markers to prevent overlapping
+    [data.file1, data.file2].forEach(fileData => {
+        if (!fileData) return;
+        let last_drawn_x = -9999;
+        const min_text_gap = 72; // pixels gap to prevent overlap
+        fileData.tool_changes.forEach(tc => {
+            const x = scaleX(tc.time);
+            if (x >= marginLeft && x <= marginLeft + visibleWidth) {
+                if (x - last_drawn_x < min_text_gap) {
+                    tc.hidden_dynamically = true;
+                } else {
+                    tc.hidden_dynamically = false;
+                    last_drawn_x = x;
+                }
+            } else {
+                tc.hidden_dynamically = true;
+            }
+        });
+    });
+
     // scaleY now takes per-panel height
     const scaleY = (temp, yS, pH) => yS + pH - (temp / 250) * pH;
     const tempLevels = [0, 50, 100, 140, 180, 220, 250];
@@ -786,18 +807,15 @@ function draw() {
     // Toolchange markers (main panels only)
     panels.filter(p => p.type === 'main').forEach(p => {
         const pH = p.height;
-        let lastX = -100, lvl = 0;
         p.file.tool_changes.forEach(tc => {
-            if (tc.hidden) return;
+            if (tc.hidden_dynamically) return;
             const x = scaleX(tc.time);
             if (x >= marginLeft && x <= marginLeft + visibleWidth) {
                 ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 1.8;
                 ctx.beginPath(); ctx.setLineDash([12, 3, 3, 3]);
                 ctx.moveTo(x, p.yStart); ctx.lineTo(x, p.yStart + pH); ctx.stroke(); ctx.setLineDash([]);
-                if (x - lastX < 60) lvl = (lvl + 1) % 3; else lvl = 0;
-                lastX = x;
                 ctx.fillStyle = "#ffffff"; ctx.font = "bold 9.5px system-ui"; ctx.textAlign = "center";
-                ctx.fillText(tc.label, x, p.yStart - 5 - lvl * 12);
+                ctx.fillText(tc.label, x, p.yStart - 5);
             }
         });
     });
@@ -815,6 +833,7 @@ function draw() {
     panels.filter(p => p.type === 'nozzle').forEach(p => {
         const pH = p.height;
         p.file.tool_changes.forEach(tc => {
+            if (tc.hidden_dynamically) return;
             const x = scaleX(tc.time);
             if (x >= marginLeft && x <= marginLeft + visibleWidth) {
                 ctx.strokeStyle = "rgba(255,255,255,0.15)"; ctx.lineWidth = 1;
@@ -993,6 +1012,16 @@ function drawLegend(visibleWidth) {
         if (!fd) return;
         ctx.fillStyle = "#e4e4e7"; ctx.font = "bold 11px system-ui";
         ctx.fillText((idx+1) + ". " + fd.slicer + ":", lx, y); y += 15;
+        
+        ctx.fillStyle = "#71717a"; ctx.font = "10px system-ui";
+        const toolchangesCount = (fd.tool_changes || []).length;
+        const nozzleChangesCount = (fd.tc_zones || []).length;
+        const preheatsCount = fd.preheat_count || 0;
+        const cooldownsCount = fd.cooldown_count || 0;
+        ctx.fillText("T-changes: " + toolchangesCount + " | H2C: " + nozzleChangesCount, lx, y); y += 13;
+        ctx.fillText("Preheats: " + preheatsCount + " | Cools: " + cooldownsCount, lx, y); y += 16;
+        
+        ctx.font = "11px system-ui";
         Object.keys(fd.filaments).forEach(fid => {
             const fil = fd.filaments[fid];
             let dc = fil.color; if (dc.toUpperCase() === "#FFFFFF") dc = "#e4e4e7";
@@ -1224,7 +1253,8 @@ function updateInfoPanel(timeNum) {
         const htr = getHeater(fd, st.active);
         const eId = getExtIdForHeater(fd, htr);
         const eLbl = getExtLabel(fd, eId);
-        txt += "\n" + (idx+1) + ". " + fd.slicer + ": T0=" + st.t0 + "°C T1=" + st.t1 + "°C [" + eLbl + ", " + fmtTool(st.active) + ": " + fType + " (" + fHex + ")]";
+        const totalTimeStr = formatTime(fd.total_duration);
+        txt += "\n" + (idx+1) + ". " + fd.slicer + " (Total: " + totalTimeStr + "): T0=" + st.t0 + "°C T1=" + st.t1 + "°C [" + eLbl + ", " + fmtTool(st.active) + ": " + fType + " (" + fHex + ")]";
     });
     el.innerText = txt; el.style.color = "#e4e4e7";
 }

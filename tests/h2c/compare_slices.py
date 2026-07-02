@@ -1,50 +1,50 @@
 """
-3D Slicing Comparison Script: OrcaSlicer vs BambuStudio (BBL)
-============================================================
+Slicing G-code Comparison Tool: OrcaSlicer vs BambuStudio (BBL)
+====================================================================
 
-This script performs a deep comparison of two sliced project files in `.3mf` format
-(the first file is from OrcaSlicer, the second from Bambu Studio) for debugging the Vortek H2C nozzle changer.
+The script performs a deep comparison of two `.3mf` slicing project files 
+(the first one from OrcaSlicer, the second from Bambu Studio) for debugging the Vortek H2C nozzle changer.
 
-Default Behavior (file paths):
-------------------------------
-If only filenames are passed (e.g. `orca.3mf` and `bbl.3mf`), the script searches by priority:
-1. Searches the user's Desktop directory (~/Desktop/<filename>).
-2. Searches relative to the current working directory.
-3. Supports passing absolute paths.
+Default behavior (file paths):
+------------------------------------
+If only filenames are passed (e.g. `54orca.3mf` and `bbl.3mf`), the script searches by priority:
+1. Looks for the file on the user's Desktop (~/Desktop/<filename>).
+2. Looks for the file relative to the current working directory.
+3. Supports absolute paths.
 
 What the script analyzes:
--------------------------
+----------------------
 1. Summary metadata (slice_info.config):
-   - Print time, filament weight, first layer time, slicer versions, printer model ID.
-   - filament_maps parameters, dynamic mapping and nozzle changer flags.
+   - Print time, part weight, first layer time, slicer versions, printer model ID.
+   - filament_maps parameters, dynamic mapping, and filament switcher settings.
    - Summary nozzle settings: extruder_nozzle_stats, filament_nozzle_map, filament_volume_map.
-2. Preheat and Standby Temperature Analysis:
+2. Preheat and Standby Cooldown Analysis:
    - Matches M104/M109 heating commands of the target nozzle before toolchange (T).
-   - Calculates preheat lead (lines) — how many G-code lines before the physical T transition the heating started.
-   - Extracts cooldown temperatures of the inactive nozzle.
-3. Vortek Nozzles Mapping:
+   - Calculates lead lines (how many G-code lines before physical T the heating started).
+   - Extracts standby cooldown temperatures of the inactive nozzle.
+3. Vortek Nozzles comparison:
    - Analyzes assigned nozzle IDs, extruder IDs, and diameters.
 4. Differences in slicing settings (project_settings.config):
-   - Generates a comparison table of key configuration differences between slicers.
-5. Nozzle, Prime Tower, and Retraction statistics:
-   - Total number of toolchanges and active sequence.
-   - Volume of G-code lines inside the Prime Tower.
-   - Nozzle retraction parameters M620.11 (E, R, F combinations).
-6. Filament change blocks (change_filament_gcode):
-   - Computes unified diff for each toolchange G-code block.
-7. Timeline of critical G-code control commands:
-   - Builds a chronological event track of toolchanges, nozzle selections, and heating.
-8. Analytical report of critical discrepancies:
-   - Detects invalid nozzle slots [7, 8, 9] (out of H2C carousel bounds).
-   - Identifies slot collisions (duplicate slots replacing physical nozzle changes with AMS flushes).
-   - Catches Standard#7 inventory bugs, weight discrepancies, and more.
+   - Generates a comparison table of configuration discrepancies between slicers.
+5. Nozzle changes, prime tower, and retracts:
+   - Total number of toolchanges and sequence.
+   - Prime Tower G-code volume (lines and blocks).
+   - Retract parameters during nozzle switch (M620.11 combinations of E, R, F).
+6. Change filament G-code blocks (change_filament_gcode):
+   - Runs a unified diff for each toolchange G-code block.
+7. Timeline of G-code control commands:
+   - Builds a differential track of toolchanges, nozzle switches, and heating events.
+8. Critical discrepancies analysis:
+   - Signals invalid nozzle indices (out of H2C carousel limits).
+   - Detects nozzle collisions (duplicate slots causing AMS flush instead of physical swap).
+   - Pinpoints the Standard#7 inventory bug, weight discrepancies due to flushes, etc.
 
 Results are saved to:
 /Users/denn/Develop/3dprint/dehancer lab/H2C_v2/mp_reports/compare_report_<timestamp>.md
 
 AGENTS NOTE:
-When a slicing analysis report is requested, do NOT output the full raw diff of settings or control commands.
-Output only the final summary report of KEY and CRITICAL differences (mapping issues, temperature preheat leads, Vortek anomalies).
+When a slicing report is requested, do not print raw setting diffs or full timelines in chat.
+Provide only the final analytical report of KEY and CRITICAL discrepancies (mapping errors, preheat differences, Vortek anomalies).
 """
 
 import os
@@ -152,13 +152,16 @@ def parse_critical_gcode(zip_file):
     in_tc_block = False
     in_m620_block = False
     printing_started = False
-    
+    m73_points = []
     try:
-        info = zip_file.getinfo("Metadata/plate_1.gcode")
+        gcode_names = [name for name in zip_file.namelist() if name.endswith('.gcode')]
+        if not gcode_names:
+            raise KeyError("No .gcode file found in 3mf")
+        gcode_name = gcode_names[0]
+        info = zip_file.getinfo(gcode_name)
         file_size = info.file_size
         
-        m73_points = []
-        with zip_file.open("Metadata/plate_1.gcode") as f:
+        with zip_file.open(gcode_name) as f:
             for line_bytes in f:
                 total_lines += 1
                 line = line_bytes.decode("utf-8", errors="ignore").strip()
@@ -365,7 +368,7 @@ def analyze_critical_discrepancies(f1_meta, f2_meta, f1_settings, f2_settings, f
         if invalid:
             discrepancies.append({
                 "level": "CRITICAL ERROR",
-                "message": f"{slicer1} `filament_nozzle_map` contains invalid nozzle slots {invalid} (out of H2C carousel bounds 0..5). This breaks physical toolchange."
+                "message": f"{slicer1} `filament_nozzle_map` contains invalid nozzle slots {invalid} (out of H2C carousel limits 0..5). This breaks physical switching."
             })
             
     # 2. Nozzle group collisions (multiple active filaments on one slot)
@@ -384,7 +387,7 @@ def analyze_critical_discrepancies(f1_meta, f2_meta, f1_settings, f2_settings, f
             if len(fils) > 1:
                 discrepancies.append({
                     "level": "CRITICAL DISCREPANCY",
-                    "message": f"{slicer1}: different active filament colors {fils} share the same carousel slot {slot} (duplicate nozzle). This causes AMS flush instead of physical nozzle change!"
+                    "message": f"{slicer1}: different active filament colors {fils} share the same carousel slot {slot} (duplicate nozzle). Because of this, filament changes cause AMS flushing instead of physical nozzle change!"
                 })
                 
     # 3. Toolchange counts comparison
@@ -402,7 +405,7 @@ def analyze_critical_discrepancies(f1_meta, f2_meta, f1_settings, f2_settings, f
     if fmap1 != fmap2:
         discrepancies.append({
             "level": "WARNING",
-            "message": f"filament_maps differ: {slicer1} `{fmap1}` vs {slicer2} `{fmap2}`."
+            "message": f"Filament maps differ: {slicer1} `{fmap1}` vs {slicer2} `{fmap2}`."
         })
         
     # 5. Weight discrepancy
@@ -413,7 +416,7 @@ def analyze_critical_discrepancies(f1_meta, f2_meta, f1_settings, f2_settings, f
         if ratio > 0.2:
             discrepancies.append({
                 "level": "CRITICAL DISCREPANCY",
-                "message": f"Huge difference in filament weight: {slicer1} {w1:.2f}g vs {slicer2} {w2:.2f}g (difference is {abs(w1-w2):.2f}g or {ratio*100:.1f}%). The root cause is likely incorrect nozzle mapping in {slicer1} causing massive AMS purge."
+                "message": f"Huge difference in part weight: {slicer1} {w1:.2f} g vs {slicer2} {w2:.2f} g (difference {abs(w1-w2):.2f} g or {ratio*100:.1f}%). The reason is incorrect nozzle mapping in {slicer1}, causing huge AMS flushing."
             })
             
     # 6. Prediction time discrepancy
@@ -424,7 +427,7 @@ def analyze_critical_discrepancies(f1_meta, f2_meta, f1_settings, f2_settings, f
         if ratio > 0.2:
             discrepancies.append({
                 "level": "CRITICAL DISCREPANCY",
-                "message": f"Print time difference exceeds 20%: {slicer1} {int(pred1/60)} min vs {slicer2} {int(pred2/60)} min (difference is {int((pred1-pred2)/60)} min or {ratio*100:.1f}%)."
+                "message": f"Print time difference exceeds 20%: {slicer1} {int(pred1/60)} min vs {slicer2} {int(pred2/60)} min (difference {int((pred1-pred2)/60)} min or {ratio*100:.1f}%)."
             })
             
     # 7. Physical extruder map
@@ -449,7 +452,7 @@ def analyze_critical_discrepancies(f1_meta, f2_meta, f1_settings, f2_settings, f
             if "Standard#7" in ens1_str:
                 discrepancies.append({
                     "level": "CRITICAL ERROR",
-                    "message": f"H2C nozzle changer bug detected in {slicer1}: `extruder_nozzle_stats` is set to `Standard#7` for both extruders. This causes incorrect nozzle list assembly and mapping crash!"
+                    "message": f"H2C nozzle changer bug detected in {slicer1}: `extruder_nozzle_stats` is set to `Standard#7` for both extruders. This causes incorrect linear nozzle list construction and mapping crash!"
                 })
                 
     return discrepancies
@@ -467,11 +470,11 @@ def interpret_temp_action(desc, active_extruder):
             
         if "Pre-cool" in desc:
             p_temp = desc.split("P")[-1].replace("°C", "").strip()
-            return f"Virtual preheat (Pre-cool) before change to {p_temp}°C"
+            return f"Virtual Preheat (Pre-cool) before change to {p_temp}°C"
             
         if "Target-cool" in desc:
             c_temp = desc.split("C")[-1].replace("°C", "").strip()
-            return f"Set target printing temp to {c_temp}°C"
+            return f"Set Target Active Nozzle Temp to {c_temp}°C"
             
         if cmd in ["M104", "M109", "VM104", "VM109"]:
             s_val = None
@@ -495,19 +498,19 @@ def interpret_temp_action(desc, active_extruder):
             
             if s_val is not None:
                 if s_val <= 50:
-                    action_type = "Cooldown" if s_val > 0 else "Turn Off"
-                    target_desc = "standby" if s_val > 0 else "heater"
+                    action_type = "Cooling" if s_val > 0 else "Power Off"
+                    target_desc = "standby (cooldown)" if s_val > 0 else "heater"
                     return f"{action_type} {heater_name} to {target_desc} ({s_val}°C)"
                 elif 150 <= s_val <= 215:
                     if heater != active_extruder:
                         return f"Standby Preheat {heater_name} to {s_val}°C"
                     else:
-                        return f"Heat {heater_name} to intermediate temp {s_val}°C"
+                        return f"Heating {heater_name} to intermediate temp {s_val}°C"
                 else:
-                    action = "Stabilize temp" if cmd == "M109" else "Heat"
-                    return f"{action} {heater_name} to printing temperature ({s_val}°C)"
+                    action = "Stabilizing Temperature" if cmd == "M109" else "Heating"
+                    return f"{action} {heater_name} to active print temp ({s_val}°C)"
     except Exception as e:
-        return f"Temperature command ({e})"
+        return f"Temperature Command ({e})"
     return "Control Command"
 
 def format_side_by_side_temp_track(f1_track, f2_track, f1_name, f2_name):
@@ -534,7 +537,7 @@ def format_side_by_side_temp_track(f1_track, f2_track, f1_name, f2_name):
                 tc2.append((idx, line, int(t_num)))
                 
     if not tc1 and not tc2:
-        res = ["##### Start Preheat Comparison (first 30 events):\n"]
+        res = ["##### Start Warmup Comparison (first 30 events):\n"]
         res.append("| Orca: Line | Orca: Command | T0/T1 | BBL: Line | BBL: Command | T0/T1 |\n")
         res.append("| :---: | :--- | :---: | :---: | :--- | :---: |\n")
         limit = min(30, max(len(f1_track), len(f2_track)))
@@ -596,7 +599,7 @@ def format_side_by_side_temp_track(f1_track, f2_track, f1_name, f2_name):
     res = []
     
     # Render Start Warmup
-    res.append("#### Start Preheat/Warmup Before Print:\n")
+    res.append("#### Start Warmup Before Printing:\n")
     res.append("| Orca: Line | Orca: Event (Phase) | Orca T0/T1 | BBL: Line | BBL: Event (Phase) | BBL T0/T1 |\n")
     res.append("| :---: | :--- | :---: | :---: | :--- | :---: |\n")
     
@@ -675,11 +678,58 @@ def format_side_by_side_temp_track(f1_track, f2_track, f1_name, f2_name):
     return "".join(res)
 
 
-def _fil_to_heater(fil_id):
-    """Map filament ID to heater index. H2C: T1→heater1, all others→heater0."""
-    return 1 if fil_id == 1 else 0
+def get_nozzle_map(filament_maps_str, track):
+    extruder_map = {}
+    if filament_maps_str:
+        for i, v in enumerate(filament_maps_str.split()):
+            try:
+                extruder_map[i] = int(v)
+            except ValueError:
+                pass
+                
+    if not extruder_map:
+        for i in range(10):
+            extruder_map[i] = 1 if i == 1 else 2
 
-def analyze_preheat_cooldown_events(track):
+    heater_to_ext = {}
+    for item in track:
+        # item: (line, active_extruder, temp_T0, temp_T1, desc, in_m620_block, printing_started)
+        fil = item[1]
+        if fil >= 1000:
+            continue
+        t0 = item[2]
+        t1 = item[3]
+        if t0 >= 200 and t1 < 100:
+            ext_id = extruder_map.get(fil, 1)
+            heater_to_ext[ext_id] = 0
+            other_exts = [e for e in extruder_map.values() if e != ext_id]
+            if other_exts:
+                heater_to_ext[other_exts[0]] = 1
+            break
+        elif t1 >= 200 and t0 < 100:
+            ext_id = extruder_map.get(fil, 1)
+            heater_to_ext[ext_id] = 1
+            other_exts = [e for e in extruder_map.values() if e != ext_id]
+            if other_exts:
+                heater_to_ext[other_exts[0]] = 0
+            break
+            
+    if not heater_to_ext:
+        unique_ext = sorted(list(set(extruder_map.values())))
+        for idx, eid in enumerate(unique_ext):
+            heater_to_ext[eid] = idx
+            
+    nozzle_map = {}
+    for fid, ext_id in extruder_map.items():
+        nozzle_map[fid] = heater_to_ext.get(ext_id, 0)
+        
+    return nozzle_map
+
+
+def analyze_preheat_cooldown_events(track, nozzle_map=None):
+    if nozzle_map is None:
+        nozzle_map = {1: 1} # Fallback H2C: T1 -> heater 1, others -> heater 0
+
     events = []
     tc_indices = []
     
@@ -701,8 +751,8 @@ def analyze_preheat_cooldown_events(track):
                     norm_nozzle = 1
                     
                 if prev_nozzle is not None and norm_nozzle != prev_nozzle:
-                    target_ext = _fil_to_heater(norm_nozzle)
-                    source_ext = _fil_to_heater(prev_nozzle)
+                    target_ext = nozzle_map.get(norm_nozzle, 0)
+                    source_ext = nozzle_map.get(prev_nozzle, 0)
                     if target_ext != source_ext:
                         tc_indices.append((idx, item[0], target_ext, source_ext, norm_nozzle))
                 prev_nozzle = norm_nozzle
@@ -730,7 +780,7 @@ def analyze_preheat_cooldown_events(track):
                 elif t_val == "T1":
                     targeted = 1
                 elif t_val is None:
-                    targeted = _fil_to_heater(active_ext_k)
+                    targeted = nozzle_map.get(active_ext_k, 0)
                     
                 if targeted is not None and targeted == target_ext and s_temp_str and s_temp_str.isdigit():
                     temp_val = int(s_temp_str)
@@ -775,7 +825,7 @@ def analyze_preheat_cooldown_events(track):
                 elif t_val == "T1":
                     targeted = 1
                 elif t_val is None:
-                    targeted = _fil_to_heater(active_ext_k)
+                    targeted = nozzle_map.get(active_ext_k, 0)
                     
                 if targeted == source_ext and s_temp_str and s_temp_str.isdigit():
                     temp_val = int(s_temp_str)
@@ -826,14 +876,14 @@ def build_comparison_report(f1_name, f1_meta, f1_settings, f1_events, f1_lines, 
     v2_val = f2_meta["version_info"].get("OrcaSlicer-Version") or f2_meta["version_info"].get("X-BBL-Client-Version") or "Unknown"
     
     report = []
-    report.append(f"# Slice Results Comparison (3MF): {f1_name} vs {f2_name}\n")
+    report.append(f"# Slicing G-code Comparison (3MF): {f1_name} vs {f2_name}\n")
     report.append(f"**Report Generation Date:** {now_str}\n")
     
     # 1. Summary table
     report.append("## 1. Summary File Statistics\n")
     report.append(f"| Metric | {hdr1} | {hdr2} | Difference |\n")
     report.append("| :--- | :---: | :---: | :---: |\n")
-    report.append(f"| **Filename** | `{f1_name}` | `{f2_name}` | — |\n")
+    report.append(f"| **File Name** | `{f1_name}` | `{f2_name}` | — |\n")
     report.append(f"| **G-code Size** | {f1_size / (1024*1024):.2f} MB | {f2_size / (1024*1024):.2f} MB | { (f1_size - f2_size) / (1024*1024):+.2f} MB |\n")
     report.append(f"| **Total G-code Lines** | {f1_lines:,} | {f2_lines:,} | {f1_lines - f2_lines:+,} |\n")
     report.append(f"| **Critical Events** | {len(f1_events):,} | {len(f2_events):,} | {len(f1_events) - len(f2_events):+,} |\n")
@@ -844,7 +894,7 @@ def build_comparison_report(f1_name, f1_meta, f1_settings, f1_events, f1_lines, 
     
     w1 = float(f1_meta["plate_meta"].get("weight", 0))
     w2 = float(f2_meta["plate_meta"].get("weight", 0))
-    report.append(f"| **Total Filament Weight** | {w1:.2f} g | {w2:.2f} g | {w1 - w2:+.2f} g |\n")
+    report.append(f"| **Total Part Weight** | {w1:.2f} g | {w2:.2f} g | {w1 - w2:+.2f} g |\n")
     
     fl1 = float(f1_meta["plate_meta"].get("first_layer_time", 0))
     fl2 = float(f2_meta["plate_meta"].get("first_layer_time", 0))
@@ -866,30 +916,32 @@ def build_comparison_report(f1_name, f1_meta, f1_settings, f1_events, f1_lines, 
     
     switcher1 = f1_meta["plate_meta"].get("has_filament_switcher", "Unknown")
     switcher2 = f2_meta["plate_meta"].get("has_filament_switcher", "Unknown")
-    report.append(f"| **Nozzle Changer (switcher)** | `{switcher1}` | `{switcher2}` | — |\n")
+    report.append(f"| **Nozzle Switcher** | `{switcher1}` | `{switcher2}` | — |\n")
     
     ens1 = f1_settings.get("extruder_nozzle_stats", "None")
     ens2 = f2_settings.get("extruder_nozzle_stats", "None")
     report.append(f"| **Nozzle Stats (extruder_nozzle_stats)** | `{escape_markdown_table(ens1)}` | `{escape_markdown_table(ens2)}` | — |\n")
- 
+
     fnm1 = f1_settings.get("filament_nozzle_map", "None")
     fnm2 = f2_settings.get("filament_nozzle_map", "None")
     report.append(f"| **Nozzle Map (filament_nozzle_map)** | `{escape_markdown_table(fnm1)}` | `{escape_markdown_table(fnm2)}` | — |\n")
- 
+
     fvm1 = f1_settings.get("filament_volume_map", "None")
     fvm2 = f2_settings.get("filament_volume_map", "None")
     report.append(f"| **Volume Maps (filament_volume_map)** | `{escape_markdown_table(fvm1)}` | `{escape_markdown_table(fvm2)}` | — |\n")
     report.append("\n")
     
     # 2. Preheat and Standby analysis table
-    report.append("## 2. Preheat and Standby Temperature Analysis\n")
-    report.append("This table compares preheating events of the target nozzle before change and cooldown of the inactive nozzle.\n")
-    report.append("Lead (lines) shows how many G-code lines before the physical T switch the printer sends the M104/M109 heating command.\n\n")
-    report.append(f"| Change No. | Target Extr. | {slicer1}: Preheat | {slicer1}: Cooldown | {slicer2}: Preheat | {slicer2}: Cooldown |\n")
+    report.append("## 2. Preheat and Standby Cooldown Analysis\n")
+    report.append("The table matches preheating events of the target nozzle before change with the cooldown of the inactive nozzle.\n")
+    report.append("Lead (lines) shows how many G-code lines before physical toolchange `T` the printer sends `M104/M109` heating command.\n\n")
+    report.append(f"| Change # | Target Extruder | {slicer1}: Preheat | {slicer1}: Cooldown | {slicer2}: Preheat | {slicer2}: Cooldown |\n")
     report.append("| :---: | :---: | :--- | :--- | :--- | :--- |\n")
     
-    f1_preheat = analyze_preheat_cooldown_events(f1_stats["temp_track"])
-    f2_preheat = analyze_preheat_cooldown_events(f2_stats["temp_track"])
+    f1_nozzle_map = get_nozzle_map(f1_meta["plate_meta"].get("filament_maps"), f1_stats["temp_track"])
+    f2_nozzle_map = get_nozzle_map(f2_meta["plate_meta"].get("filament_maps"), f2_stats["temp_track"])
+    f1_preheat = analyze_preheat_cooldown_events(f1_stats["temp_track"], f1_nozzle_map)
+    f2_preheat = analyze_preheat_cooldown_events(f2_stats["temp_track"], f2_nozzle_map)
     
     max_preheat = max(len(f1_preheat), len(f2_preheat))
     for idx in range(max_preheat):
@@ -901,7 +953,7 @@ def build_comparison_report(f1_name, f1_meta, f1_settings, f1_events, f1_lines, 
         o_preheat_str = "—"
         if p1 and p1["preheat_temp"] is not None:
             lead = p1["tc_line"] - p1["preheat_line"]
-            o_preheat_str = f"{p1['preheat_temp']}°C (lead {lead} lines)"
+            o_preheat_str = f"{p1['preheat_temp']}°C ({lead} lines lead)"
             
         o_cooldown_str = "—"
         if p1 and p1["cooldown_temp"] is not None:
@@ -910,7 +962,7 @@ def build_comparison_report(f1_name, f1_meta, f1_settings, f1_events, f1_lines, 
         b_preheat_str = "—"
         if p2 and p2["preheat_temp"] is not None:
             lead = p2["tc_line"] - p2["preheat_line"]
-            b_preheat_str = f"{p2['preheat_temp']}°C (lead {lead} lines)"
+            b_preheat_str = f"{p2['preheat_temp']}°C ({lead} lines lead)"
             
         b_cooldown_str = "—"
         if p2 and p2["cooldown_temp"] is not None:
@@ -930,7 +982,7 @@ def build_comparison_report(f1_name, f1_meta, f1_settings, f1_events, f1_lines, 
         for noz in f1_meta["nozzles"]:
             report.append(f"| {noz['id']} | {noz['extruder_id']} | {noz['nozzle_diameter']} |\n")
     else:
-        report.append("*Nozzle mapping missing in metadata*\n")
+        report.append("*Nozzle mapping is not present in metadata*\n")
     report.append("\n")
     
     report.append(f"### {hdr2}:\n")
@@ -939,11 +991,11 @@ def build_comparison_report(f1_name, f1_meta, f1_settings, f1_events, f1_lines, 
         for noz in f2_meta["nozzles"]:
             report.append(f"| {noz['id']} | {noz['extruder_id']} | {noz['nozzle_diameter']} |\n")
     else:
-        report.append("*Nozzle mapping missing in metadata*\n")
+        report.append("*Nozzle mapping is not present in metadata*\n")
     report.append("\n")
     
     # 4. Filaments used
-    report.append("## 4. Filament Usage\n")
+    report.append("## 4. Filaments Used\n")
     report.append(f"### {hdr1}:\n")
     report.append("| ID | Type | Color | Weight (g) | Length (m) | Nozzle Dia |\n| :---: | :--- | :---: | :---: | :---: | :---: |\n")
     for fil in f1_meta["filaments"]:
@@ -1009,26 +1061,26 @@ def build_comparison_report(f1_name, f1_meta, f1_settings, f1_events, f1_lines, 
         for key, (v_orca, v_bbl) in diff_settings.items():
             report.append(f"| `{key}` | `{escape_markdown_table(v_orca)}` | `{escape_markdown_table(v_bbl)}` |\n")
     else:
-        report.append("*No significant differences in key slicing settings were found.*\n")
+        report.append("*No significant differences in key slicing settings found.*\n")
     report.append("\n")
     
     # 6. Deep Vortek & Print Logic Analysis
-    report.append("## 6. Detailed Analysis of Vortek Logic and Print Parameters\n")
-    report.append("### A. Nozzle Operations and Toolchanges\n")
+    report.append("## 6. Detailed Vortek Logic and Print Parameters Analysis\n")
+    report.append("### A. Nozzle Changes and Tool Change Operations\n")
     report.append(f"| Parameter | {hdr1} | {hdr2} |\n")
     report.append("| :--- | :---: | :---: |\n")
-    report.append(f"| **Total nozzle/extruder switches (T)** | {f1_stats['toolchange_count']} | {f2_stats['toolchange_count']} |\n")
+    report.append(f"| **Total nozzle/extruder changes (T)** | {f1_stats['toolchange_count']} | {f2_stats['toolchange_count']} |\n")
     seq1 = " -> ".join(f1_stats['toolchange_sequence'][:12]) + ("..." if len(f1_stats['toolchange_sequence']) > 12 else "")
     seq2 = " -> ".join(f2_stats['toolchange_sequence'][:12]) + ("..." if len(f2_stats['toolchange_sequence']) > 12 else "")
-    report.append(f"| **Switch sequence (first 12)** | `{seq1}` | `{seq2}` |\n")
+    report.append(f"| **Change Sequence (first 12)** | `{seq1}` | `{seq2}` |\n")
     report.append("\n")
-    report.append("### B. Prime Tower Operations Comparison\n")
+    report.append("### B. Prime Tower Comparison\n")
     report.append(f"| Parameter | {hdr1} | {hdr2} |\n")
     report.append("| :--- | :--- | :---: |\n")
-    report.append(f"| **Total prime tower entries (M628 S1)** | {f1_stats['prime_tower_blocks']} | {f2_stats['prime_tower_blocks']} |\n")
-    report.append(f"| **Total G-code lines inside prime tower** | {f1_stats['prime_tower_lines']:,} | {f2_stats['prime_tower_lines']:,} |\n")
+    report.append(f"| **Total Prime Tower Entries (M628 S1)** | {f1_stats['prime_tower_blocks']} | {f2_stats['prime_tower_blocks']} |\n")
+    report.append(f"| **Total G-code Lines Inside Tower** | {f1_stats['prime_tower_lines']:,} | {f2_stats['prime_tower_lines']:,} |\n")
     report.append("\n")
-    report.append("### C. Retraction Parameters during Nozzle Changes (M620.11)\n")
+    report.append("### C. Retract Parameters During Nozzle Switch (M620.11)\n")
     report.append(f"| {hdr1} | {hdr2} |\n")
     report.append("| :--- | :--- |\n")
     max_len = max(len(f1_stats['m620_11_retracts']), len(f2_stats['m620_11_retracts']))
@@ -1039,7 +1091,7 @@ def build_comparison_report(f1_name, f1_meta, f1_settings, f1_events, f1_lines, 
     report.append("\n")
     
     # Toolchange G-code Blocks Diff
-    report.append("### D. Filament Change Blocks Analysis (change_filament_gcode)\n")
+    report.append("### D. Change Filament G-code Blocks Analysis (change_filament_gcode)\n")
     max_tc_blocks = max(len(f1_stats['toolchange_blocks']), len(f2_stats['toolchange_blocks']))
     diffs_count = 0
     diff_summary = []
@@ -1075,19 +1127,21 @@ def build_comparison_report(f1_name, f1_meta, f1_settings, f1_events, f1_lines, 
                 if cmd:
                     commands_changed.add(cmd)
             cmds_str = ", ".join(sorted(list(commands_changed)))
-            diff_summary.append(f"- **Change #{b_idx + 1}**: differences present ({len(changed_lines)} modified lines, commands: `{cmds_str}`)\n")
-        else:
-            diff_summary.append(f"- **Change #{b_idx + 1}**: identical\n")
+            diff_summary.append(f"- **Change #{b_idx + 1}**: differences found ({len(changed_lines)} modified lines, commands: `{cmds_str}`)\n")
             
     if diffs_count == 0:
-        report.append("> [!NOTE]\n> All filament change blocks (`change_filament_gcode`) are completely identical!\n\n")
+        report.append("> [!NOTE]\n> All change filament G-code blocks (`change_filament_gcode`) are identical!\n\n")
     else:
-        report.append("Filament change blocks differences summary:\n")
-        report.extend(diff_summary)
+        report.append(f"Filament change G-code blocks difference summary (total changes: {max_tc_blocks}, differing: {diffs_count}, identical: {max_tc_blocks - diffs_count}):\n")
+        limit = 10
+        for item in diff_summary[:limit]:
+            report.append(item)
+        if len(diff_summary) > limit:
+            report.append(f"- ... and {len(diff_summary) - limit} more differing changes ...\n")
         report.append("\n")
             
     # G-code critical events diff
-    report.append("## 7. Differences in G-code Control Commands (Toolchange / Nozzle Changer / Temp)\n")
+    report.append("## 6. Differences in G-code Control Commands (Toolchange / Nozzle Changer / Temp)\n")
     
     def clean_events(events_list):
         res = []
@@ -1117,23 +1171,23 @@ def build_comparison_report(f1_name, f1_meta, f1_settings, f1_events, f1_lines, 
     diff_lines = list(diff)
     if diff_lines:
         diff_lines_clean = [dl for dl in diff_lines if not dl.startswith('---') and not dl.startswith('+++') and not dl.startswith('@@')]
-        report.append(f"Found {len(diff_lines_clean)} differing lines in critical commands timeline.\n")
+        report.append(f"Detected {len(diff_lines_clean)} lines of differences in control commands timeline.\n")
         report.append("Showing key differences (max 12 lines):\n")
         report.append("```diff\n")
         for dline in diff_lines_clean[:12]:
             report.append(f"{dline}\n")
         if len(diff_lines_clean) > 12:
-            report.append(f"... and {len(diff_lines_clean) - 12} more differing lines ...\n")
+            report.append(f"... and {len(diff_lines_clean) - 12} more difference lines ...\n")
         report.append("```\n")
     else:
         report.append("> [!NOTE]\n")
-        report.append("> Critical G-code control commands timeline is completely identical!\n")
+        report.append("> G-code control commands timeline is identical!\n")
         
     # Critical Discrepancies Analyzer
-    report.append("\n## 8. Critical Discrepancies and Errors Analysis\n")
+    report.append("\n## 7. Critical Discrepancies and Errors Analysis (Analytics)\n")
     discrepancies = analyze_critical_discrepancies(f1_meta, f2_meta, f1_settings, f2_settings, f1_stats, f2_stats)
     if discrepancies:
-        report.append("| Status | Issue Description |\n")
+        report.append("| Status | Problem Description |\n")
         report.append("| :--- | :--- |\n")
         for item in discrepancies:
             level_str = f"**{item['level']}**"
@@ -1145,7 +1199,7 @@ def build_comparison_report(f1_name, f1_meta, f1_settings, f1_events, f1_lines, 
                 level_str = f"ℹ️ {item['level']}"
             report.append(f"| {level_str} | {item['message']} |\n")
     else:
-        report.append("> [!NOTE]\n> No critical discrepancies or errors in slicing logic were detected.\n")
+        report.append("> [!NOTE]\n> No critical discrepancies or slicing logic errors found.\n")
     return "".join(report)
 
 def main():
