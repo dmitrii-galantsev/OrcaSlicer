@@ -105,7 +105,7 @@ void wgtDeviceNozzleRack::CreateGui()
     wxPanel* separator = new wxPanel(this);
     separator->SetMaxSize(wxSize(FromDIP(1), -1));
     separator->SetMinSize(wxSize(FromDIP(1), -1));
-    separator->SetBackgroundColour(StateColor::darkModeColorFor(wxColour(224, 224, 224)));
+    separator->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#EEEEEE")));
 
     wxSizer* main_sizer = new wxBoxSizer(wxHORIZONTAL);
     main_sizer->AddStretchSpacer();

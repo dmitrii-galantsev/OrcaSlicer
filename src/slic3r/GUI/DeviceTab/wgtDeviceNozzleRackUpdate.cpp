@@ -111,7 +111,7 @@ void wgtDeviceNozzleRackUprade::CreateGui()
     wxPanel* title_sep = new wxPanel(this);
     title_sep->SetMaxSize(wxSize(-1, FromDIP(1)));
     title_sep->SetMinSize(wxSize(-1, FromDIP(1)));
-    title_sep->SetBackgroundColour(StateColor::darkModeColorFor(wxColour(224, 224, 224)));
+    title_sep->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#EEEEEE")));
     main_sizer->Add(title_sep, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, FromDIP(8));
 
     // Extruder ("R")
@@ -132,7 +132,7 @@ void wgtDeviceNozzleRackUprade::CreateGui()
             wxPanel* separator = new wxPanel(this);
             separator->SetMaxSize(wxSize(-1, FromDIP(1)));
             separator->SetMinSize(wxSize(-1, FromDIP(1)));
-            separator->SetBackgroundColour(StateColor::darkModeColorFor(wxColour(224, 224, 224)));
+            separator->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#EEEEEE")));
             main_sizer->Add(separator, 0, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(12));
         }
     }
