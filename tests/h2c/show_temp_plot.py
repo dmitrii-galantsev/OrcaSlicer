@@ -100,48 +100,8 @@ def parse_nozzle_groups(zip_file):
 
 
 def determine_heater_to_extruder(track, extruder_map):
-    """
-    Determine which heater (0 or 1) corresponds to which extruder_id.
-    
-    Strategy: look at the first filament's active period. If heater T0 is hot (>=200°C)
-    and that filament belongs to extruder_id X, then heater 0 → extruder X.
-    
-    Returns: {extruder_id: heater_index}  e.g. {1: 0, 2: 1}
-    """
-    heater_to_ext = {}
-    
-    # Find first stable active period (after init commands)
-    for i in range(len(track)):
-        fil = track[i]["active"]
-        if fil >= 1000:
-            continue  # Skip init
-        t0 = track[i]["t0"]
-        t1 = track[i]["t1"]
-        
-        if t0 >= 200 and t1 < 100:
-            # heater 0 is hot, heater 1 is cold → this filament uses heater 0
-            ext_id = extruder_map.get(fil, 1)
-            heater_to_ext[ext_id] = 0
-            # The other extruder uses heater 1
-            other_ext = [e for e in extruder_map.values() if e != ext_id]
-            if other_ext:
-                heater_to_ext[other_ext[0]] = 1
-            break
-        elif t1 >= 200 and t0 < 100:
-            ext_id = extruder_map.get(fil, 1)
-            heater_to_ext[ext_id] = 1
-            other_ext = [e for e in extruder_map.values() if e != ext_id]
-            if other_ext:
-                heater_to_ext[other_ext[0]] = 0
-            break
-    
-    # Fallback if no clear signal
-    if not heater_to_ext:
-        unique_ext = sorted(set(extruder_map.values()))
-        for idx, eid in enumerate(unique_ext):
-            heater_to_ext[eid] = idx
-    
-    return heater_to_ext
+    # H2C physical mapping: Left (Extruder 1) -> Heater 1, Right (Extruder 2) -> Heater 0
+    return {1: 1, 2: 0}
 
 
 def build_timeline_and_interpolate(track, tool_changes, m73_points, total_lines):

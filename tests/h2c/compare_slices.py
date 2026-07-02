@@ -127,11 +127,42 @@ def parse_project_settings(zip_file):
         print(f"Error parsing project_settings: {e}")
         return {}
 
-def parse_critical_gcode(zip_file):
+def parse_critical_gcode(zip_file, filament_maps_str=None):
     critical_events = []
     total_lines = 0
     file_size = 0
     
+    # Try to parse filament_maps from Metadata/slice_info.config if not provided
+    if not filament_maps_str:
+        try:
+            xml_data = zip_file.read("Metadata/slice_info.config")
+            import xml.etree.ElementTree as ET
+            root = ET.fromstring(xml_data)
+            plate = root.find("plate")
+            if plate is not None:
+                for meta in plate.findall("metadata"):
+                    if meta.attrib.get("key") == "filament_maps":
+                        filament_maps_str = meta.attrib.get("value", "").strip()
+                        break
+        except Exception:
+            pass
+            
+    if not filament_maps_str:
+        filament_maps_str = "1 1 1 1 1 2"
+        
+    extruder_map = {}
+    for i, v in enumerate(filament_maps_str.split()):
+        try:
+            extruder_map[i] = int(v)
+        except ValueError:
+            pass
+            
+    # For H2C, Extruder 1 (Left) maps to Heater 1, Extruder 2 (Right) maps to Heater 0
+    heater_to_ext = {1: 1, 2: 0}
+    nozzle_map = {}
+    for fid, ext_id in extruder_map.items():
+        nozzle_map[fid] = heater_to_ext.get(ext_id, 1)
+
     toolchange_count = 0
     toolchange_sequence = []
     prime_tower_blocks = 0
@@ -297,8 +328,8 @@ def parse_critical_gcode(zip_file):
                                 targeted_heater = 0
                         else:
                             # No T param: applies to active heater
-                            # H2C mapping: filament 1 → heater 1, all others → heater 0
-                            targeted_heater = 1 if active_extruder == 1 else 0
+                            # H2C mapping: use nozzle_map
+                            targeted_heater = nozzle_map.get(active_extruder, 1)
                                 
                         if targeted_heater == 0:
                             temp_T0 = s_temp
@@ -679,49 +710,21 @@ def format_side_by_side_temp_track(f1_track, f2_track, f1_name, f2_name):
 
 
 def get_nozzle_map(filament_maps_str, track):
+    if not filament_maps_str:
+        filament_maps_str = "1 1 1 1 1 2"
+        
     extruder_map = {}
-    if filament_maps_str:
-        for i, v in enumerate(filament_maps_str.split()):
-            try:
-                extruder_map[i] = int(v)
-            except ValueError:
-                pass
-                
-    if not extruder_map:
-        for i in range(10):
-            extruder_map[i] = 1 if i == 1 else 2
-
-    heater_to_ext = {}
-    for item in track:
-        # item: (line, active_extruder, temp_T0, temp_T1, desc, in_m620_block, printing_started)
-        fil = item[1]
-        if fil >= 1000:
-            continue
-        t0 = item[2]
-        t1 = item[3]
-        if t0 >= 200 and t1 < 100:
-            ext_id = extruder_map.get(fil, 1)
-            heater_to_ext[ext_id] = 0
-            other_exts = [e for e in extruder_map.values() if e != ext_id]
-            if other_exts:
-                heater_to_ext[other_exts[0]] = 1
-            break
-        elif t1 >= 200 and t0 < 100:
-            ext_id = extruder_map.get(fil, 1)
-            heater_to_ext[ext_id] = 1
-            other_exts = [e for e in extruder_map.values() if e != ext_id]
-            if other_exts:
-                heater_to_ext[other_exts[0]] = 0
-            break
+    for i, v in enumerate(filament_maps_str.split()):
+        try:
+            extruder_map[i] = int(v)
+        except ValueError:
+            pass
             
-    if not heater_to_ext:
-        unique_ext = sorted(list(set(extruder_map.values())))
-        for idx, eid in enumerate(unique_ext):
-            heater_to_ext[eid] = idx
-            
+    # H2C physical mapping: Left (Extruder 1) -> Heater 1, Right (Extruder 2) -> Heater 0
+    heater_to_ext = {1: 1, 2: 0}
     nozzle_map = {}
     for fid, ext_id in extruder_map.items():
-        nozzle_map[fid] = heater_to_ext.get(ext_id, 0)
+        nozzle_map[fid] = heater_to_ext.get(ext_id, 1)
         
     return nozzle_map
 
@@ -1224,13 +1227,15 @@ def main():
     with zipfile.ZipFile(f1_path, "r") as z1:
         f1_meta = parse_metadata(z1)
         f1_settings = parse_project_settings(z1)
-        f1_events, f1_lines, f1_size, f1_stats = parse_critical_gcode(z1)
+        f1_maps_str = f1_meta["plate_meta"].get("filament_maps")
+        f1_events, f1_lines, f1_size, f1_stats = parse_critical_gcode(z1, f1_maps_str)
         
     print(f"Analyzing File 2: {f2_path}")
     with zipfile.ZipFile(f2_path, "r") as z2:
         f2_meta = parse_metadata(z2)
         f2_settings = parse_project_settings(z2)
-        f2_events, f2_lines, f2_size, f2_stats = parse_critical_gcode(z2)
+        f2_maps_str = f2_meta["plate_meta"].get("filament_maps")
+        f2_events, f2_lines, f2_size, f2_stats = parse_critical_gcode(z2, f2_maps_str)
         
     f1_basename = os.path.basename(f1_path)
     f2_basename = os.path.basename(f2_path)
