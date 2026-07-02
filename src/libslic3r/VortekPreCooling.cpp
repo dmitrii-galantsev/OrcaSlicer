@@ -207,7 +207,10 @@ void PreCooling::build_by_filament_blocks(const std::vector<FilamentUsageBlock>&
             m_extruder_free_blocks.emplace_back(block);
         }
     }
-    std::for_each(m_extruder_free_blocks.begin(), m_extruder_free_blocks.end(), [](ExtruderFreeBlock &block) { block.ignore_cooling_before_tower = true; });
+    // For H2C, ignore_cooling_before_tower should be false to enable preheat_temperature_delta
+    // (pre-heat to lower temp like 200°C instead of full 220°C, matching BBS behavior).
+    // Reference to BBS: build_by_filament_blocks does NOT force this flag for H2C.
+    std::for_each(m_extruder_free_blocks.begin(), m_extruder_free_blocks.end(), [](ExtruderFreeBlock &block) { block.ignore_cooling_before_tower = false; });
     std::sort(m_extruder_free_blocks.begin(), m_extruder_free_blocks.end(), [](const auto& a, const auto& b) {
         return a.free_lower_gcode_id < b.free_lower_gcode_id || (a.free_lower_gcode_id == b.free_lower_gcode_id && a.free_upper_gcode_id < b.free_upper_gcode_id);
     });
@@ -244,6 +247,7 @@ void PreCooling::inject_cooling_heating_command(
 
     auto get_valid_extruder_id = [&](int last_nozzle_id) {
         auto nozzle_opt = m_nozzle_group_result.get_nozzle_from_id(last_nozzle_id);
+        // NozzleInfo::extruder_id is 0-based (matches physical_extruder_map indexing)
         return nozzle_opt ? nozzle_opt->extruder_id : 0;
     };
 
@@ -320,15 +324,13 @@ void PreCooling::inject_cooling_heating_command(
     };
 
     if (block.free_upper_gcode_id <= block.free_lower_gcode_id) {
-        VORTEK_LOG(warning, "inject_cooling_heating: SKIP inverted/zero-length block lower=" << block.free_lower_gcode_id << " upper=" << block.free_upper_gcode_id);
-        return;
-    }
-
-    // Fix 3: Skip cooling+heating cycle when curr_temp == target_temp.
-    // No point cooling to 25°C then reheating to the same temperature.
-    if (pre_cooling && pre_heating && std::abs(curr_temp - target_temp) < 1.0f) {
-        VORTEK_LOG(warning, "inject_cooling_heating: SKIP same temp (curr=" << curr_temp << " target=" << target_temp << ")");
-        return;
+        // Allow zero-length blocks for nozzle changes within same extruder (BBS does partial cool+reheat)
+        if (block.last_nozzle_id != block.next_nozzle_id && block.last_nozzle_id >= 0 && block.next_nozzle_id >= 0) {
+            VORTEK_LOG(warning, "inject_cooling_heating: zero-length but nozzle change (" << block.last_nozzle_id << "->" << block.next_nozzle_id << "), proceeding");
+        } else {
+            VORTEK_LOG(warning, "inject_cooling_heating: SKIP inverted/zero-length block lower=" << block.free_lower_gcode_id << " upper=" << block.free_upper_gcode_id);
+            return;
+        }
     }
 
     auto move_iter_lower = std::lower_bound(m_moves.cbegin(), m_moves.cend(), block.free_lower_gcode_id, gcode_move_comp);
