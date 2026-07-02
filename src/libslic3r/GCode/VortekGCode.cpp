@@ -3,6 +3,7 @@
 #include "libslic3r/VortekMultiNozzle.hpp"
 #include "libslic3r/Print.hpp"
 #include "libslic3r/VortekLog.hpp"
+#include "VortekPrintHooks.hpp"
 #include <algorithm>
 #include <string>
 #include <vector>
@@ -16,6 +17,7 @@ void register_vortek_placeholders(
     const Slic3r::FullPrintConfig& config,
     const Slic3r::Print* print)
 {
+    if (!is_h2c_printer(config)) return;
     // Register all H2C/BBL placeholders and NC variables if the printer supports H2C parameters.
     // This is done early to ensure they are available even for single-nozzle plates or during early slicing stages.
     // Initialize Vortek state in the parser itself (no statics, no memory leaks!).
@@ -150,7 +152,7 @@ void register_vortek_placeholders(
 void update_layer_related_config(Slic3r::GCode& gcode, int layer_id)
 {
     Slic3r::Print* print = gcode.m_print;
-    if (!print) return;
+    if (!print || !is_h2c_printer(*print)) return;
 
     auto group_result = print->get_layered_nozzle_group_result();
     if (!group_result) return;
@@ -179,7 +181,7 @@ void patch_toolchange_dyn_config(
     int layer_id)
 {
     Slic3r::Print* print = gcode.m_print;
-    if (!print) return;
+    if (!print || !is_h2c_printer(*print)) return;
 
     // ── FIX: Override toolchange_count for H2C firmware ──────────────────
     int config_extruder_idx = new_filament_id % 2; // Default fallback for 0-based arrays
@@ -411,6 +413,9 @@ void patch_toolchange_dyn_config(
  */
 int hotend_id_override(const Slic3r::FullPrintConfig& config, int hotend_id)
 {
+    if (!is_h2c_printer(config)) {
+        return hotend_id;
+    }
     // ── NO-FTS BRANCH (default path) ─────────────────────────────────────────
     // `has_filament_switcher` defaults to false.
     // If the FTS module is not installed, force returning -1
@@ -434,7 +439,7 @@ std::pair<std::string, std::string> get_nozzle_change_markers(
 {
     // Only for H2C printers with Vortek multi-nozzle support
     // Reference to BBS: VortekPreCooling.cpp handle_nozzle_change_line / extruder_blocks path
-    if (!gcode.m_print || !gcode.m_config.has("filament_pre_cooling_temperature_nc"))
+    if (!gcode.m_print || !is_h2c_printer(*gcode.m_print))
         return {"", ""};
 
     // Read OLD filament from vortek_last_filament_id BEFORE patch_toolchange_dyn_config updates it

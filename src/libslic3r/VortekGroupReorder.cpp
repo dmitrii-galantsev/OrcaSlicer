@@ -1,6 +1,7 @@
 #include "VortekGroupReorder.hpp"
 #include "VortekMultiNozzle.hpp"
 #include "VortekLog.hpp"
+#include "VortekPrintHooks.hpp"
 #include <algorithm>
 
 namespace Vortek {
@@ -13,6 +14,10 @@ bool GroupReorder::handle_nozzle_manual_reorder(
     unsigned int number_of_extruders)
 {
     if (!print || !print_config) return false;
+
+    if (!is_h2c_printer(*print)) {
+        return false;
+    }
 
     // Check if we are in the nozzle manual mapping mode
     if (print_config->filament_map_mode.value != Slic3r::fmmNozzleManual) {

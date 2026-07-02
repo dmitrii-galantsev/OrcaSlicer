@@ -477,8 +477,7 @@ set(lisbslic3r_sources
     VortekPreCooling.hpp
     VortekPrintHooks.cpp
     VortekPrintHooks.hpp
-    VortekWipeTower.cpp
-    VortekWipeTower.hpp
+
     Zipper.cpp
     Zipper.hpp
     FilamentGroup.hpp

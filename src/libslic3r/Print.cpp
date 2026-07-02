@@ -3492,9 +3492,7 @@ void Print::_make_wipe_tower()
         for (size_t i = 0; i < number_of_extruders; ++i)
             wipe_tower.set_extruder(i, m_config);
 
-        if (auto group_result = get_layered_nozzle_group_result()) {
-            wipe_tower.set_nozzle_group_result(*group_result);
-        }
+
 
         // BBS: remove priming logic
         // m_wipe_tower_data.priming = Slic3r::make_unique<std::vector<WipeTower::ToolChangeResult>>(

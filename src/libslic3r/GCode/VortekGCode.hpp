@@ -7,7 +7,7 @@ namespace Slic3r {
     class GCode;
     class DynamicConfig;
     class PlaceholderParser;
-    struct FullPrintConfig;
+    class FullPrintConfig;
     class Print;
 }
 

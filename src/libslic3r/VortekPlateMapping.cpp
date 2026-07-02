@@ -1,6 +1,7 @@
 #include "VortekPlateMapping.hpp"
 #include "VortekLog.hpp"
 #include "PresetBundle.hpp"
+#include "VortekPrintHooks.hpp"
 #include "libslic3r/Format/bbs_3mf.hpp"
 #include <algorithm>
 
@@ -9,13 +10,7 @@ namespace Vortek {
 bool PlateMapping::is_h2c_multi_nozzle(const Slic3r::Print* print)
 {
     if (!print) return false;
-    if (print->config().has("extruder_max_nozzle_count")) {
-        const auto& counts = print->config().option<Slic3r::ConfigOptionInts>("extruder_max_nozzle_count")->values;
-        if (std::any_of(counts.begin(), counts.end(), [](int c) { return c > 1; })) {
-            return true;
-        }
-    }
-    return false;
+    return is_h2c_printer(*print);
 }
 
 void PlateMapping::sync_after_slicing(
@@ -138,6 +133,7 @@ LoadMappingResult PlateMapping::load_from_3mf_structure(
 {
     LoadMappingResult res;
     if (!plate_data) return res;
+    if (!is_h2c_printer(plate_data->config)) return res;
 
     VORTEK_LOG(info, "load_from_3mf_structure: loading nozzle mappings");
 
@@ -159,6 +155,7 @@ LoadMappingResult PlateMapping::load_from_3mf_structure(
 
 void PlateMapping::sync_project_config_on_load(Slic3r::DynamicConfig& proj_cfg, int filament_count)
 {
+    if (!is_h2c_printer(proj_cfg)) return;
     VORTEK_LOG(info, "sync_project_config_on_load: verifying loaded map sizes");
     
     // Сброс MQTT-зависимых флагов, которые должны приходить с принтера, а не считываться из 3MF
@@ -255,6 +252,9 @@ void PlateMapping::patch_plate_data_for_export(
 )
 {
     if (!plate_data) return;
+    if (print && !is_h2c_printer(*print)) return;
+    if (!print && !config.has("filament_nozzle_map")) return;
+
     VORTEK_LOG(info, "patch_plate_data_for_export for plate index " << plate_data->plate_index);
 
     std::vector<int> nozzle_map = filament_nozzle_map;
@@ -335,8 +335,7 @@ void PlateMapping::filter_full_config_diff(Slic3r::t_config_option_keys& full_co
     if (full_config_diff.empty()) return;
 
     // Only filter for Vortek H2C — P2S/H2D and standard printers must NOT be affected.
-    // filament_nozzle_map is a Vortek-only key, absent on all non-Vortek printers.
-    if (!config.has("filament_nozzle_map")) return;
+    if (!is_h2c_printer(config)) return;
 
     // Build the suppression set once (lazy init).
     // Sources: extruder_retract_keys (retraction_length, z_hop, etc.) + Vortek computed maps.
@@ -379,7 +378,7 @@ void PlateMapping::filter_print_diff_set(
     if (print_diff_set.empty()) return;
 
     // Only for Vortek H2C — P2S/H2D and standard printers must NOT be affected.
-    if (!config.has("filament_nozzle_map")) return;
+    if (!is_h2c_printer(config)) return;
 
     // Vortek computed map keys injected by sync_after_slicing — must not trigger re-slice
     static const std::vector<std::string> s_vortek_map_keys = {

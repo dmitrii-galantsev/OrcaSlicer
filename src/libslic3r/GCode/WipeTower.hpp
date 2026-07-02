@@ -8,7 +8,6 @@
 #include <algorithm>
 
 #include "libslic3r/Point.hpp"
-#include "libslic3r/VortekMultiNozzle.hpp"
 #include "libslic3r/Polygon.hpp"
 #include "libslic3r/Polyline.hpp"
 #include "libslic3r/TriangleMesh.hpp"
@@ -213,14 +212,7 @@ public:
     float get_rib_length() const { return m_rib_length; }
     float get_rib_width() const { return m_rib_width; }
 
-    void set_nozzle_group_result(const MultiNozzleUtils::LayeredNozzleGroupResult &multi_nozzle_group_result) { m_multi_nozzle_group_result = &multi_nozzle_group_result; }
-    const MultiNozzleUtils::LayeredNozzleGroupResult *m_multi_nozzle_group_result{nullptr};
 
-    bool is_same_extruder(int filament_id_1, int filament_id_2, int layer_id) const;
-    bool is_same_nozzle(int filament_id_1, int filament_id_2, int layer_id) const;
-    int get_nozzle_id(int filament_id, int layer_id) const;
-    int get_extruder_id(int filament_id, int layer_id) const;
-    bool is_need_ramming(int filament_id_1, int filament_id_2, int layer_id) const;
 
 	void set_last_layer_extruder_fill(bool extruder_fill) {
         if (!m_plan.empty()) {

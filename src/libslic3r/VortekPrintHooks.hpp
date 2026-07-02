@@ -10,12 +10,21 @@ namespace Slic3r {
     class PresetBundle;
     class AppConfig;
     class DynamicPrintConfig;
+    class PrintConfig;
+    class Preset;
+    class ConfigBase;
     namespace MultiNozzleUtils {
         class NozzleGroupResultBase;
     }
 }
 
 namespace Vortek {
+
+bool is_h2c_printer(const Slic3r::Print& print);
+bool is_h2c_printer(const Slic3r::PrintConfig& config);
+bool is_h2c_printer(const Slic3r::ConfigBase& config);
+bool is_h2c_printer(const Slic3r::PresetBundle* preset_bundle);
+bool is_h2c_printer(const Slic3r::Preset& preset);
 
 /**
  * @brief Delegate hooks for modifying configuration values on Slic3r::Print.

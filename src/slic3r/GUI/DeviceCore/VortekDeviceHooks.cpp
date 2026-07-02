@@ -497,6 +497,8 @@ static std::map<std::string, std::pair<std::set<int>, std::optional<int>>> s_pen
 
 void preprocess_filament_json(Slic3r::MachineObject* obj, nlohmann::json& filament_json) {
     if (!obj || !filament_json.contains("ams")) return;
+    auto rack = get_nozzle_rack(obj->GetNozzleSystem());
+    if (!rack || !rack->IsSupported()) return;
     auto fs = get_fila_switch(obj);
     bool fts_installed = fs && fs->IsInstalled();
 

@@ -4,12 +4,41 @@
 #include "VortekLog.hpp"
 #include "PresetBundle.hpp"
 #include "AppConfig.hpp"
+#include "Preset.hpp"
+#include "libslic3r/Config.hpp"
 #include <boost/format.hpp>
 #include <boost/algorithm/string.hpp>
 #include <set>
 #include <unordered_map>
 
 namespace Vortek {
+
+bool is_h2c_printer(const Slic3r::Print& print) {
+    return print.config().printer_model.value == "Bambu Lab H2C";
+}
+
+bool is_h2c_printer(const Slic3r::PrintConfig& config) {
+    return config.printer_model.value == "Bambu Lab H2C";
+}
+
+bool is_h2c_printer(const Slic3r::ConfigBase& config) {
+    if (config.has("printer_model")) {
+        auto* opt = config.option("printer_model");
+        if (auto* opt_str = dynamic_cast<const Slic3r::ConfigOptionString*>(opt)) {
+            return opt_str->value == "Bambu Lab H2C";
+        }
+    }
+    return false;
+}
+
+bool is_h2c_printer(const Slic3r::PresetBundle* preset_bundle) {
+    if (!preset_bundle) return false;
+    return is_h2c_printer(preset_bundle->printers.get_edited_preset());
+}
+
+bool is_h2c_printer(const Slic3r::Preset& preset) {
+    return is_h2c_printer(preset.config);
+}
 
 template<typename OptType, typename ValueType>
 static void trim_option_values(OptType *opt, const std::vector<int> &trim_param_indices)
@@ -132,6 +161,9 @@ void PrintHooks::update_filament_maps_to_config(
     const std::vector<int>& f_nozzle_maps
 )
 {
+    if (!is_h2c_printer(print)) {
+        return;
+    }
     // Step 1: Compute final_nozzle_maps FIRST so we can use them in the idempotency guard.
     // If f_nozzle_maps is empty or contains carousel slot collisions (multiple filaments on Extruder 2 mapping to the same slot),
     // we recalculate and derive nozzle assignments from filament_map using the H2C carousel rule:
@@ -247,10 +279,10 @@ void PrintHooks::update_filament_maps_to_config(
 
     // Step 4: Idempotency guard — compare m_config against COMPUTED values.
     // This ensures that on the 2nd re-slice the values already match → no write → no invalidation → cycle stops.
-    bool maps_changed   = (print.m_config.filament_map.values        != f_maps);
-    bool volume_changed = (print.m_config.filament_volume_map.values != final_volume_maps);
+    bool maps_changed   = (print.config().filament_map.values        != f_maps);
+    bool volume_changed = (print.config().filament_volume_map.values != final_volume_maps);
     bool nozzle_changed = (!final_nozzle_maps.empty() &&
-                           print.m_config.filament_nozzle_map.values != final_nozzle_maps);
+                           print.config().filament_nozzle_map.values != final_nozzle_maps);
 
     if (maps_changed || volume_changed || nozzle_changed) {
         VORTEK_LOG(info, "update_filament_maps_to_config: maps changed, applying to full configs...");
@@ -327,6 +359,9 @@ void PrintHooks::update_to_config_by_nozzle_group_result(
     const Slic3r::MultiNozzleUtils::NozzleGroupResultBase& group_result
 )
 {
+    if (!is_h2c_printer(print)) {
+        return;
+    }
     const auto* layered_result = dynamic_cast<const Slic3r::MultiNozzleUtils::LayeredNozzleGroupResult*>(&group_result);
     if (layered_result) {
         std::vector<int> nozzle_map = layered_result->get_nozzle_map(-1);
@@ -339,14 +374,14 @@ void PrintHooks::update_to_config_by_nozzle_group_result(
         VORTEK_LOG(info, "update_to_config_by_nozzle_group_result: updated filament_nozzle_map in full configs");
     }
 
-    int extruder_count = print.m_config.nozzle_diameter.values.size();
+    int extruder_count = print.config().nozzle_diameter.values.size();
     VORTEK_LOG(info, "update_to_config_by_nozzle_group_result: carriage count = " << extruder_count);
     int extruder_volume_type_count = 1;
 
     std::unordered_map<int, std::vector<Slic3r::ExtruderNozleInfo>> filament_extruder_map;
 
-    auto filament_count = print.m_config.option<Slic3r::ConfigOptionStrings>("filament_type")->size();
-    auto extruder_type  = print.m_config.option<Slic3r::ConfigOptionEnumsGeneric>("extruder_type")->values;
+    auto filament_count = print.config().option<Slic3r::ConfigOptionStrings>("filament_type")->size();
+    auto extruder_type  = print.config().option<Slic3r::ConfigOptionEnumsGeneric>("extruder_type")->values;
 
     for (int fidx = 0; fidx < (int)filament_count; ++fidx) {
         auto used_nozzles = group_result.get_nozzles_for_filament(fidx);
@@ -556,16 +591,16 @@ void PrintHooks::init_vortek_params(Slic3r::PrintConfigDef* def_ptr)
 
 std::vector<int> PrintHooks::get_filament_nozzle_maps(const Slic3r::Print& print)
 {
-    if (print.m_config.has("filament_nozzle_map")) {
-        return print.m_config.option<Slic3r::ConfigOptionInts>("filament_nozzle_map")->values;
+    if (is_h2c_printer(print) && print.config().has("filament_nozzle_map")) {
+        return print.config().option<Slic3r::ConfigOptionInts>("filament_nozzle_map")->values;
     }
     return {};
 }
 
 std::vector<int> PrintHooks::get_filament_volume_maps(const Slic3r::Print& print)
 {
-    if (print.m_config.has("filament_volume_map")) {
-        return print.m_config.option<Slic3r::ConfigOptionInts>("filament_volume_map")->values;
+    if (is_h2c_printer(print) && print.config().has("filament_volume_map")) {
+        return print.config().option<Slic3r::ConfigOptionInts>("filament_volume_map")->values;
     }
     return {};
 }
@@ -656,7 +691,7 @@ float PrintHooks::adjust_purge_volume(
     float default_volume
 ) {
     // Hook for H2C only
-    if (print.m_config.printer_model.value != "Bambu Lab H2C") {
+    if (!is_h2c_printer(print)) {
         return default_volume;
     }
 
@@ -685,8 +720,7 @@ void PresetBundleHooks::load_nozzle_stats_from_config(
     Slic3r::AppConfig& config, 
     const std::string& initial_printer_profile_name) 
 {
-    // Hook for H2C only
-    if (preset_bundle->printers.get_edited_preset().config.opt_string("printer_model") != "Bambu Lab H2C") {
+    if (!is_h2c_printer(preset_bundle)) {
         return;
     }
 
@@ -702,8 +736,7 @@ void PresetBundleHooks::save_nozzle_stats_to_config(
     Slic3r::AppConfig& config, 
     const std::string& printer_name) 
 {
-    // Hook for H2C only
-    if (preset_bundle->printers.get_edited_preset().config.opt_string("printer_model") != "Bambu Lab H2C") {
+    if (!is_h2c_printer(preset_bundle)) {
         return;
     }
 
@@ -718,8 +751,7 @@ void PresetBundleHooks::load_nozzle_stats_from_dynamic_config(
     Slic3r::PresetBundle* preset_bundle, 
     Slic3r::DynamicPrintConfig& config) 
 {
-    // Hook for H2C only
-    if (preset_bundle->printers.get_edited_preset().config.opt_string("printer_model") != "Bambu Lab H2C") {
+    if (!is_h2c_printer(preset_bundle)) {
         return;
     }
 
@@ -733,9 +765,8 @@ void PresetBundleHooks::load_nozzle_stats_from_dynamic_config(
 void PresetBundleHooks::update_nozzle_stat_on_compatibility_change(
     Slic3r::PresetBundle* preset_bundle) 
 {
-    // Hook for H2C only
     const Slic3r::Preset &printer_preset = preset_bundle->printers.get_edited_preset();
-    if (printer_preset.config.opt_string("printer_model") == "Bambu Lab H2C") {
+    if (is_h2c_printer(printer_preset)) {
         preset_bundle->extruder_nozzle_stat.on_printer_model_change(preset_bundle);
     }
 }

@@ -2,6 +2,7 @@
 #include "VortekLog.hpp"
 #include "GCodeReader.hpp"
 #include "Print.hpp"
+#include "VortekPrintHooks.hpp"
 #include <regex>
 #include <algorithm>
 #include <sstream>
@@ -659,7 +660,7 @@ PreCooling::InsertedLinesMap PreCooling::run_pre_scan(Slic3r::GCodeProcessor& pr
     InsertedLinesMap inserted_operation_lines;
     
     // Hook isolation check for multi-nozzle configuration / H2C compatibility
-    if (!processor.m_print || !processor.m_print->get_layered_nozzle_group_result()) {
+    if (!processor.m_print || !is_h2c_printer(*processor.m_print) || !processor.m_print->get_layered_nozzle_group_result()) {
         VORTEK_LOG(warning, "run_pre_scan: hook bypass (not an H2C/multi-nozzle configuration)");
         return inserted_operation_lines;
     }
