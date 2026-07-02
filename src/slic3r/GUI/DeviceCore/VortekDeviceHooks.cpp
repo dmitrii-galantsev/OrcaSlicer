@@ -429,22 +429,25 @@ std::optional<int> get_ams_binded_switcher_pos(const Slic3r::DevAms* ams) {
 }
 
 std::string get_nozzle_wear(const Slic3r::DevNozzle& nozzle) { return "0"; }
-std::string get_nozzle_filament_id(const Slic3r::DevNozzle& nozzle, const Slic3r::DevNozzleSystem* system) {
-    std::string res = VortekNozzleFilamentManager::get_instance().get_filament_id(system, nozzle.m_nozzle_id);
-    VORTEK_LOG(debug, "get_nozzle_filament_id: system=" << system << ", nozzle_id=" << nozzle.m_nozzle_id << ", res=" << res);
+std::string get_nozzle_filament_id(const Slic3r::DevNozzle& nozzle, const Slic3r::DevNozzleSystem* system, bool is_on_rack) {
+    int key = is_on_rack ? (16 + nozzle.m_nozzle_id) : nozzle.m_nozzle_id;
+    std::string res = VortekNozzleFilamentManager::get_instance().get_filament_id(system, key);
+    VORTEK_LOG(debug, "get_nozzle_filament_id: system=" << system << ", physical_id=" << nozzle.m_nozzle_id << ", is_on_rack=" << is_on_rack << ", key=" << key << ", res=" << res);
     return res;
 }
-std::string get_nozzle_filament_color(const Slic3r::DevNozzle& nozzle, const Slic3r::DevNozzleSystem* system) {
-    std::string res = VortekNozzleFilamentManager::get_instance().get_filament_color(system, nozzle.m_nozzle_id);
-    VORTEK_LOG(debug, "get_nozzle_filament_color: system=" << system << ", nozzle_id=" << nozzle.m_nozzle_id << ", res=" << res);
+std::string get_nozzle_filament_color(const Slic3r::DevNozzle& nozzle, const Slic3r::DevNozzleSystem* system, bool is_on_rack) {
+    int key = is_on_rack ? (16 + nozzle.m_nozzle_id) : nozzle.m_nozzle_id;
+    std::string res = VortekNozzleFilamentManager::get_instance().get_filament_color(system, key);
+    VORTEK_LOG(debug, "get_nozzle_filament_color: system=" << system << ", physical_id=" << nozzle.m_nozzle_id << ", is_on_rack=" << is_on_rack << ", key=" << key << ", res=" << res);
     return res;
 }
 void parse_nozzle_filament(Slic3r::DevNozzleSystem* system, int nozzle_id, const nlohmann::json& njon) {
     if (!system) return;
+    int raw_id = njon.contains("id") ? njon["id"].get<int>() : nozzle_id;
     std::string id = njon.contains("fila_id") ? njon["fila_id"].get<std::string>() : "";
     std::string color = njon.contains("color_m") ? njon["color_m"].get<std::string>() : "";
-    VORTEK_LOG(info, "parse_nozzle_filament: system=" << system << ", nozzle_id=" << nozzle_id << ", cate=" << id << ", color=" << color << ", raw_json=" << njon.dump());
-    VortekNozzleFilamentManager::get_instance().set_filament_info(system, nozzle_id, id, color);
+    VORTEK_LOG(info, "parse_nozzle_filament: system=" << system << ", nozzle_id=" << nozzle_id << ", raw_id=" << raw_id << ", cate=" << id << ", color=" << color << ", raw_json=" << njon.dump());
+    VortekNozzleFilamentManager::get_instance().set_filament_info(system, raw_id, id, color);
 }
 bool is_nozzle_normal(const Slic3r::DevNozzle& nozzle) { return nozzle.m_nozzle_id != -1; }
 int get_nozzle_id(const Slic3r::DevNozzle& nozzle) { return nozzle.m_nozzle_id; }

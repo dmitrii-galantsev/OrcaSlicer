@@ -111,7 +111,7 @@ void wgtDeviceNozzleRackUprade::CreateGui()
     wxPanel* title_sep = new wxPanel(this);
     title_sep->SetMaxSize(wxSize(-1, FromDIP(1)));
     title_sep->SetMinSize(wxSize(-1, FromDIP(1)));
-    title_sep->SetBackgroundColour(wxColour(224, 224, 224));
+    title_sep->SetBackgroundColour(StateColor::darkModeColorFor(wxColour(224, 224, 224)));
     main_sizer->Add(title_sep, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, FromDIP(8));
 
     // Extruder ("R")
@@ -132,7 +132,7 @@ void wgtDeviceNozzleRackUprade::CreateGui()
             wxPanel* separator = new wxPanel(this);
             separator->SetMaxSize(wxSize(-1, FromDIP(1)));
             separator->SetMinSize(wxSize(-1, FromDIP(1)));
-            separator->SetBackgroundColour(wxColour(224, 224, 224));
+            separator->SetBackgroundColour(StateColor::darkModeColorFor(wxColour(224, 224, 224)));
             main_sizer->Add(separator, 0, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(12));
         }
     }
@@ -537,8 +537,9 @@ void wgtDeviceNozzleRackHotendUpdate::UpdateInfo(const DevNozzle& nozzle)
     auto share = m_nozzle_rack.lock();
     DevNozzleSystem* ns = share ? share->GetNozzleSystem() : nullptr;
 
+    bool is_on_rack = (m_rack_nozzle_id != -1);
     wxString filamentDisplayName{};
-    std::string filament_color = Vortek::DeviceHooks::get_nozzle_filament_color(nozzle, ns);
+    std::string filament_color = Vortek::DeviceHooks::get_nozzle_filament_color(nozzle, ns, is_on_rack);
 
     if ((filament_color.empty() || filament_color == "N/A" || filament_color == "000000") && ns) {
         if (ns->GetOwner() && ns->GetOwner()->GetExtderSystem()) {
@@ -564,7 +565,7 @@ void wgtDeviceNozzleRackHotendUpdate::UpdateInfo(const DevNozzle& nozzle)
         for (auto iter = GUI::wxGetApp().preset_bundle->filaments.begin(); iter != GUI::wxGetApp().preset_bundle->filaments.end(); ++iter) 
         {
             const Preset& filament_preset = *iter;
-            if (filament_preset.filament_id == Vortek::DeviceHooks::get_nozzle_filament_id(nozzle, ns)) 
+            if (filament_preset.filament_id == Vortek::DeviceHooks::get_nozzle_filament_id(nozzle, ns, is_on_rack)) 
             {
                 filamentDisplayName = wxString(filament_preset.alias);
                 break;
@@ -572,9 +573,9 @@ void wgtDeviceNozzleRackHotendUpdate::UpdateInfo(const DevNozzle& nozzle)
         }
     }
     // Fallback: show filament_id when no matching preset found
-    if (filamentDisplayName.empty() && !Vortek::DeviceHooks::get_nozzle_filament_id(nozzle, ns).empty())
+    if (filamentDisplayName.empty() && !Vortek::DeviceHooks::get_nozzle_filament_id(nozzle, ns, is_on_rack).empty())
     {
-        filamentDisplayName = wxString::FromUTF8(Vortek::DeviceHooks::get_nozzle_filament_id(nozzle, ns));
+        filamentDisplayName = wxString::FromUTF8(Vortek::DeviceHooks::get_nozzle_filament_id(nozzle, ns, is_on_rack));
     }
     if (filamentDisplayName.empty() && !Vortek::DeviceHooks::is_nozzle_empty(nozzle) && !Vortek::DeviceHooks::is_nozzle_unknown(nozzle))
     {

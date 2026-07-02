@@ -155,8 +155,7 @@ int VortekNozzleMappingCtrl::CtrlGetAutoNozzleMappingV0(Slic3r::GUI::Plater* pla
     // nozzle info
     json nozzle_info_jj;
     const auto& nozzle_system = m_obj->GetNozzleSystem();
-    const auto& extruder_nozzles = nozzle_system->GetNozzles();
-    for (const auto& nozzle : extruder_nozzles) {
+    for (const auto& nozzle : nozzle_system->GetNozzles()) {
         if (Vortek::DeviceHooks::is_nozzle_normal(nozzle.second)) {
             json nozzle_item_jj;
             nozzle_item_jj["pos"] = Vortek::DeviceHooks::get_nozzle_id(nozzle.second);
@@ -168,8 +167,8 @@ int VortekNozzleMappingCtrl::CtrlGetAutoNozzleMappingV0(Slic3r::GUI::Plater* pla
             nozzle_item_jj["nozzle_d"] = s_get_diameter_str(nozzle.second.m_diameter);
             nozzle_item_jj["nozzle_v"] = Vortek::DeviceHooks::to_nozzle_flow_string(Vortek::DeviceHooks::get_nozzle_flow_type(nozzle.second));
             nozzle_item_jj["wear"] = Vortek::DeviceHooks::get_nozzle_wear(nozzle.second);
-            nozzle_item_jj["cate"] = Vortek::DeviceHooks::get_nozzle_filament_id(nozzle.second, nozzle_system);
-            nozzle_item_jj["color"] = Vortek::DeviceHooks::get_nozzle_filament_color(nozzle.second, nozzle_system);
+            nozzle_item_jj["cate"] = Vortek::DeviceHooks::get_nozzle_filament_id(nozzle.second, nozzle_system, false);
+            nozzle_item_jj["color"] = Vortek::DeviceHooks::get_nozzle_filament_color(nozzle.second, nozzle_system, false);
             nozzle_info_jj.push_back(nozzle_item_jj);
         }
     }
@@ -188,8 +187,8 @@ int VortekNozzleMappingCtrl::CtrlGetAutoNozzleMappingV0(Slic3r::GUI::Plater* pla
             nozzle_item_jj["nozzle_d"] = s_get_diameter_str(nozzle.second.m_diameter);
             nozzle_item_jj["nozzle_v"] = Vortek::DeviceHooks::to_nozzle_flow_string(Vortek::DeviceHooks::get_nozzle_flow_type(nozzle.second));
             nozzle_item_jj["wear"] = Vortek::DeviceHooks::get_nozzle_wear(nozzle.second);
-            nozzle_item_jj["cate"] = Vortek::DeviceHooks::get_nozzle_filament_id(nozzle.second, nozzle_system);
-            nozzle_item_jj["color"] = Vortek::DeviceHooks::get_nozzle_filament_color(nozzle.second, nozzle_system);
+            nozzle_item_jj["cate"] = Vortek::DeviceHooks::get_nozzle_filament_id(nozzle.second, nozzle_system, true);
+            nozzle_item_jj["color"] = Vortek::DeviceHooks::get_nozzle_filament_color(nozzle.second, nozzle_system, true);
             nozzle_info_jj.push_back(nozzle_item_jj);
         }
     }

@@ -239,7 +239,7 @@ void wgtDeviceNozzleRackToolHead::UpdateToolHeadInfo(const DevNozzle& extruder_n
 
     /* Icon*/
     bool extruder_exist   = !Vortek::DeviceHooks::is_nozzle_empty(extruder_nozzle);
-    std::string new_color = Vortek::DeviceHooks::get_nozzle_filament_color(extruder_nozzle);
+    std::string new_color = Vortek::DeviceHooks::get_nozzle_filament_color(extruder_nozzle, rack ? rack->GetNozzleSystem() : nullptr, false);
     if (new_color.empty() || new_color == "N/A") {
         if (rack && rack->GetNozzleSystem()) {
             DevNozzleSystem* ns = rack->GetNozzleSystem();
@@ -909,7 +909,7 @@ void wgtDeviceNozzleRackNozzleItem::Update(const std::shared_ptr<VortekNozzleRac
         const auto& nozzle_info      = on_rack ? rack->GetNozzle(m_nozzle_id) : rack->GetNozzleSystem()->GetNozzle(m_nozzle_id);
         const wxString& diameter_str = Vortek::DeviceHooks::get_nozzle_diameter_str(nozzle_info);
         const wxString& flowtype_str = Vortek::DeviceHooks::get_nozzle_flow_type_str(nozzle_info);
-        const std::string& color     = Vortek::DeviceHooks::get_nozzle_filament_color(nozzle_info, rack ? rack->GetNozzleSystem() : nullptr);
+        const std::string& color     = Vortek::DeviceHooks::get_nozzle_filament_color(nozzle_info, rack ? rack->GetNozzleSystem() : nullptr, on_rack);
 
         /*check empty first*/
         if (Vortek::DeviceHooks::is_nozzle_empty(nozzle_info)) {
@@ -943,7 +943,7 @@ void wgtDeviceNozzleRackNozzleItem::Update(const std::shared_ptr<VortekNozzleRac
                         }
 
                         if (matched) {
-                            std::string filament_color = Vortek::DeviceHooks::get_nozzle_filament_color(ext_nozzle);
+                            std::string filament_color = Vortek::DeviceHooks::get_nozzle_filament_color(ext_nozzle, ns, false);
                             if (filament_color.empty() || filament_color == "N/A") {
                                 if (ns->GetOwner() && ns->GetOwner()->GetExtderSystem()) {
                                     auto extder = ns->GetOwner()->GetExtderSystem()->GetExtderById(rack_ext_id);
