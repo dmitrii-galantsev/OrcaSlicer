@@ -566,6 +566,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/Widgets/TextInput.hpp
     GUI/Widgets/WebView.cpp
     GUI/Widgets/WebView.hpp
+    GUI/VortekPurgeModeDialog.cpp
+    GUI/VortekPurgeModeDialog.hpp
     GUI/WipeTowerDialog.cpp
     GUI/wxExtensions.cpp
     GUI/wxExtensions.hpp

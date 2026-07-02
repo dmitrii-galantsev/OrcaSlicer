@@ -217,6 +217,7 @@ public:
 
     ConfigOptionsGroup*     og_freq_chng_params(const bool is_fff);
     wxButton*               get_wiping_dialog_button();
+    void                    enable_purge_mode_btn(bool enable);
     void                    set_flushing_volume_warning(const bool flushing_volume_modify);
 
     // BBS

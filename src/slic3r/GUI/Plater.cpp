@@ -2,6 +2,8 @@
 #include "libslic3r/Config.hpp"
 #include "libslic3r/VortekPlateMapping.hpp"
 #include "slic3r/GUI/DeviceCore/VortekDeviceHooks.hpp"
+#include "libslic3r/VortekPrintHooks.hpp"
+#include "VortekPurgeModeDialog.hpp"
 #include "libslic3r_version.h"
 
 #include <cstddef>
@@ -564,6 +566,7 @@ struct Sidebar::priv
     wxPanel* m_panel_project_title;
     ScalableButton* m_filament_icon = nullptr;
     Button * m_flushing_volume_btn = nullptr;
+    Button * m_purge_mode_btn = nullptr;
     TextInput* m_search_item = nullptr;
     StaticBox* m_search_bar = nullptr;
     Search::SearchObjectDialog* dia = nullptr;
@@ -2120,8 +2123,12 @@ Sidebar::Sidebar(Plater *parent)
     p->m_panel_filament_title->SetBackgroundColor(title_bg);
     p->m_panel_filament_title->SetBackgroundColor2(0xF1F1F1);
     p->m_panel_filament_title->Bind(wxEVT_LEFT_UP, [this](wxMouseEvent &e) {
-        if (e.GetPosition().x > (p->m_flushing_volume_btn->IsShown()
-                ? p->m_flushing_volume_btn->GetPosition().x : (p->m_bpButton_add_filament->GetPosition().x - FromDIP(30)))) // ORCA exclude area of del button from titlebar collapse/expand feature to fix undesired collapse when user spams del filament button 
+        int limit_x = p->m_bpButton_add_filament->GetPosition().x - FromDIP(30);
+        if (p->m_flushing_volume_btn && p->m_flushing_volume_btn->IsShown())
+            limit_x = std::min(limit_x, p->m_flushing_volume_btn->GetPosition().x);
+        if (p->m_purge_mode_btn && p->m_purge_mode_btn->IsShown())
+            limit_x = std::min(limit_x, p->m_purge_mode_btn->GetPosition().x);
+        if (e.GetPosition().x > limit_x)
             return;
         p->m_panel_filament_content->Show(!p->m_panel_filament_content->IsShown());
         m_scrolled_sizer->Layout();
@@ -2135,11 +2142,10 @@ Sidebar::Sidebar(Plater *parent)
     p->m_staticText_filament_settings = new Label(p->m_panel_filament_title, _L("Project Filaments"), LB_PROPAGATE_MOUSE_EVENT);
     bSizer39->Add(p->m_filament_icon, 0, wxALIGN_CENTER | wxLEFT, FromDIP(SidebarProps::TitlebarMargin()));
     bSizer39->Add(p->m_staticText_filament_settings, 0, wxALIGN_CENTER | wxLEFT | wxRIGHT, FromDIP(SidebarProps::ElementSpacing()));
-    bSizer39->SetMinSize(-1, FromDIP(30));
-
     p->m_staticText_filament_count = new Label(p->m_panel_filament_title, "(0)", LB_PROPAGATE_MOUSE_EVENT);
     bSizer39->Add(p->m_staticText_filament_count, 0, wxALIGN_CENTER );
     bSizer39->Add(FromDIP(10), 0, 0, 0, 0);
+    bSizer39->SetMinSize(-1, FromDIP(30));
 
     p->m_panel_filament_title->SetSizer( bSizer39 );
     p->m_panel_filament_title->Layout();
@@ -2156,6 +2162,27 @@ Sidebar::Sidebar(Plater *parent)
     // BBS
     // add wiping dialog
     //wiping_dialog_button->SetFont(wxGetApp().normal_font());
+    p->m_purge_mode_btn = new Button(p->m_panel_filament_title, _L("Purge mode"));
+    p->m_purge_mode_btn->SetStyle(ButtonStyle::Regular, ButtonType::Compact);
+    p->m_purge_mode_btn->SetId(wxID_ANY);
+    p->m_purge_mode_btn->Bind(wxEVT_BUTTON, [parent, this](wxCommandEvent &e) {
+        auto& project_config = wxGetApp().preset_bundle->project_config;
+        auto current_mode_opt = project_config.option<ConfigOptionEnum<PrimeVolumeMode>>("prime_volume_mode");
+        PrimeVolumeMode current_mode = current_mode_opt ? current_mode_opt->value : pvmDefault;
+        VortekPurgeModeDialog dlg(parent, current_mode);
+        if (dlg.ShowModal() == wxID_OK) {
+            project_config.set_key_value("prime_volume_mode", new ConfigOptionEnum<PrimeVolumeMode>(dlg.get_mode()));
+            wxGetApp().preset_bundle->export_selections(*wxGetApp().app_config);
+            wxGetApp().plater()->update_project_dirty_from_presets();
+            wxGetApp().plater()->on_config_change(wxGetApp().preset_bundle->full_config(false));
+            p->plater->get_view3D_canvas3D()->reload_scene(true);
+            p->plater->update();
+        }
+    });
+
+    bSizer39->Add(p->m_purge_mode_btn, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(4));
+    bSizer39->Hide(p->m_purge_mode_btn); // Ensure hidden by default on launch
+
     p->m_flushing_volume_btn = new Button(p->m_panel_filament_title, _L("Flushing volumes"));
     p->m_flushing_volume_btn->SetStyle(ButtonStyle::Confirm, ButtonType::Compact);
     p->m_flushing_volume_btn->SetId(wxID_RESET);
@@ -3022,6 +3049,8 @@ void Sidebar::msw_rescale()
     p->m_bpButton_del_filament->msw_rescale();
     p->m_bpButton_ams_filament->msw_rescale();
     p->m_bpButton_set_filament->msw_rescale();
+    if (p->m_purge_mode_btn)
+        p->m_purge_mode_btn->Rescale();
     p->m_flushing_volume_btn->Rescale();
     set_flushing_volume_warning(is_flush_config_modified()); // ORCA reapply appearance
 
@@ -3107,6 +3136,8 @@ void Sidebar::sys_color_changed()
     p->m_bpButton_del_filament->msw_rescale();
     p->m_bpButton_ams_filament->msw_rescale();
     p->m_bpButton_set_filament->msw_rescale();
+    if (p->m_purge_mode_btn)
+        p->m_purge_mode_btn->Rescale();
     p->m_flushing_volume_btn->Rescale();
     set_flushing_volume_warning(is_flush_config_modified()); // ORCA reapply appearance
 
@@ -3843,7 +3874,7 @@ bool Sidebar::should_show_SEMM_buttons()
 void Sidebar::show_SEMM_buttons()
 {
     // ORCA
-    if (!p || p->combos_filament.empty() || !p->m_bpButton_add_filament || !p->m_bpButton_del_filament || !p->m_flushing_volume_btn)
+    if (!p || p->combos_filament.empty() || !p->m_bpButton_add_filament || !p->m_bpButton_del_filament || !p->m_flushing_volume_btn || !p->m_purge_mode_btn)
         return;
     
     bool is_multi_material = p->combos_filament.size() > 1;
@@ -3855,6 +3886,8 @@ void Sidebar::show_SEMM_buttons()
     p->m_bpButton_add_filament->Show(single_or_bbl);
     p->m_bpButton_del_filament->Show(is_multi);
     p->m_flushing_volume_btn->Show(  is_multi);
+    bool is_h2c = Vortek::is_h2c_printer(wxGetApp().preset_bundle->printers.get_edited_preset());
+    p->m_purge_mode_btn->Show(is_multi && is_h2c);
 
     if (is_multi) {
         for (auto &c : p->combos_filament)
@@ -3925,6 +3958,14 @@ wxButton* Sidebar::get_wiping_dialog_button()
     return p->frequently_changed_parameters->get_wiping_dialog_button();
 #endif
     return NULL;
+}
+
+void Sidebar::enable_purge_mode_btn(bool enable)
+{
+    if (p && p->m_purge_mode_btn) {
+        p->m_purge_mode_btn->Show(enable);
+        Layout();
+    }
 }
 
 void Sidebar::set_flushing_volume_warning(const bool flushing_volume_modify)
