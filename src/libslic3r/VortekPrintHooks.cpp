@@ -648,6 +648,35 @@ void PrintHooks::silent_update_derived_maps(
     }
 }
 
+float PrintHooks::adjust_purge_volume(
+    const Slic3r::Print& print,
+    int current_filament_id,
+    int next_filament_id,
+    size_t layer_idx,
+    float default_volume
+) {
+    // Hook for H2C only
+    if (print.m_config.printer_model.value != "Bambu Lab H2C") {
+        return default_volume;
+    }
+
+    auto group_result = print.get_layered_nozzle_group_result();
+    if (!group_result) {
+        return default_volume;
+    }
+
+    // Reference to BBS: BambuStudio/src/libslic3r/Print.cpp
+    // If it's a physical nozzle change on the same extruder (carousel switch), no purging is required.
+    bool is_nozzle_change = group_result->are_filaments_same_extruder(current_filament_id, next_filament_id, layer_idx) &&
+                           !group_result->are_filaments_same_nozzle(current_filament_id, next_filament_id, layer_idx);
+    
+    if (is_nozzle_change) {
+        return 0.0f;
+    }
+
+    return default_volume;
+}
+
 #undef L
 
 // Reference to BBS: BambuStudio/src/libslic3r/PresetBundle.cpp

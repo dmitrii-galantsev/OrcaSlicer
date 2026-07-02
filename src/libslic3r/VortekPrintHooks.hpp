@@ -88,6 +88,17 @@ public:
         const std::vector<int>& f_maps,
         const std::vector<int>& final_volume_maps
     );
+
+    /**
+     * @brief Adjusts the filament change purge volume. For H2C, bypasses purging if it is a carousel nozzle change.
+     */
+    static float adjust_purge_volume(
+        const Slic3r::Print& print,
+        int current_filament_id,
+        int next_filament_id,
+        size_t layer_idx,
+        float default_volume
+    );
 };
 
 // Reference to BBS: BambuStudio/src/libslic3r/PresetBundle.hpp

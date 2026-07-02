@@ -3549,6 +3549,9 @@ void Print::_make_wipe_tower()
                         layer_tools.wiping_extrusions().mark_wiping_extrusions(*this, current_filament_id, filament_id, volume_to_purge);
                 }
 
+                // Vortek H2C bypass hook
+                volume_to_purge = ::Vortek::PrintHooks::adjust_purge_volume(*this, current_filament_id, filament_id, layer_idx, volume_to_purge);
+
                 //During the filament change, the extruder will extrude an extra length of grab_length for the corresponding detection, so the purge can reduce this length.
                 float grab_purge_volume = m_config.grab_length.get_at(nozzle_id) * 2.4; //(diameter/2)^2*PI=2.4
                 volume_to_purge = std::max(0.f, volume_to_purge - grab_purge_volume);
