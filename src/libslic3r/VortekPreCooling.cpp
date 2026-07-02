@@ -483,8 +483,44 @@ void PreCooling::inject_cooling_heating_command(
     else
         partial_free_time_gap = get_cum_time(partial_free_move_upper) - get_cum_time(std::prev(partial_free_move_lower));
 
-    if (move_iter_lower >= move_iter_upper)
+    if (move_iter_lower >= move_iter_upper) {
+        // Reference to BBS: GCodeProcessor.cpp:6590 — complete free window is zero.
+        // For intra-extruder nozzle changes, partial_free window IS available.
+        // BBS generates M104 cooldown (M632/M633 skippable) BEFORE TC using partial_free,
+        // and M104 reheat AFTER TC.
+        bool is_nozzle_change = block.last_nozzle_id != block.next_nozzle_id
+                                && block.last_nozzle_id >= 0 && block.next_nozzle_id >= 0;
+        bool has_partial_free = partial_free_move_lower < partial_free_move_upper;
+
+        if (is_nozzle_change && has_partial_free) {
+            VORTEK_LOG(warning, "inject_cooling_heating: intra-extruder nozzle change ("
+                << block.last_nozzle_id << "->" << block.next_nozzle_id
+                << ") using partial_free [" << block.partial_free_lower_id << ".." << block.partial_free_upper_id << "]");
+
+            // 1. Cooldown at partial_free_lower (BEFORE TC) — skippable with M632/M633
+            int cooldown_temp_nc = 0;
+            if (block.last_filament_id >= 0 && block.last_filament_id < (int)m_filament_pre_cooling_temps_nc.size())
+                cooldown_temp_nc = m_filament_pre_cooling_temps_nc[block.last_filament_id];
+            if (cooldown_temp_nc <= 0)
+                cooldown_temp_nc = 180;  // fallback
+
+            add_M104_lines(block.partial_free_lower_id, extruder_id, cooldown_temp_nc,
+                           block.last_filament_id, true /*skippable*/,
+                           block.next_filament_id, block.next_nozzle_id, 1,
+                           "Multi extruder nozzle change cooldown");
+
+            // 2. Reheat at free_upper (AFTER TC) — not skippable
+            int reheat_temp = 220;
+            if (block.next_filament_id >= 0 && block.next_filament_id < (int)m_filament_nozzle_temps.size())
+                reheat_temp = m_filament_nozzle_temps[block.next_filament_id];
+
+            add_M104_lines(block.free_upper_gcode_id, extruder_id, reheat_temp,
+                           block.next_filament_id, false /*not skippable*/,
+                           block.next_filament_id, block.next_nozzle_id, 2,
+                           "Multi extruder nozzle change reheat");
+        }
         return;
+    }
 
     bool apply_cooling_when_partial_free = is_pre_cooling_valid(block.last_filament_id) && pre_cooling;
 
@@ -512,7 +548,16 @@ void PreCooling::inject_cooling_heating_command(
         if (target_temp >= curr_temp)
             return;
         int clamped_target = std::max((int)room_temperature, (int)target_temp);
-        add_M104_lines(block.free_lower_gcode_id, extruder_id, clamped_target, block.last_filament_id, false, block.next_filament_id, block.next_nozzle_id, 1, "Multi extruder pre cooling");
+        // Reference to BBS: GCodeProcessor.cpp — cooldown injected at partial_free_lower_id (post-extrusion, BEFORE TC)
+        // NOT at free_lower_gcode_id which is AT the TC line itself.
+        unsigned int cooldown_id = (block.partial_free_lower_id < block.free_lower_gcode_id)
+                                    ? block.partial_free_lower_id
+                                    : block.free_lower_gcode_id;
+        VORTEK_LOG(warning, "inject_cooling_heating: cooldown S" << clamped_target
+            << " at gcode_id=" << cooldown_id
+            << " (partial_free_lower=" << block.partial_free_lower_id
+            << " free_lower=" << block.free_lower_gcode_id << ")");
+        add_M104_lines(cooldown_id, extruder_id, clamped_target, block.last_filament_id, false, block.next_filament_id, block.next_nozzle_id, 1, "Multi extruder pre cooling");
         return;
     }
 
@@ -556,7 +601,15 @@ void PreCooling::inject_cooling_heating_command(
         return;
     int cooling_temp = std::max((int)room_temperature, (int)curr_temp - real_delta_temp);
     if (!suppress_cooling_emission) {
-        add_M104_lines(block.free_lower_gcode_id, extruder_id, cooling_temp, block.last_filament_id, false, block.next_filament_id, block.next_nozzle_id, 1, "Multi extruder pre cooling");
+        // Reference to BBS: cooldown injected at partial_free_lower_id (BEFORE TC), not AT TC line.
+        unsigned int cooldown_id = (block.partial_free_lower_id < block.free_lower_gcode_id)
+                                    ? block.partial_free_lower_id
+                                    : block.free_lower_gcode_id;
+        VORTEK_LOG(warning, "inject_cooling_heating: combined cooldown S" << cooling_temp
+            << " at gcode_id=" << cooldown_id
+            << " (partial_free_lower=" << block.partial_free_lower_id
+            << " free_lower=" << block.free_lower_gcode_id << ")");
+        add_M104_lines(cooldown_id, extruder_id, cooling_temp, block.last_filament_id, false, block.next_filament_id, block.next_nozzle_id, 1, "Multi extruder pre cooling");
     } else {
         VORTEK_LOG(warning, "inject_cooling_heating: suppress full cooling emission (sentinel), would be S" << cooling_temp);
     }
