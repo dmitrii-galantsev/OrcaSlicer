@@ -77,6 +77,26 @@ void register_vortek_placeholders(
  */
 int hotend_id_override(const Slic3r::FullPrintConfig& config, int hotend_id);
 
+/**
+ * @brief Generates ;_NOZZLE_CHANGE_START and ;_NOZZLE_CHANGE_END markers for H2C Vortek nozzle changes.
+ *
+ * These markers enable build_by_extruder_blocks in VortekPreCooling to correctly build
+ * free preheat windows for Vortek nozzle changes. Must be called BEFORE patch_toolchange_dyn_config
+ * so that vortek_last_filament_id still reflects the OLD (outgoing) filament.
+ *
+ * Reference to BBS: VortekPreCooling.cpp handles_nozzle_change_line / extruder_blocks path
+ * (only applicable for H2C printers with Vortek multi-nozzle system).
+ *
+ * @param gcode Reference to the GCode object
+ * @param new_filament_id Incoming filament ID
+ * @param layer_id Current layer index
+ * @return {start_marker, end_marker} — both empty strings if not an H2C Vortek nozzle change.
+ */
+std::pair<std::string, std::string> get_nozzle_change_markers(
+    Slic3r::GCode& gcode,
+    int new_filament_id,
+    int layer_id);
+
 } // namespace GCodeHooks
 } // namespace Vortek
 

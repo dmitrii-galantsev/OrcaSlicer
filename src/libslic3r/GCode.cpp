@@ -7,6 +7,7 @@
 #include "I18N.hpp"
 #include "GCode.hpp"
 #include "GCode/VortekGCode.hpp"
+#include "VortekLog.hpp"
 #include "Exception.hpp"
 #include "ExtrusionEntity.hpp"
 #include "EdgeGrid.hpp"
@@ -971,10 +972,21 @@ static std::vector<Vec2d> get_path_of_change_filament(const Print& print)
                     config.set_key_value(key_value, new ConfigOptionFloat(0.f));
                 }
             }
+            // Vortek: H2C - generate ;_NOZZLE_CHANGE_START/END markers for VortekPreCooling.
+            // Must be called BEFORE patch_toolchange_dyn_config so vortek_last_filament_id still
+            // reflects the OLD (outgoing) filament. Reference to BBS: VortekPreCooling.cpp extruder_blocks path.
+            auto [vortek_nc_start, vortek_nc_end] = ::Vortek::GCodeHooks::get_nozzle_change_markers(gcodegen, new_filament_id, gcodegen.m_layer_index);
+            VORTEK_LOG(warning, "[GCode.cpp] call site 1 (WipeTower): new_filament=" << new_filament_id << " layer=" << gcodegen.m_layer_index << " markers_empty=" << vortek_nc_start.empty());
             // Vortek: call site 1 (WipeTowerIntegration)
             ::Vortek::GCodeHooks::patch_toolchange_dyn_config(gcodegen, config, new_filament_id, gcodegen.m_layer_index);
 
             toolchange_gcode_str = gcodegen.placeholder_parser_process("change_filament_gcode", change_filament_gcode, new_filament_id, &config);
+
+            // Vortek: H2C - wrap with nozzle change markers (empty strings for non-Vortek nozzle changes)
+            if (!vortek_nc_start.empty()) {
+                VORTEK_LOG(warning, "[GCode.cpp] call site 1: WRAPPING toolchange with markers");
+                toolchange_gcode_str = vortek_nc_start + toolchange_gcode_str + vortek_nc_end;
+            }
 
             check_add_eol(toolchange_gcode_str);
 
@@ -8005,12 +8017,24 @@ std::string GCode::set_extruder(unsigned int new_filament_id, double print_z, bo
     if (!change_filament_gcode.empty() && !(m_config.manual_filament_change.value && m_toolchange_count == 1)) {
         dyn_config.set_key_value("toolchange_z", new ConfigOptionFloat(print_z));
 
+        // Vortek: H2C - generate ;_NOZZLE_CHANGE_START/END markers for VortekPreCooling.
+        // Must be called BEFORE patch_toolchange_dyn_config so vortek_last_filament_id still
+        // reflects the OLD (outgoing) filament. Reference to BBS: VortekPreCooling.cpp extruder_blocks path.
+        auto [vortek_nc_start2, vortek_nc_end2] = ::Vortek::GCodeHooks::get_nozzle_change_markers(*this, new_filament_id, m_layer_index);
+        VORTEK_LOG(warning, "[GCode.cpp] call site 2 (tool_change): new_filament=" << new_filament_id << " layer=" << m_layer_index << " markers_empty=" << vortek_nc_start2.empty());
         // Vortek: call site 2 (GCode::tool_change)
         ::Vortek::GCodeHooks::patch_toolchange_dyn_config(*this, dyn_config, new_filament_id, m_layer_index);
 
         toolchange_gcode_parsed = placeholder_parser_process("change_filament_gcode", change_filament_gcode, new_filament_id, &dyn_config);
         check_add_eol(toolchange_gcode_parsed);
+        // Vortek: H2C - wrap with nozzle change markers (empty strings for non-Vortek nozzle changes)
+        if (!vortek_nc_start2.empty()) {
+            VORTEK_LOG(warning, "[GCode.cpp] call site 2: WRAPPING toolchange with markers");
+            gcode += vortek_nc_start2;
+        }
         gcode += toolchange_gcode_parsed;
+        if (!vortek_nc_start2.empty())
+            gcode += vortek_nc_end2;
 
         //BBS
         {

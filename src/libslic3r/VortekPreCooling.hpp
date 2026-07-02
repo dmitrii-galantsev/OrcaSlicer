@@ -153,7 +153,8 @@ private:
         float curr_temp,
         float target_temp,
         bool pre_cooling,
-        bool pre_heating
+        bool pre_heating,
+        bool suppress_cooling_emission = false
     );
 
     void inject_cooling_heating_command_bbs(
@@ -200,6 +201,9 @@ private:
     unsigned int m_machine_end_gcode_start_id;
     std::vector<Slic3r::ExtruderType> m_extruder_types;
     std::vector<double> m_nozzle_diameter;
+
+    std::vector<float> m_cumulative_times;
+    float get_cum_time(std::vector<Slic3r::GCodeProcessorResult::MoveVertex>::const_iterator it) const;
 };
 
 } // namespace Vortek

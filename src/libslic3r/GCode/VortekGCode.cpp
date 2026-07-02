@@ -426,5 +426,70 @@ int hotend_id_override(const Slic3r::FullPrintConfig& config, int hotend_id)
     return hotend_id;
 }
 
+
+std::pair<std::string, std::string> get_nozzle_change_markers(
+    Slic3r::GCode& gcode,
+    int new_filament_id,
+    int layer_id)
+{
+    // Only for H2C printers with Vortek multi-nozzle support
+    // Reference to BBS: VortekPreCooling.cpp handle_nozzle_change_line / extruder_blocks path
+    if (!gcode.m_print || !gcode.m_config.has("filament_pre_cooling_temperature_nc"))
+        return {"", ""};
+
+    // Read OLD filament from vortek_last_filament_id BEFORE patch_toolchange_dyn_config updates it
+    int old_filament_id = -1;
+    if (auto* opt = gcode.placeholder_parser().option("vortek_last_filament_id")) {
+        if (auto* opt_int = dynamic_cast<const Slic3r::ConfigOptionInt*>(opt))
+            old_filament_id = opt_int->value;
+    }
+    if (old_filament_id < 0)
+        return {"", ""}; // First filament load (startup), no nozzle change yet
+
+    // Resolve old nozzle ID
+    int old_nozzle_id = old_filament_id;
+    int new_nozzle_id = new_filament_id;
+
+    // Try static filament_nozzle_map first
+    if (gcode.m_config.has("filament_nozzle_map")) {
+        auto opt = gcode.m_config.option<Slic3r::ConfigOptionInts>("filament_nozzle_map");
+        if (opt) {
+            if (old_filament_id < (int)opt->values.size())
+                old_nozzle_id = opt->values[old_filament_id];
+            if (new_filament_id < (int)opt->values.size())
+                new_nozzle_id = opt->values[new_filament_id];
+        }
+    }
+
+    // Try dynamic layered nozzle group (more accurate for dynamic nozzle maps)
+    auto group_result = gcode.m_print->get_layered_nozzle_group_result();
+    if (group_result) {
+        auto old_info = group_result->get_nozzle_for_filament(old_filament_id, layer_id);
+        if (old_info.has_value())
+            old_nozzle_id = old_info->group_id;
+        auto new_info = group_result->get_nozzle_for_filament(new_filament_id, layer_id);
+        if (new_info.has_value())
+            new_nozzle_id = new_info->group_id;
+    }
+
+    if (old_nozzle_id == new_nozzle_id)
+        return {"", ""}; // Same physical nozzle - not a Vortek nozzle change
+
+    // Format: ;_NOZZLE_CHANGE_START OF{old_fid} NF{new_fid} ON{old_nozzle} NN{new_nozzle}
+    // Reference to BBS: VortekPreCooling.cpp handle_nozzle_change_line regex OF(\d+)\s+NF(\d+)\s+ON(\d+)\s+NN(\d+)
+    std::string params =
+        "OF" + std::to_string(old_filament_id) +
+        " NF" + std::to_string(new_filament_id) +
+        " ON" + std::to_string(old_nozzle_id) +
+        " NN" + std::to_string(new_nozzle_id);
+
+    VORTEK_LOG(warning, "get_nozzle_change_markers: " << params);
+
+    return {
+        ";_NOZZLE_CHANGE_START " + params + "\n",
+        ";_NOZZLE_CHANGE_END "   + params + "\n"
+    };
+}
+
 } // namespace GCodeHooks
 } // namespace Vortek

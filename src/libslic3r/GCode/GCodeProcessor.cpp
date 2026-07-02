@@ -9,6 +9,7 @@
 #include "libslic3r/format.hpp"
 #include "GCodeProcessor.hpp"
 #include "VortekPreCooling.hpp"
+#include "VortekLog.hpp"
 
 #include <boost/log/trivial.hpp>
 #include <boost/algorithm/string/predicate.hpp>
@@ -922,8 +923,15 @@ void GCodeProcessor::run_post_process()
     bool enable_pre_cooling = false;
     if (m_print && m_print->get_nozzle_group_result() && m_print->config().enable_pre_heating.value) {
         enable_pre_cooling = true;
+        VORTEK_LOG(warning, "[GCodeProcessor] run_post_process: CALLING run_pre_scan on " << m_result.filename);
         precooling_inserted_lines = ::Vortek::PreCooling::run_pre_scan(*this, m_result.filename);
         precooling_iter = precooling_inserted_lines.begin();
+        VORTEK_LOG(warning, "[GCodeProcessor] run_post_process: run_pre_scan returned " << precooling_inserted_lines.size() << " injection points");
+    } else {
+        VORTEK_LOG(warning, "[GCodeProcessor] run_post_process: pre-cooling DISABLED"
+            << " m_print=" << (m_print ? "yes" : "null")
+            << " nozzle_group=" << (m_print && m_print->get_nozzle_group_result() ? "yes" : "no")
+            << " enable_pre_heating=" << (m_print ? (m_print->config().enable_pre_heating.value ? "yes" : "no") : "n/a"));
     }
 
     // temporary file to contain modified gcode
