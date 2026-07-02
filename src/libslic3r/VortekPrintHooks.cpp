@@ -645,13 +645,26 @@ void PrintHooks::compute_vortek_derived_maps(
         out_filament_map_2[index] = (idx >= 0) ? idx : (f_maps[index] - 1);
     }
 
-    // 3. Compute physical_extruder_map
+    // 3. Read physical_extruder_map from printer preset (hardware property, not dependent on filament mapping mode)
+    // Reference to BBS: physical_extruder_map defines the hardware mapping between logical extruder indices
+    // and physical hotend T-numbers (e.g., [1,0] means extruder 0 → T1, extruder 1 → T0).
+    // This is a fixed printer property defined in fdm_bbl_3dp_002_common.json and must NOT be
+    // recalculated from print_extruder_id, which changes between auto/manual filament mapping modes.
     out_physical_extruder_map.clear();
-    const auto* opt_extruder_ids = temp_full_config.option<Slic3r::ConfigOptionInts>("print_extruder_id");
-    if (opt_extruder_ids) {
-        for (int ext_id : opt_extruder_ids->values) {
-            out_physical_extruder_map.push_back(ext_id - 1);
+    const auto* opt_preset_phys_map = print.m_ori_full_print_config.option<Slic3r::ConfigOptionInts>("physical_extruder_map");
+    if (opt_preset_phys_map && !opt_preset_phys_map->values.empty()) {
+        out_physical_extruder_map = opt_preset_phys_map->values;
+        VORTEK_LOG(info, "compute_vortek_derived_maps: using preset physical_extruder_map=["
+            << out_physical_extruder_map[0] << "," << (out_physical_extruder_map.size() > 1 ? std::to_string(out_physical_extruder_map[1]) : "?") << "]");
+    } else {
+        // Fallback: compute from print_extruder_id if preset is missing
+        const auto* opt_extruder_ids = temp_full_config.option<Slic3r::ConfigOptionInts>("print_extruder_id");
+        if (opt_extruder_ids) {
+            for (int ext_id : opt_extruder_ids->values) {
+                out_physical_extruder_map.push_back(ext_id - 1);
+            }
         }
+        VORTEK_LOG(warning, "compute_vortek_derived_maps: preset physical_extruder_map missing, computed fallback");
     }
 }
 
@@ -675,12 +688,10 @@ void PrintHooks::silent_update_derived_maps(
         opt->values = computed_map_2;
     }
 
-    if (auto* opt = print.m_ori_full_print_config.option<Slic3r::ConfigOptionInts>("physical_extruder_map", true)) {
-        opt->values = calculated_physical_map;
-    }
-    if (auto* opt = print.m_full_print_config.option<Slic3r::ConfigOptionInts>("physical_extruder_map", true)) {
-        opt->values = calculated_physical_map;
-    }
+    // Note: physical_extruder_map is NOT updated here — it is a hardware property
+    // from the printer preset (fdm_bbl_3dp_002_common.json) and must remain constant.
+    // Reference to BBS: BambuStudio always uses preset physical_extruder_map=[1,0] regardless
+    // of filament mapping mode (auto/manual).
 }
 
 float PrintHooks::adjust_purge_volume(

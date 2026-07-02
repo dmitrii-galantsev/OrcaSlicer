@@ -404,9 +404,24 @@ void PreCooling::inject_cooling_heating_command(
         return iter;
     };
 
-    int extruder_id = get_valid_extruder_id(block.last_nozzle_id);
-    float ext_heating_rate = m_heating_rate.size() > (size_t)extruder_id ? m_heating_rate[extruder_id] : 2.0f;
-    float ext_cooling_rate = m_cooling_rate.size() > (size_t)extruder_id ? m_cooling_rate[extruder_id] : 0.5f;
+    int last_extruder_id = get_valid_extruder_id(block.last_nozzle_id);
+    int next_extruder_id = get_valid_extruder_id(block.next_nozzle_id);
+    float ext_heating_rate = m_heating_rate.size() > (size_t)next_extruder_id ? m_heating_rate[next_extruder_id] : 2.0f;
+    float ext_cooling_rate = m_cooling_rate.size() > (size_t)last_extruder_id ? m_cooling_rate[last_extruder_id] : 0.5f;
+
+    // Diagnostic: log extruder routing and physical_extruder_map
+    {
+        std::string pem_str;
+        for (size_t i = 0; i < m_physical_extruder_map.size(); ++i)
+            pem_str += (i ? "," : "") + std::to_string(m_physical_extruder_map[i]);
+        int last_phys = (last_extruder_id >= 0 && last_extruder_id < (int)m_physical_extruder_map.size()) ? m_physical_extruder_map[last_extruder_id] : -1;
+        int next_phys = (next_extruder_id >= 0 && next_extruder_id < (int)m_physical_extruder_map.size()) ? m_physical_extruder_map[next_extruder_id] : -1;
+        VORTEK_LOG(warning, "inject_cooling_heating_command:"
+            << " last_nozzle=" << block.last_nozzle_id << "->last_ext=" << last_extruder_id << "->phys_T" << last_phys
+            << " | next_nozzle=" << block.next_nozzle_id << "->next_ext=" << next_extruder_id << "->phys_T" << next_phys
+            << " | physical_extruder_map=[" << pem_str << "]"
+            << " | heating_rate=" << ext_heating_rate << " cooling_rate=" << ext_cooling_rate);
+    }
 
     auto add_M104_lines = [&](int gcode_id, int target_extruder, int target_temp, int target_filament, bool skippable, int next_filament_idx, int next_nozzle_id, int type, const std::string& comment = std::string()) {
         auto format_line_M104 = [&](int target_extruder_inner, int target_temp_inner, int target_filament_inner, bool skippable_inner, int next_filament_idx_inner, int next_nozzle_id_inner, const std::string& comment_inner) -> std::vector<std::string> {
@@ -505,7 +520,7 @@ void PreCooling::inject_cooling_heating_command(
             if (cooldown_temp_nc <= 0)
                 cooldown_temp_nc = 180;  // fallback
 
-            add_M104_lines(block.partial_free_lower_id, extruder_id, cooldown_temp_nc,
+            add_M104_lines(block.partial_free_lower_id, last_extruder_id, cooldown_temp_nc,
                            block.last_filament_id, true /*skippable*/,
                            block.next_filament_id, block.next_nozzle_id, 1,
                            "Multi extruder nozzle change cooldown");
@@ -515,7 +530,7 @@ void PreCooling::inject_cooling_heating_command(
             if (block.next_filament_id >= 0 && block.next_filament_id < (int)m_filament_nozzle_temps.size())
                 reheat_temp = m_filament_nozzle_temps[block.next_filament_id];
 
-            add_M104_lines(block.free_upper_gcode_id, extruder_id, reheat_temp,
+            add_M104_lines(block.free_upper_gcode_id, next_extruder_id, reheat_temp,
                            block.next_filament_id, false /*not skippable*/,
                            block.next_filament_id, block.next_nozzle_id, 2,
                            "Multi extruder nozzle change reheat");
@@ -539,7 +554,7 @@ void PreCooling::inject_cooling_heating_command(
         float max_cooling_temp = std::min(curr_temp, std::min(get_partial_free_cooling_thres(block.last_filament_id), partial_free_time_gap * ext_cooling_rate));
         curr_temp = std::max(room_temperature, curr_temp - max_cooling_temp);
         if (!suppress_cooling_emission) {
-            add_M104_lines(block.partial_free_lower_id, extruder_id, curr_temp, block.last_filament_id, false, block.next_filament_id, block.next_nozzle_id, 1, "Multi extruder pre cooling in post extrusion");
+            add_M104_lines(block.partial_free_lower_id, last_extruder_id, curr_temp, block.last_filament_id, false, block.next_filament_id, block.next_nozzle_id, 1, "Multi extruder pre cooling in post extrusion");
         } else {
             VORTEK_LOG(warning, "inject_cooling_heating: suppress partial cooling emission (sentinel block)");
         }
@@ -558,7 +573,7 @@ void PreCooling::inject_cooling_heating_command(
             << " at gcode_id=" << cooldown_id
             << " (partial_free_lower=" << block.partial_free_lower_id
             << " free_lower=" << block.free_lower_gcode_id << ")");
-        add_M104_lines(cooldown_id, extruder_id, clamped_target, block.last_filament_id, false, block.next_filament_id, block.next_nozzle_id, 1, "Multi extruder pre cooling");
+        add_M104_lines(cooldown_id, last_extruder_id, clamped_target, block.last_filament_id, false, block.next_filament_id, block.next_nozzle_id, 1, "Multi extruder pre cooling");
         return;
     }
 
@@ -568,12 +583,12 @@ void PreCooling::inject_cooling_heating_command(
         float heating_start_time = get_cum_time(move_iter_upper) - (target_temp - curr_temp) / ext_heating_rate;
         auto heating_move_iter = std::upper_bound(move_iter_lower, move_iter_upper + 1, heating_start_time, [this](float time, const Slic3r::GCodeProcessorResult::MoveVertex& a) { return time < get_cum_time(m_moves.cbegin() + (&a - &m_moves[0])); });
         if (heating_move_iter == move_iter_lower) {
-            add_M104_lines(block.free_lower_gcode_id, extruder_id, target_temp, block.next_filament_id, true, block.next_filament_id, block.next_nozzle_id, 2, "Multi extruder pre heating");
+            add_M104_lines(block.free_lower_gcode_id, next_extruder_id, target_temp, block.next_filament_id, true, block.next_filament_id, block.next_nozzle_id, 2, "Multi extruder pre heating");
         }
         else {
             --heating_move_iter;
             heating_move_iter = adjust_iter(heating_move_iter, move_iter_lower, move_iter_upper, false);
-            add_M104_lines(heating_move_iter->gcode_id, extruder_id, target_temp, block.next_filament_id, true, block.next_filament_id, block.next_nozzle_id, 2, "Multi extruder pre heating");
+            add_M104_lines(heating_move_iter->gcode_id, next_extruder_id, target_temp, block.next_filament_id, true, block.next_filament_id, block.next_nozzle_id, 2, "Multi extruder pre heating");
         }
         return;
     }
@@ -610,11 +625,11 @@ void PreCooling::inject_cooling_heating_command(
             << " at gcode_id=" << cooldown_id
             << " (partial_free_lower=" << block.partial_free_lower_id
             << " free_lower=" << block.free_lower_gcode_id << ")");
-        add_M104_lines(cooldown_id, extruder_id, cooling_temp, block.last_filament_id, false, block.next_filament_id, block.next_nozzle_id, 1, "Multi extruder pre cooling");
+        add_M104_lines(cooldown_id, last_extruder_id, cooling_temp, block.last_filament_id, false, block.next_filament_id, block.next_nozzle_id, 1, "Multi extruder pre cooling");
     } else {
         VORTEK_LOG(warning, "inject_cooling_heating: suppress full cooling emission (sentinel), would be S" << cooling_temp);
     }
-    add_M104_lines(heating_move_iter->gcode_id, extruder_id, target_temp, block.next_filament_id, true, block.next_filament_id, block.next_nozzle_id, 2, "Multi extruder pre heating");
+    add_M104_lines(heating_move_iter->gcode_id, next_extruder_id, target_temp, block.next_filament_id, true, block.next_filament_id, block.next_nozzle_id, 2, "Multi extruder pre heating");
 
     // Reference to BBS: BambuStudio/src/libslic3r/GCode/GCodeProcessor.cpp
     // When preheat_temperature_delta is active (target_temp < nozzle_temp), BBS injects
@@ -627,7 +642,7 @@ void PreCooling::inject_cooling_heating_command(
             // otherwise fall back to free_upper_gcode_id
             unsigned int reheat_gcode_id = block.post_tc_gcode_id > 0 ? block.post_tc_gcode_id : block.free_upper_gcode_id;
             VORTEK_LOG(warning, "inject_cooling_heating: adding post-TC reheat S" << nozzle_temp << " (preheat was S" << (int)target_temp << ") at gcode_id=" << reheat_gcode_id << " (post_tc=" << block.post_tc_gcode_id << ")");
-            add_M104_lines(reheat_gcode_id, extruder_id, nozzle_temp, block.next_filament_id, false, block.next_filament_id, block.next_nozzle_id, 2, "Multi extruder post-TC reheat");
+            add_M104_lines(reheat_gcode_id, next_extruder_id, nozzle_temp, block.next_filament_id, false, block.next_filament_id, block.next_nozzle_id, 2, "Multi extruder post-TC reheat");
         }
     }
 }
