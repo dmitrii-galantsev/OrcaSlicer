@@ -5093,6 +5093,9 @@ void MachineObject::parse_new_info(json print)
         if (device.contains("nozzle")) {  DevNozzleSystemParser::ParseV2_0(device["nozzle"], m_nozzle_system); }
         if (device.contains("extruder")) { ExtderSystemParser::ParseV2_0(device["extruder"], m_extder_system);}
         if (device.contains("ext_tool")) { DevExtensionToolParser::ParseV2_0(device["ext_tool"], m_extension_tool); }
+        if (device.contains("holder") || device.contains("nozzle")) {
+            Vortek::DeviceHooks::parse_device_state(this, device);
+        }
 
         if (m_nozzle_system && !fun.empty()) {
             Vortek::DeviceHooks::set_support_nozzle_rack(this, get_flag_bits(fun, 60));

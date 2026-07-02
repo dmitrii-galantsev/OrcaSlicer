@@ -18,6 +18,8 @@ void VortekNozzleRack::Reset()
 {
     m_position = RACK_POS_UNKNOWN;
     m_status = RACK_STATUS_UNKNOWN;
+    m_reading_idx = 0;
+    m_reading_count = 0;
     m_rack_nozzles.clear();
     m_rack_nozzles_firmware.clear();
     m_extruder_nozzle_firmware = DevFirmwareVersionInfo();

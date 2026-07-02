@@ -397,6 +397,35 @@ void set_support_nozzle_rack(Slic3r::MachineObject* obj, bool supported) {
     }
 }
 
+void parse_device_state(Slic3r::MachineObject* obj, const nlohmann::json& device_json) {
+    if (!obj) return;
+
+    if (device_json.contains("holder")) {
+        auto rack = get_or_create_nozzle_rack(obj);
+        if (rack) {
+            rack->ParseRackInfo(device_json["holder"]);
+        }
+    }
+
+    if (device_json.contains("nozzle")) {
+        const auto& nozzle_json = device_json["nozzle"];
+        if (nozzle_json.contains("state")) {
+            int state_val = nozzle_json["state"].get<int>();
+            auto rack = get_or_create_nozzle_rack(obj);
+            if (rack) {
+                int new_reading_idx = Slic3r::DevUtil::get_flag_bits(state_val, 8, 4);
+                int new_reading_count = Slic3r::DevUtil::get_flag_bits(state_val, 4, 4);
+                if (rack->GetReadingCount() != new_reading_count || rack->GetReadingIdx() != new_reading_idx) {
+                    rack->SetReadingInfo(new_reading_idx, new_reading_count);
+                    if (new_reading_count == 0) {
+                        rack->SendReadingFinished();
+                    }
+                }
+            }
+        }
+    }
+}
+
 std::shared_ptr<Slic3r::VortekNozzleRack> get_or_create_nozzle_rack(Slic3r::MachineObject* obj) {
     if (!obj) return nullptr;
     auto it = s_nozzle_racks.find(obj);

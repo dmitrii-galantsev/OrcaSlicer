@@ -81,8 +81,12 @@ public:
     int GetKnownNozzleCount() const;
 
     // refreshing
-    int GetReadingIdx() const { return 0; }
-    int GetReadingCount() const { return 0; }
+    int GetReadingIdx() const { return m_reading_idx; }
+    int GetReadingCount() const { return m_reading_count; }
+    void SetReadingInfo(int idx, int count) {
+        m_reading_idx = idx;
+        m_reading_count = count;
+    }
     void SendReadingFinished();
 
     // firmware
@@ -141,5 +145,7 @@ private:
     std::map<int, DevFirmwareVersionInfo> m_rack_nozzles_firmware;
     DevFirmwareVersionInfo m_extruder_nozzle_firmware;
     std::set<int> m_on_rack_nozzle_ids;
+    int m_reading_idx = 0;
+    int m_reading_count = 0;
 };
 }

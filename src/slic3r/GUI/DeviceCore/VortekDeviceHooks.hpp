@@ -119,6 +119,7 @@ void sync_machine_nozzle_inventory_to_preset(const Slic3r::MachineObject* obj, S
 void reset_nozzle_system(Slic3r::DevNozzleSystem* system);
 
 void set_support_nozzle_rack(Slic3r::MachineObject* obj, bool supported);
+void parse_device_state(Slic3r::MachineObject* obj, const nlohmann::json& device_json);
 
 std::shared_ptr<Slic3r::VortekNozzleRack> get_or_create_nozzle_rack(Slic3r::MachineObject* obj);
 std::shared_ptr<Slic3r::VortekNozzleRack> get_nozzle_rack(const Slic3r::DevNozzleSystem* system);
