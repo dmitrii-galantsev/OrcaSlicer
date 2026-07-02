@@ -93,6 +93,7 @@ struct DevPrintTaskRatingInfo;
 
 class VortekNozzleMappingCtrl;
 class VortekFilaSwitch;
+class VortekNozzleRack;
 
 
 class MachineObject
@@ -332,6 +333,7 @@ public:
     std::weak_ptr<DevExtensionTool> GetExtensionTool() const { return m_extension_tool; }
 
     DevNozzleSystem* GetNozzleSystem() const { return m_nozzle_system;}
+    std::shared_ptr<VortekNozzleRack> GetNozzleRack() const;
 
     DevFilaSystem*   GetFilaSystem() const { return m_fila_system;}
     bool             HasAms() const;

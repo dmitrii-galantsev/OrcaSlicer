@@ -1,6 +1,7 @@
 #pragma once
 #include "libslic3r/CommonDefs.hpp"
 #include "slic3r/Utils/json_diff.hpp"
+#include "DevDefs.h"
 
 #include <wx/string.h>
 #include <map>
@@ -16,6 +17,8 @@ namespace Slic3r
        NozzleFlowType  m_nozzle_flow = NozzleFlowType::S_FLOW;// 0-common 1-high flow
        NozzleType      m_nozzle_type = NozzleType::ntUndefine;// 0-stainless_steel 1-hardened_steel 5-tungsten_carbide
        float           m_diameter = 0.0f;// unknown until reported by the printer
+       int             m_nozzle_print_time = 0;
+       int             GetNozzlePrintTime() const { return m_nozzle_print_time; }
    };
 
    class DevNozzleSystem
@@ -35,6 +38,7 @@ namespace Slic3r
        DevNozzle                       GetNozzle(int id) const;
        const std::map<int, DevNozzle>& GetNozzles() const { return m_nozzles;}
        bool                            IsRefreshing() const { return m_state == 1; }
+       MachineObject*                  GetOwner() const { return m_owner; }
 
    private:
        void Reset();

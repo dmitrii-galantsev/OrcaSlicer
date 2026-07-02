@@ -87,8 +87,10 @@ public:
 
     // firmware
     void AddNozzleFirmwareInfo(int nozzle_id, const DevFirmwareVersionInfo& info) { m_rack_nozzles_firmware[nozzle_id] = info; }
-    void ClearNozzleFirmwareInfo() { m_rack_nozzles_firmware.clear(); }
+    void ClearNozzleFirmwareInfo() { m_rack_nozzles_firmware.clear(); m_extruder_nozzle_firmware = DevFirmwareVersionInfo(); }
     DevFirmwareVersionInfo GetNozzleFirmwareInfo(int nozzle_id) const;
+    void SetExtruderNozzleFirmwareInfo(const DevFirmwareVersionInfo& info) { m_extruder_nozzle_firmware = info; }
+    DevFirmwareVersionInfo GetExtruderNozzleFirmwareInfo() const { return m_extruder_nozzle_firmware; }
 
     // setters
     void  Reset();
@@ -137,6 +139,7 @@ private:
 
     std::map<int, DevNozzle> m_rack_nozzles; // Map of nozzle ID to DevNozzle objects
     std::map<int, DevFirmwareVersionInfo> m_rack_nozzles_firmware;
+    DevFirmwareVersionInfo m_extruder_nozzle_firmware;
     std::set<int> m_on_rack_nozzle_ids;
 };
 }

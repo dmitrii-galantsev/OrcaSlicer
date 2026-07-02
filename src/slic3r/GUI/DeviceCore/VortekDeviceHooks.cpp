@@ -10,6 +10,8 @@
 #include "libslic3r/VortekMultiNozzle.hpp"
 #include "libslic3r/VortekLog.hpp"
 #include "slic3r/GUI/PartPlate.hpp"
+#include "slic3r/GUI/I18N.hpp"
+#include <mutex>
 
 #include <map>
 #include <vector>
@@ -19,6 +21,62 @@
 
 namespace Vortek {
 namespace DeviceHooks {
+
+class VortekNozzleFilamentManager {
+public:
+    struct NozzleFilamentInfo {
+        std::string id;
+        std::string color;
+    };
+
+    static VortekNozzleFilamentManager& get_instance() {
+        static VortekNozzleFilamentManager instance;
+        return instance;
+    }
+
+    void set_filament_info(const Slic3r::DevNozzleSystem* system, int nozzle_id, const std::string& id, const std::string& color) {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_nozzle_filaments[system][nozzle_id] = {id, color};
+    }
+
+    std::string get_filament_id(const Slic3r::DevNozzleSystem* system, int nozzle_id) {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        auto it_sys = m_nozzle_filaments.find(system);
+        if (it_sys != m_nozzle_filaments.end()) {
+            auto it_nozzle = it_sys->second.find(nozzle_id);
+            if (it_nozzle != it_sys->second.end()) {
+                return it_nozzle->second.id;
+            }
+        }
+        return "";
+    }
+
+    std::string get_filament_color(const Slic3r::DevNozzleSystem* system, int nozzle_id) {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        auto it_sys = m_nozzle_filaments.find(system);
+        if (it_sys != m_nozzle_filaments.end()) {
+            auto it_nozzle = it_sys->second.find(nozzle_id);
+            if (it_nozzle != it_sys->second.end()) {
+                return it_nozzle->second.color;
+            }
+        }
+        return "";
+    }
+
+    void clear_for_system(const Slic3r::DevNozzleSystem* system) {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_nozzle_filaments.erase(system);
+    }
+
+private:
+    VortekNozzleFilamentManager() = default;
+    ~VortekNozzleFilamentManager() = default;
+    VortekNozzleFilamentManager(const VortekNozzleFilamentManager&) = delete;
+    VortekNozzleFilamentManager& operator=(const VortekNozzleFilamentManager&) = delete;
+
+    std::mutex m_mutex;
+    std::map<const Slic3r::DevNozzleSystem*, std::map<int, NozzleFilamentInfo>> m_nozzle_filaments;
+};
 
 static std::map<const Slic3r::MachineObject*, std::shared_ptr<Slic3r::VortekNozzleRack>> s_nozzle_racks;
 static std::map<const Slic3r::DevAms*, std::set<int>> s_ams_binded_extruders;
@@ -371,12 +429,55 @@ std::optional<int> get_ams_binded_switcher_pos(const Slic3r::DevAms* ams) {
 }
 
 std::string get_nozzle_wear(const Slic3r::DevNozzle& nozzle) { return "0"; }
-std::string get_nozzle_filament_id(const Slic3r::DevNozzle& nozzle) { return ""; }
-std::string get_nozzle_filament_color(const Slic3r::DevNozzle& nozzle) { return ""; }
+std::string get_nozzle_filament_id(const Slic3r::DevNozzle& nozzle, const Slic3r::DevNozzleSystem* system) {
+    std::string res = VortekNozzleFilamentManager::get_instance().get_filament_id(system, nozzle.m_nozzle_id);
+    VORTEK_LOG(debug, "get_nozzle_filament_id: system=" << system << ", nozzle_id=" << nozzle.m_nozzle_id << ", res=" << res);
+    return res;
+}
+std::string get_nozzle_filament_color(const Slic3r::DevNozzle& nozzle, const Slic3r::DevNozzleSystem* system) {
+    std::string res = VortekNozzleFilamentManager::get_instance().get_filament_color(system, nozzle.m_nozzle_id);
+    VORTEK_LOG(debug, "get_nozzle_filament_color: system=" << system << ", nozzle_id=" << nozzle.m_nozzle_id << ", res=" << res);
+    return res;
+}
+void parse_nozzle_filament(Slic3r::DevNozzleSystem* system, int nozzle_id, const nlohmann::json& njon) {
+    if (!system) return;
+    std::string id = njon.contains("fila_id") ? njon["fila_id"].get<std::string>() : "";
+    std::string color = njon.contains("color_m") ? njon["color_m"].get<std::string>() : "";
+    VORTEK_LOG(info, "parse_nozzle_filament: system=" << system << ", nozzle_id=" << nozzle_id << ", cate=" << id << ", color=" << color << ", raw_json=" << njon.dump());
+    VortekNozzleFilamentManager::get_instance().set_filament_info(system, nozzle_id, id, color);
+}
 bool is_nozzle_normal(const Slic3r::DevNozzle& nozzle) { return nozzle.m_nozzle_id != -1; }
 int get_nozzle_id(const Slic3r::DevNozzle& nozzle) { return nozzle.m_nozzle_id; }
 std::string to_nozzle_flow_string(Slic3r::NozzleFlowType flow_type) {
     return (flow_type == Slic3r::NozzleFlowType::H_FLOW ? "high_flow" : "standard");
+}
+wxString get_nozzle_type_str(const Slic3r::DevNozzle& nozzle) {
+    switch (nozzle.m_nozzle_type) {
+    case Slic3r::ntHardenedSteel:   return _L("Hardened Steel");
+    case Slic3r::ntStainlessSteel:  return _L("Stainless Steel");
+    case Slic3r::ntTungstenCarbide: return _L("Tungsten Carbide");
+    case Slic3r::ntBrass:           return _L("Brass");
+    default: break;
+    }
+    return _L("Unknown");
+}
+wxString get_nozzle_flow_type_str(const Slic3r::DevNozzle& nozzle) {
+    switch (nozzle.m_nozzle_flow) {
+    case Slic3r::NozzleFlowType::H_FLOW: return _L("High Flow");
+    case Slic3r::NozzleFlowType::S_FLOW: return _L("Standard");
+    case Slic3r::NozzleFlowType::U_FLOW: return _L("TPU High Flow");
+    default: break;
+    }
+    return _L("Unknown");
+}
+std::string get_nozzle_type_string(Slic3r::NozzleType type) {
+    switch (type) {
+    case Slic3r::ntHardenedSteel:   return "Hardened Steel";
+    case Slic3r::ntStainlessSteel:  return "Stainless Steel";
+    case Slic3r::ntTungstenCarbide: return "Tungsten Carbide";
+    case Slic3r::ntBrass:           return "Brass";
+    default:                        return "Unknown";
+    }
 }
 std::optional<int> get_replace_nozzle_tar(const Slic3r::DevNozzleSystem* system) {
     return std::nullopt;
@@ -465,6 +566,60 @@ std::shared_ptr<Slic3r::VortekFilaSwitch> get_fila_switch(const Slic3r::MachineO
     return it != s_fila_switches.end() ? it->second : nullptr;
 }
 
+bool is_h2c_printer(const Slic3r::MachineObject* obj) {
+    if (!obj) return false;
+    return obj->printer_type == "O1C" || obj->printer_type == "O1C2" || obj->printer_type == "Bambu Lab H2C";
+}
+
+void store_wtm_firmware_info(Slic3r::MachineObject* obj, const Slic3r::DevFirmwareVersionInfo& info) {
+    if (!is_h2c_printer(obj)) return;
+    auto rack = get_or_create_nozzle_rack(obj);
+    if (!rack) return;
+
+    static const std::string s_wtm_prefix = "wtm/";
+    auto pos = info.name.find(s_wtm_prefix);
+    if (pos == std::string::npos) {
+        rack->SetExtruderNozzleFirmwareInfo(info);
+    } else {
+        try {
+            auto str = info.name.substr(s_wtm_prefix.size());
+            int rack_nozzle_id = std::stoi(str, nullptr, 0) - 0x10;
+            rack->AddNozzleFirmwareInfo(rack_nozzle_id, info);
+        } catch (...) {}
+    }
+}
+
+void clear_wtm_firmware_info(Slic3r::MachineObject* obj) {
+    if (!is_h2c_printer(obj)) return;
+    auto rack = get_nozzle_rack(obj->GetNozzleSystem());
+    if (rack) {
+        rack->ClearNozzleFirmwareInfo();
+    }
+}
+
+Slic3r::DevFirmwareVersionInfo get_nozzle_firmware_info(const Slic3r::DevNozzle& nozzle, const Slic3r::DevNozzleSystem* system) {
+    auto rack = get_nozzle_rack(system);
+    if (!rack) return Slic3r::DevFirmwareVersionInfo();
+    if (rack->IsNozzleOnRack(nozzle.m_nozzle_id)) {
+        return rack->GetNozzleFirmwareInfo(nozzle.m_nozzle_id);
+    } else {
+        return rack->GetExtruderNozzleFirmwareInfo();
+    }
+}
+
+Slic3r::NozzleDiameterType get_nozzle_diameter_type(const Slic3r::DevNozzle& nozzle) {
+    if (Slic3r::is_approx(nozzle.m_diameter, 0.2f))
+        return Slic3r::NozzleDiameterType::NOZZLE_DIAMETER_0_2;
+    else if(Slic3r::is_approx(nozzle.m_diameter, 0.4f))
+        return Slic3r::NozzleDiameterType::NOZZLE_DIAMETER_0_4;
+    else if(Slic3r::is_approx(nozzle.m_diameter, 0.6f))
+        return Slic3r::NozzleDiameterType::NOZZLE_DIAMETER_0_6;
+    else if(Slic3r::is_approx(nozzle.m_diameter, 0.8f))
+        return Slic3r::NozzleDiameterType::NOZZLE_DIAMETER_0_8;
+    else
+        return Slic3r::NozzleDiameterType::NONE_DIAMETER_TYPE;
+}
+
 void init_device_mappings(Slic3r::MachineObject* obj) {
     if (!obj) return;
     get_or_create_nozzle_mapping(obj);
@@ -473,6 +628,9 @@ void init_device_mappings(Slic3r::MachineObject* obj) {
 
 void clear_all_device_mappings(Slic3r::MachineObject* obj) {
     if (!obj) return;
+    if (obj->GetNozzleSystem()) {
+        VortekNozzleFilamentManager::get_instance().clear_for_system(obj->GetNozzleSystem());
+    }
     s_nozzle_racks.erase(obj);
     s_nozzle_mappings.erase(obj);
     s_fila_switches.erase(obj);
@@ -601,6 +759,7 @@ bool apply_nozzle_mapping_from_device(Slic3r::MachineObject* obj, Slic3r::GUI::P
 void reset_nozzle_system(Slic3r::DevNozzleSystem* system)
 {
     if (!system) return;
+    VortekNozzleFilamentManager::get_instance().clear_for_system(system);
     auto rack = get_nozzle_rack(system);
     // Execute only for H2C printers with nozzle rack support
     if (rack && rack->IsSupported()) {

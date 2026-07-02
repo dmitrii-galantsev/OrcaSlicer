@@ -143,8 +143,13 @@ void DevNozzleSystemParser::ParseV2_0(const json& nozzle_json, DevNozzleSystem* 
         int raw_id = njon["id"].get<int>();
         nozzle_obj.m_diameter = njon["diameter"].get<float>();
         s_parse_nozzle_type(njon["type"].get<std::string>(), nozzle_obj);
+        if (njon.contains("p_t")) {
+            nozzle_obj.m_nozzle_print_time = njon["p_t"].get<int>();
+        }
         
+        // Reference to BBS: BambuStudio/src/slic3r/GUI/DeviceCore/DevNozzleSystem.cpp
         Vortek::DeviceHooks::process_nozzle_placement(system, nozzle_obj, raw_id);
+        Vortek::DeviceHooks::parse_nozzle_filament(system, nozzle_obj.m_nozzle_id, njon);
         if (!Vortek::DeviceHooks::is_nozzle_on_rack_helper(system, nozzle_obj.m_nozzle_id)) {
             system->m_nozzles[nozzle_obj.m_nozzle_id] = nozzle_obj;
         }

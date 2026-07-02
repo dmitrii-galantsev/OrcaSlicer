@@ -870,6 +870,7 @@ void MachineObject::clear_version_info()
     cutting_module_version_info = DevFirmwareVersionInfo();
     extinguish_version_info = DevFirmwareVersionInfo();
     module_vers.clear();
+    Vortek::DeviceHooks::clear_wtm_firmware_info(this);
 }
 
 void MachineObject::store_version_info(const DevFirmwareVersionInfo& info)
@@ -882,6 +883,10 @@ void MachineObject::store_version_info(const DevFirmwareVersionInfo& info)
         cutting_module_version_info = info;
     } else if (info.isExtinguishSystem()) {
         extinguish_version_info = info;
+    }
+
+    if (info.name == "wtm" || info.name.rfind("wtm/", 0) == 0) {
+        Vortek::DeviceHooks::store_wtm_firmware_info(this, info);
     }
 
     module_vers.emplace(info.name, info);
@@ -5512,6 +5517,11 @@ Slic3r::DevAmsTray* MachineObject::get_ams_tray(std::string ams_id, std::string 
 bool MachineObject::HasAms() const
 {
     return m_fila_system->HasAms();
+}
+
+std::shared_ptr<VortekNozzleRack> MachineObject::GetNozzleRack() const
+{
+    return Vortek::DeviceHooks::get_nozzle_rack(m_nozzle_system);
 }
 
 void change_the_opacity(wxColour& colour)

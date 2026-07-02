@@ -168,8 +168,8 @@ int VortekNozzleMappingCtrl::CtrlGetAutoNozzleMappingV0(Slic3r::GUI::Plater* pla
             nozzle_item_jj["nozzle_d"] = s_get_diameter_str(nozzle.second.m_diameter);
             nozzle_item_jj["nozzle_v"] = Vortek::DeviceHooks::to_nozzle_flow_string(Vortek::DeviceHooks::get_nozzle_flow_type(nozzle.second));
             nozzle_item_jj["wear"] = Vortek::DeviceHooks::get_nozzle_wear(nozzle.second);
-            nozzle_item_jj["cate"] = Vortek::DeviceHooks::get_nozzle_filament_id(nozzle.second);
-            nozzle_item_jj["color"] = Vortek::DeviceHooks::get_nozzle_filament_color(nozzle.second);
+            nozzle_item_jj["cate"] = Vortek::DeviceHooks::get_nozzle_filament_id(nozzle.second, nozzle_system);
+            nozzle_item_jj["color"] = Vortek::DeviceHooks::get_nozzle_filament_color(nozzle.second, nozzle_system);
             nozzle_info_jj.push_back(nozzle_item_jj);
         }
     }
@@ -188,8 +188,8 @@ int VortekNozzleMappingCtrl::CtrlGetAutoNozzleMappingV0(Slic3r::GUI::Plater* pla
             nozzle_item_jj["nozzle_d"] = s_get_diameter_str(nozzle.second.m_diameter);
             nozzle_item_jj["nozzle_v"] = Vortek::DeviceHooks::to_nozzle_flow_string(Vortek::DeviceHooks::get_nozzle_flow_type(nozzle.second));
             nozzle_item_jj["wear"] = Vortek::DeviceHooks::get_nozzle_wear(nozzle.second);
-            nozzle_item_jj["cate"] = Vortek::DeviceHooks::get_nozzle_filament_id(nozzle.second);
-            nozzle_item_jj["color"] = Vortek::DeviceHooks::get_nozzle_filament_color(nozzle.second);
+            nozzle_item_jj["cate"] = Vortek::DeviceHooks::get_nozzle_filament_id(nozzle.second, nozzle_system);
+            nozzle_item_jj["color"] = Vortek::DeviceHooks::get_nozzle_filament_color(nozzle.second, nozzle_system);
             nozzle_info_jj.push_back(nozzle_item_jj);
         }
     }

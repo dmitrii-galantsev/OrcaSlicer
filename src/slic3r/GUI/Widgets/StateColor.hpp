@@ -36,6 +36,13 @@ public:
     static wxColour darkModeColorFor(wxColour const &color);
     static wxColour lightModeColorFor(wxColour const &color);
 
+    static StateColor createButtonStyleGray() {
+        return StateColor(std::pair<wxColour, int>(wxColour(206, 206, 206), Pressed),
+                          std::pair<wxColour, int>(*wxWHITE, Focused),
+                          std::pair<wxColour, int>(wxColour(238, 238, 238), Hovered),
+                          std::pair<wxColour, int>(*wxWHITE, Normal));
+    }
+
 public:
     template<typename ...Colors>
     StateColor(std::pair<Colors, int>... colors) {

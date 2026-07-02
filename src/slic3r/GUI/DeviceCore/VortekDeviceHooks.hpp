@@ -12,6 +12,7 @@ using json = nlohmann::json;
 
 #include "DevDefs.h"
 #include "DevNozzleSystem.h"
+#include "DevFirmware.h"
 #include "libslic3r/PrintConfig.hpp"
 
 namespace Slic3r {
@@ -40,11 +41,17 @@ std::string get_nozzle_diameter_str(const Slic3r::DevNozzle& nozzle);
 Slic3r::NozzleFlowType get_nozzle_flow_type(const Slic3r::DevNozzle& nozzle);
 int get_logic_extruder_id(const Slic3r::DevNozzle& nozzle);
 std::string get_nozzle_wear(const Slic3r::DevNozzle& nozzle);
-std::string get_nozzle_filament_id(const Slic3r::DevNozzle& nozzle);
-std::string get_nozzle_filament_color(const Slic3r::DevNozzle& nozzle);
+std::string get_nozzle_filament_id(const Slic3r::DevNozzle& nozzle, const Slic3r::DevNozzleSystem* system = nullptr);
+std::string get_nozzle_filament_color(const Slic3r::DevNozzle& nozzle, const Slic3r::DevNozzleSystem* system = nullptr);
+void parse_nozzle_filament(Slic3r::DevNozzleSystem* system, int nozzle_id, const nlohmann::json& njon);
 bool is_nozzle_normal(const Slic3r::DevNozzle& nozzle);
 int get_nozzle_id(const Slic3r::DevNozzle& nozzle);
 std::string to_nozzle_flow_string(Slic3r::NozzleFlowType flow_type);
+wxString get_nozzle_type_str(const Slic3r::DevNozzle& nozzle);
+wxString get_nozzle_flow_type_str(const Slic3r::DevNozzle& nozzle);
+std::string get_nozzle_type_string(Slic3r::NozzleType type);
+Slic3r::DevFirmwareVersionInfo get_nozzle_firmware_info(const Slic3r::DevNozzle& nozzle, const Slic3r::DevNozzleSystem* system);
+Slic3r::NozzleDiameterType get_nozzle_diameter_type(const Slic3r::DevNozzle& nozzle);
 std::optional<int> get_replace_nozzle_tar(const Slic3r::DevNozzleSystem* system);
 
 /**
@@ -96,6 +103,10 @@ void process_nozzle_placement(
     Slic3r::DevNozzleSystem* system,
     Slic3r::DevNozzle& nozzle_obj,
     int raw_id);
+
+bool is_h2c_printer(const Slic3r::MachineObject* obj);
+void store_wtm_firmware_info(Slic3r::MachineObject* obj, const Slic3r::DevFirmwareVersionInfo& info);
+void clear_wtm_firmware_info(Slic3r::MachineObject* obj);
 
 /**
  * @brief Synchronizes nozzle configurations from a connected machine to the current PresetBundle.
