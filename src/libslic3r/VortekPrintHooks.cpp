@@ -435,12 +435,31 @@ void PrintHooks::init_vortek_params(Slic3r::PrintConfigDef* def_ptr)
     def->mode = comDevelop;
     def->set_default_value(new ConfigOptionInts{1});
 
+    // Reference to BBS: BambuStudio/src/libslic3r/PrintConfig.cpp — filament_pre_cooling_temperature
+    def = def_ptr->add("filament_pre_cooling_temperature", coInts);
+    def->label = L("Extruder change");
+    def->tooltip = L("To prevent oozing, the nozzle temperature will be cooled during ramming. 0 means disabled.");
+    def->mode = comAdvanced;
+    def->sidetext = "°C";
+    def->min = 0;
+    def->nullable = true;
+    def->set_default_value(new ConfigOptionIntsNullable{0});
+
     def = def_ptr->add("filament_pre_cooling_temperature_nc", coInts);
     def->mode = comAdvanced;
     def->sidetext = "°C";
     def->min = 0;
     def->nullable = true;
     def->set_default_value(new ConfigOptionIntsNullable{0});
+
+    // Reference to BBS: BambuStudio/src/libslic3r/PrintConfig.cpp — filament_preheat_temperature_delta
+    def = def_ptr->add("filament_preheat_temperature_delta", coFloats);
+    def->label = L("Preheat temperature delta");
+    def->tooltip = L("Temperature delta applied during pre-heating before tool change.");
+    def->sidetext = "°C";
+    def->mode = comDevelop;
+    def->nullable = true;
+    def->set_default_value(new ConfigOptionFloatsNullable{0});
 
     def = def_ptr->add("filament_ramming_volumetric_speed_nc", coFloats);
     def->label = L("Hotend change");

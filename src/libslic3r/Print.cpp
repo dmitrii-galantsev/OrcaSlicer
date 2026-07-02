@@ -345,6 +345,8 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
              || opt_key == "filament_ramming_volumetric_speed_nc"
              || opt_key == "filament_ramming_travel_time_nc"
              || opt_key == "filament_pre_cooling_temperature_nc"
+             || opt_key == "filament_pre_cooling_temperature"
+             || opt_key == "filament_preheat_temperature_delta"
              || opt_key == "machine_hotend_change_time"
              || opt_key == "hotend_cooling_rate"
              || opt_key == "hotend_heating_rate"

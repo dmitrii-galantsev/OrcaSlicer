@@ -8398,7 +8398,10 @@ std::set<std::string> filament_options_with_variant = {
     "during_print_exhaust_fan_speed",
     "complete_print_exhaust_fan_speed",
     // Vortek (H2C) support keys
+    // Reference to BBS: BambuStudio/src/libslic3r/PrintConfig.cpp
+    "filament_pre_cooling_temperature",
     "filament_pre_cooling_temperature_nc",
+    "filament_preheat_temperature_delta",
     "filament_ramming_volumetric_speed_nc",
     "filament_ramming_travel_time_nc",
     "filament_change_length_nc",

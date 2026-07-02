@@ -149,14 +149,21 @@ void PreCooling::process_pre_cooling_and_heating(InsertedLinesMap& inserted_oper
     }
 }
 
-// Reference to BBS: GCodeProcessor.cpp — build_extruder_free_blocks
+// Reference to BBS: GCodeProcessor.cpp:6472-6478 — build_extruder_free_blocks
 void PreCooling::build_extruder_free_blocks(
     const std::vector<FilamentUsageBlock>& filament_usage_blocks,
     const std::vector<ExtruderUsageBlock>& extruder_usage_blocks
 )
 {
-    // H2C uses build_by_filament_blocks because it models physical heater (extruder) free gaps correctly.
-    build_by_filament_blocks(filament_usage_blocks);
+    // BBS routing: use build_by_extruder_blocks when extruder_usage_blocks > 1 (H2C path),
+    // fallback to build_by_filament_blocks when only 1 block (no nozzle changes).
+    if (extruder_usage_blocks.size() <= 1) {
+        VORTEK_LOG(warning, "build_extruder_free_blocks: using build_by_filament_blocks (extruder_blocks=" << extruder_usage_blocks.size() << ")");
+        build_by_filament_blocks(filament_usage_blocks);
+    } else {
+        VORTEK_LOG(warning, "build_extruder_free_blocks: using build_by_extruder_blocks (extruder_blocks=" << extruder_usage_blocks.size() << ")");
+        build_by_extruder_blocks(extruder_usage_blocks);
+    }
 }
 
 // Reference to BBS: GCodeProcessor.cpp — build_by_filament_blocks
@@ -225,9 +232,82 @@ void PreCooling::build_by_filament_blocks(const std::vector<FilamentUsageBlock>&
     }
 }
 
+// Reference to BBS: GCodeProcessor.cpp:6749-6801 — build_by_extruder_blocks
 void PreCooling::build_by_extruder_blocks(const std::vector<ExtruderUsageBlock>& extruder_usage_blocks)
 {
-    // Kept to satisfy HPP interface, but currently not used for H2C logic.
+    VORTEK_LOG(warning, "build_by_extruder_blocks: input extruder_blocks=" << extruder_usage_blocks.size());
+    for (size_t i = 0; i < extruder_usage_blocks.size(); ++i) {
+        const auto& b = extruder_usage_blocks[i];
+        VORTEK_LOG(warning, "  extruder_block[" << i << "]: ext=" << b.extruder_id
+            << " start_fil=" << b.start_filament << " end_fil=" << b.end_filament
+            << " start_nzl=" << b.start_nozzle_id << " end_nzl=" << b.end_nozzle_id
+            << " start=" << b.start_id << " end=" << b.end_id
+            << " post_start=" << b.post_extrusion_start_id << " post_end=" << b.post_extrusion_end_id
+            << " ignore_tower=" << b.ignore_cooling_before_tower);
+    }
+
+    m_extruder_free_blocks.clear();
+    std::map<int, std::vector<ExtruderUsageBlock>> per_extruder_usage_blocks;
+    for (auto& block : extruder_usage_blocks)
+        per_extruder_usage_blocks[block.extruder_id].emplace_back(block);
+
+    // Add sentinel blocks for each extruder (same as BBS)
+    for (auto& elem : per_extruder_usage_blocks) {
+        size_t extruder_id = elem.first;
+        auto& blocks = elem.second;
+
+        ExtruderUsageBlock start_block;
+        start_block.initialize_step_1(extruder_id, 0, -1, -1);
+        start_block.initialize_step_2(m_machine_start_gcode_end_id);
+        start_block.initialize_step_3(m_machine_start_gcode_end_id, -1, m_machine_start_gcode_end_id, -1);
+
+        ExtruderUsageBlock end_block;
+        end_block.initialize_step_1(extruder_id, m_machine_end_gcode_start_id, -1, -1);
+        end_block.initialize_step_2(std::numeric_limits<int>::max());
+        end_block.initialize_step_3(std::numeric_limits<int>::max(), -1, std::numeric_limits<int>::max(), -1);
+
+        blocks.insert(blocks.begin(), start_block);
+        blocks.emplace_back(end_block);
+    }
+
+    for (auto& elem : per_extruder_usage_blocks) {
+        size_t extruder_id = elem.first;
+        const auto& blocks = elem.second;
+        for (auto iter = blocks.begin(); iter != blocks.end(); ++iter) {
+            auto niter = std::next(iter);
+            if (niter == blocks.end())
+                break;
+            ExtruderFreeBlock block;
+            block.free_lower_gcode_id   = iter->end_id;
+            block.last_filament_id      = iter->end_filament;
+            block.last_nozzle_id        = iter->end_nozzle_id;
+            block.free_upper_gcode_id   = niter->start_id;
+            block.next_filament_id      = niter->start_filament;
+            block.next_nozzle_id        = niter->start_nozzle_id;
+            if (block.last_nozzle_id == -1)
+                block.last_nozzle_id = block.next_nozzle_id;
+            block.extruder_id           = extruder_id;
+            block.partial_free_lower_id = iter->post_extrusion_start_id;
+            block.partial_free_upper_id = iter->post_extrusion_end_id;
+            block.ignore_cooling_before_tower = niter->ignore_cooling_before_tower;
+            m_extruder_free_blocks.emplace_back(block);
+        }
+    }
+
+    std::sort(m_extruder_free_blocks.begin(), m_extruder_free_blocks.end(), [](const auto& a, const auto& b) {
+        return a.free_lower_gcode_id < b.free_lower_gcode_id || (a.free_lower_gcode_id == b.free_lower_gcode_id && a.free_upper_gcode_id < b.free_upper_gcode_id);
+    });
+
+    VORTEK_LOG(warning, "build_by_extruder_blocks: output free_blocks=" << m_extruder_free_blocks.size());
+    for (size_t i = 0; i < m_extruder_free_blocks.size(); ++i) {
+        const auto& fb = m_extruder_free_blocks[i];
+        VORTEK_LOG(warning, "  free_block[" << i << "]: ext=" << fb.extruder_id
+            << " last_fil=" << fb.last_filament_id << " next_fil=" << fb.next_filament_id
+            << " last_nzl=" << fb.last_nozzle_id << " next_nzl=" << fb.next_nozzle_id
+            << " lower=" << fb.free_lower_gcode_id << " upper=" << fb.free_upper_gcode_id
+            << " partial_lower=" << fb.partial_free_lower_id << " partial_upper=" << fb.partial_free_upper_id
+            << " ignore_tower=" << fb.ignore_cooling_before_tower);
+    }
 }
 
 // Reference to BBS: GCodeProcessor.cpp — inject_cooling_heating_command
@@ -373,43 +453,10 @@ void PreCooling::inject_cooling_heating_command(
         }
     };
 
-    if (block.free_upper_gcode_id <= block.free_lower_gcode_id) {
-        // Allow zero-length blocks for nozzle changes within same extruder (BBS does partial cool+reheat)
-        // Reference to BBS: BambuStudio/src/libslic3r/GCode/GCodeProcessor.cpp
-        //   inject_cooling_heating_command — intra-extruder nozzle change with M632/M633 skippable wrapper
-        if (block.last_nozzle_id != block.next_nozzle_id && block.last_nozzle_id >= 0 && block.next_nozzle_id >= 0) {
-            VORTEK_LOG(warning, "inject_cooling_heating: zero-length nozzle change (" << block.last_nozzle_id << "->" << block.next_nozzle_id << "), direct M104 injection");
-
-            // extruder_id already computed above
-
-            // 1. Cooldown to pre_cooling_temp (e.g. 180°C) — skippable with M632/M633
-            int cooldown_temp_nc = 0;
-            if (block.last_filament_id >= 0 && block.last_filament_id < (int)m_filament_pre_cooling_temps_nc.size())
-                cooldown_temp_nc = m_filament_pre_cooling_temps_nc[block.last_filament_id];
-            if (cooldown_temp_nc <= 0)
-                cooldown_temp_nc = 180;  // fallback
-
-            add_M104_lines(block.free_lower_gcode_id, extruder_id, cooldown_temp_nc,
-                           block.last_filament_id, true /*skippable*/,
-                           block.next_filament_id, block.next_nozzle_id, 1,
-                           "Multi extruder nozzle change cooldown");
-
-            // 2. Reheat to nozzle_temp (e.g. 220°C) — after rotation
-            int reheat_temp = 220;
-            if (block.next_filament_id >= 0 && block.next_filament_id < (int)m_filament_nozzle_temps.size())
-                reheat_temp = m_filament_nozzle_temps[block.next_filament_id];
-
-            add_M104_lines(block.free_upper_gcode_id, extruder_id, reheat_temp,
-                           block.next_filament_id, false /*not skippable*/,
-                           block.next_filament_id, block.next_nozzle_id, 2,
-                           "Multi extruder nozzle change reheat");
-
-            return;
-        } else {
-            VORTEK_LOG(warning, "inject_cooling_heating: SKIP inverted/zero-length block lower=" << block.free_lower_gcode_id << " upper=" << block.free_upper_gcode_id);
-            return;
-        }
-    }
+    // Reference to BBS: GCodeProcessor.cpp:6563-6564 — zero/inverted blocks are skipped.
+    // With build_by_extruder_blocks, nozzle changes have proper non-zero free windows.
+    if (!pre_cooling && !pre_heating && block.free_upper_gcode_id <= block.free_lower_gcode_id)
+        return;
 
     auto move_iter_lower = std::lower_bound(m_moves.cbegin(), m_moves.cend(), block.free_lower_gcode_id, gcode_move_comp);
     auto move_iter_upper = std::lower_bound(m_moves.cbegin(), m_moves.cend(), block.free_upper_gcode_id, gcode_move_comp);
@@ -786,9 +833,25 @@ PreCooling::InsertedLinesMap PreCooling::run_pre_scan(Slic3r::GCodeProcessor& pr
     
     int standby_temp_delta = print_config.standby_temperature_delta.value;
 
-    std::vector<int> pre_cooling_temp_nc(print_config.filament_pre_cooling_temperature_nc.values.size());
-    for (size_t i = 0; i < pre_cooling_temp_nc.size(); ++i) {
-        pre_cooling_temp_nc[i] = print_config.filament_pre_cooling_temperature_nc.get_at(i);
+    // Reference to BBS: GCodeProcessor.cpp:1931 — m_filament_pre_cooling_temp = config.filament_pre_cooling_temperature.values
+    // BBS passes filament_pre_cooling_temperature (NOT _nc!) to process_pre_cooling_and_heating.
+    // _nc (=180°C) is only used in WipeTower for gcode macros.
+    // With pre_cooling_temp = [0,0,...], is_pre_cooling_valid() returns false → partial free cooling disabled.
+    std::vector<int> pre_cooling_temp_nc;
+    if (!print_config.filament_pre_cooling_temperature.values.empty()) {
+        pre_cooling_temp_nc.resize(print_config.filament_pre_cooling_temperature.values.size());
+        for (size_t i = 0; i < pre_cooling_temp_nc.size(); ++i) {
+            pre_cooling_temp_nc[i] = print_config.filament_pre_cooling_temperature.get_at(i);
+        }
+    } else {
+        // Fallback: if filament_pre_cooling_temperature is not available, use zeros (BBS default)
+        pre_cooling_temp_nc.resize(print_config.filament_type.values.size(), 0);
+    }
+    {
+        std::string temps_str;
+        for (size_t i = 0; i < pre_cooling_temp_nc.size(); ++i)
+            temps_str += (i ? "," : "") + std::to_string(pre_cooling_temp_nc[i]);
+        VORTEK_LOG(warning, "run_pre_scan: pre_cooling_temp (non-nc, for timing)=[" << temps_str << "]");
     }
 
     std::vector<int> filament_idle_temps(print_config.idle_temperature.values.size());
@@ -823,11 +886,39 @@ PreCooling::InsertedLinesMap PreCooling::run_pre_scan(Slic3r::GCodeProcessor& pr
         }
     }
 
-    std::vector<double> filament_preheat_temperature_delta(print_config.filament_type.values.size(), 50.0);
-    std::vector<double> filament_max_temperature_drop_when_ec(print_config.filament_type.values.size(), 50.0);
+    // Reference to BBS: BambuStudio/src/libslic3r/GCode/GCodeProcessor.cpp line 2082-2084
+    // Read filament_preheat_temperature_delta from config (BBS default=0)
+    size_t num_filaments = print_config.filament_type.values.size();
+    std::vector<double> filament_preheat_temperature_delta(num_filaments, 0.0);
+    if (!print_config.filament_preheat_temperature_delta.values.empty()) {
+        for (size_t i = 0; i < num_filaments; ++i) {
+            double val = print_config.filament_preheat_temperature_delta.get_at(i);
+            filament_preheat_temperature_delta[i] = (val != 0 && !std::isnan(val)) ? val : 0.0;
+        }
+    }
+    VORTEK_LOG(warning, "run_pre_scan: filament_preheat_temperature_delta read from config: ["
+        << [&]() { std::string s; for (size_t i = 0; i < filament_preheat_temperature_delta.size(); ++i) { if (i) s += ","; s += std::to_string((int)filament_preheat_temperature_delta[i]); } return s; }()
+        << "]");
 
+    // Reference to BBS: BambuStudio/src/libslic3r/GCode/GCodeProcessor.hpp TimeProcessContext
+    // BBS default for filament_max_temperature_drop_when_ec is 0.0 (not 50.0)
+    std::vector<double> filament_max_temperature_drop_when_ec(num_filaments, 0.0);
+
+    // Reference to BBS: m_result.extruder_types — in OrcaSlicer read from print_config.extruder_type
     std::vector<Slic3r::ExtruderType> extruder_types;
+    for (size_t i = 0; i < print_config.extruder_type.values.size(); ++i) {
+        extruder_types.push_back(static_cast<Slic3r::ExtruderType>(print_config.extruder_type.values[i]));
+    }
     std::vector<double> nozzle_diameter(print_config.nozzle_diameter.values);
+
+    // Reference to BBS: m_enable_pre_heating from config
+    bool enable_pre_heating = print_config.enable_pre_heating.value;
+    // Reference to BBS: m_handle_hotend_as_extruder — for H2C always false (hotend != extruder)
+    bool handle_hotend_as_extruder = false;
+
+    VORTEK_LOG(warning, "run_pre_scan: enable_pre_heating=" << enable_pre_heating
+        << " handle_hotend_as_extruder=" << handle_hotend_as_extruder
+        << " extruder_types_count=" << extruder_types.size());
 
     int valid_machine_id = 0;
     for (size_t i = 0; i < static_cast<size_t>(Slic3r::PrintEstimatedStatistics::ETimeMode::Count); ++i) {
@@ -844,8 +935,8 @@ PreCooling::InsertedLinesMap PreCooling::run_pre_scan(Slic3r::GCodeProcessor& pr
         filament_nozzle_temps_initial_layer,
         physical_extruder_map,
         valid_machine_id,
-        0.0f,
-        false,
+        0.0f,                   // inject_time_threshold (same as BBS)
+        handle_hotend_as_extruder,
         print_config.has_filament_switcher.value,
         standby_temp_delta,
         pre_cooling_temp_nc,
