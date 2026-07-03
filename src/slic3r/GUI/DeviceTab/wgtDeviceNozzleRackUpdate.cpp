@@ -7,6 +7,7 @@
 
 #include "wgtDeviceNozzleRackUpdate.h"
 #include "slic3r/GUI/DeviceCore/VortekDeviceHooks.hpp"
+#include "libslic3r/VortekLog.hpp"
 
 #include "slic3r/GUI/DeviceCore/DevNozzleSystem.h"
 #include "slic3r/GUI/DeviceCore/DevExtruderSystem.h"
@@ -561,13 +562,26 @@ void wgtDeviceNozzleRackHotendUpdate::UpdateInfo(const DevNozzle& nozzle)
         }
     }
 
+    std::string f_id = Vortek::DeviceHooks::get_nozzle_filament_id(nozzle, ns, is_on_rack);
+    if (filamentDisplayName.empty() && !f_id.empty()) {
+        // Reference to BBS: BambuStudio/src/slic3r/GUI/DeviceCore/DevFilaSystem.cpp#L789 (usage of tray_id_name for custom filaments)
+        std::string custom_name = Vortek::DeviceHooks::get_custom_filament_name(ns, f_id);
+        if (!custom_name.empty()) {
+            filamentDisplayName = wxString::FromUTF8(custom_name);
+            VORTEK_LOG(warn, "UpdateInfo: resolved custom filament name from MQTT cache: id=" << f_id << ", name=" << custom_name);
+        }
+    }
+
     if (filamentDisplayName.empty()) {
         for (auto iter = GUI::wxGetApp().preset_bundle->filaments.begin(); iter != GUI::wxGetApp().preset_bundle->filaments.end(); ++iter) 
         {
             const Preset& filament_preset = *iter;
-            if (filament_preset.filament_id == Vortek::DeviceHooks::get_nozzle_filament_id(nozzle, ns, is_on_rack)) 
+            if (filament_preset.filament_id == f_id) 
             {
-                filamentDisplayName = wxString(filament_preset.alias);
+                // Use full preset name (e.g. "Bambu PLA Basic"), NOT alias which can be
+                // an internal code like "A00-P6". Strip @printer suffix for display.
+                // Reference to BBS: BambuStudio/src/libslic3r/Preset.hpp (Preset::name vs alias)
+                filamentDisplayName = wxString::FromUTF8(filament_preset.name);
                 break;
             }
         }
@@ -577,7 +591,23 @@ void wgtDeviceNozzleRackHotendUpdate::UpdateInfo(const DevNozzle& nozzle)
         if (!f_id.empty()) {
             auto opt_info = GUI::wxGetApp().preset_bundle->get_filament_by_filament_id(f_id);
             if (opt_info.has_value()) {
-                filamentDisplayName = wxString::FromUTF8(opt_info->filament_name);
+                // filament_name in FilamentBaseInfo is the alias (internal code like "A00-P6").
+                // Always prefer the full preset name from the iterator.
+                // Reference to BBS: BambuStudio/src/libslic3r/PresetBundle.cpp#L700 (alias stored as filament_name)
+                std::string name_resolved;
+                for (auto iter = GUI::wxGetApp().preset_bundle->filaments.begin(); iter != GUI::wxGetApp().preset_bundle->filaments.end(); ++iter) {
+                    if (iter->filament_id == f_id) {
+                        name_resolved = iter->name;
+                        break;
+                    }
+                }
+                // Fallback to filament_name if preset name not found (e.g. for user-installed presets not in system collection)
+                if (name_resolved.empty()) {
+                    name_resolved = opt_info->filament_name;
+                }
+                if (!name_resolved.empty()) {
+                    filamentDisplayName = wxString::FromUTF8(name_resolved);
+                }
             }
         }
     }

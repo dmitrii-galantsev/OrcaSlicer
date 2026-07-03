@@ -42,6 +42,8 @@ Slic3r::NozzleFlowType get_nozzle_flow_type(const Slic3r::DevNozzle& nozzle);
 int get_logic_extruder_id(const Slic3r::DevNozzle& nozzle);
 std::string get_nozzle_wear(const Slic3r::DevNozzle& nozzle);
 std::string get_nozzle_filament_id(const Slic3r::DevNozzle& nozzle, const Slic3r::DevNozzleSystem* system = nullptr, bool is_on_rack = false);
+std::string get_custom_filament_name(const Slic3r::DevNozzleSystem* system, const std::string& id);
+void set_custom_filament_name(const Slic3r::DevNozzleSystem* system, const std::string& id, const std::string& name);
 std::string get_nozzle_filament_color(const Slic3r::DevNozzle& nozzle, const Slic3r::DevNozzleSystem* system = nullptr, bool is_on_rack = false);
 void parse_nozzle_filament(Slic3r::DevNozzleSystem* system, int nozzle_id, const nlohmann::json& njon);
 bool is_nozzle_normal(const Slic3r::DevNozzle& nozzle);

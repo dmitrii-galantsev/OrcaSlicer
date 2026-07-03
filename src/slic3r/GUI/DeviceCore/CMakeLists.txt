@@ -62,5 +62,7 @@ list(APPEND SLIC3R_GUI_SOURCES
     GUI/DeviceCore/VortekUtilBackend.cpp
     GUI/DeviceCore/VortekDeviceHooks.hpp
     GUI/DeviceCore/VortekDeviceHooks.cpp
+    GUI/DeviceCore/VortekProtocolExtension.h
+    GUI/DeviceCore/VortekProtocolExtension.cpp
 )
 set(SLIC3R_GUI_SOURCES ${SLIC3R_GUI_SOURCES} PARENT_SCOPE)

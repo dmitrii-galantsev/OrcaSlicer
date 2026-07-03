@@ -1,4 +1,5 @@
 #include "VortekDeviceHooks.hpp"
+#include "VortekProtocolExtension.h"
 #include "slic3r/GUI/DeviceManager.hpp"
 #include "slic3r/GUI/DeviceCore/DevNozzleSystem.h"
 #include "slic3r/GUI/DeviceCore/VortekNozzleRack.h"
@@ -7,6 +8,7 @@
 #include "slic3r/GUI/DeviceCore/DevFilaSystem.h"
 #include "slic3r/GUI/DeviceCore/DevUtil.h"
 #include "libslic3r/PresetBundle.hpp"
+#include "slic3r/GUI/GUI_App.hpp"
 #include "libslic3r/VortekMultiNozzle.hpp"
 #include "libslic3r/VortekLog.hpp"
 #include "slic3r/GUI/PartPlate.hpp"
@@ -34,38 +36,63 @@ public:
         return instance;
     }
 
+    // --- Per-device nozzle slot data ---
+    // Key: stable dev_id string (printer serial), not a raw pointer
+
     void set_filament_info(const Slic3r::DevNozzleSystem* system, int nozzle_id, const std::string& id, const std::string& color) {
+        std::string dev_id = s_dev_id_of(system);
+        if (dev_id.empty()) return;
         std::lock_guard<std::mutex> lock(m_mutex);
-        m_nozzle_filaments[system][nozzle_id] = {id, color};
+        m_nozzle_filaments[dev_id][nozzle_id] = {id, color};
     }
 
     std::string get_filament_id(const Slic3r::DevNozzleSystem* system, int nozzle_id) {
+        std::string dev_id = s_dev_id_of(system);
+        if (dev_id.empty()) return "";
         std::lock_guard<std::mutex> lock(m_mutex);
-        auto it_sys = m_nozzle_filaments.find(system);
-        if (it_sys != m_nozzle_filaments.end()) {
-            auto it_nozzle = it_sys->second.find(nozzle_id);
-            if (it_nozzle != it_sys->second.end()) {
-                return it_nozzle->second.id;
-            }
+        auto it = m_nozzle_filaments.find(dev_id);
+        if (it != m_nozzle_filaments.end()) {
+            auto it2 = it->second.find(nozzle_id);
+            if (it2 != it->second.end()) return it2->second.id;
         }
         return "";
     }
 
     std::string get_filament_color(const Slic3r::DevNozzleSystem* system, int nozzle_id) {
+        std::string dev_id = s_dev_id_of(system);
+        if (dev_id.empty()) return "";
         std::lock_guard<std::mutex> lock(m_mutex);
-        auto it_sys = m_nozzle_filaments.find(system);
-        if (it_sys != m_nozzle_filaments.end()) {
-            auto it_nozzle = it_sys->second.find(nozzle_id);
-            if (it_nozzle != it_sys->second.end()) {
-                return it_nozzle->second.color;
-            }
+        auto it = m_nozzle_filaments.find(dev_id);
+        if (it != m_nozzle_filaments.end()) {
+            auto it2 = it->second.find(nozzle_id);
+            if (it2 != it->second.end()) return it2->second.color;
         }
         return "";
     }
 
+    // Clears only per-device nozzle slot data on disconnect/reset.
+    // The global filament name cache (m_custom_filament_names) is intentionally NOT cleared:
+    // filament IDs are universal and names remain valid after printer reconnects.
     void clear_for_system(const Slic3r::DevNozzleSystem* system) {
+        std::string dev_id = s_dev_id_of(system);
+        if (dev_id.empty()) return;
         std::lock_guard<std::mutex> lock(m_mutex);
-        m_nozzle_filaments.erase(system);
+        m_nozzle_filaments.erase(dev_id);
+    }
+
+    // --- Global filament name registry ---
+    // filament_id -> display_name is universal: same ID = same filament on any printer.
+    // Not scoped per-device. system parameter kept for API compatibility.
+
+    void set_custom_filament_name(const Slic3r::DevNozzleSystem* /*system*/, const std::string& id, const std::string& name) {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_custom_filament_names[id] = name;
+    }
+
+    std::string get_custom_filament_name(const Slic3r::DevNozzleSystem* /*system*/, const std::string& id) {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        auto it = m_custom_filament_names.find(id);
+        return (it != m_custom_filament_names.end()) ? it->second : "";
     }
 
 private:
@@ -74,9 +101,24 @@ private:
     VortekNozzleFilamentManager(const VortekNozzleFilamentManager&) = delete;
     VortekNozzleFilamentManager& operator=(const VortekNozzleFilamentManager&) = delete;
 
+    // Returns the stable dev_id string for the given nozzle system.
+    // Reference to BBS: BambuStudio/src/slic3r/GUI/DeviceManager.hpp#L107 (dev_id field)
+    static std::string s_dev_id_of(const Slic3r::DevNozzleSystem* system) {
+        if (!system || !system->GetOwner()) return "";
+        return system->GetOwner()->get_dev_id();
+    }
+
     std::mutex m_mutex;
-    std::map<const Slic3r::DevNozzleSystem*, std::map<int, NozzleFilamentInfo>> m_nozzle_filaments;
+
+    // Per-device nozzle slot data: dev_id -> nozzle_slot_id -> filament info
+    // Cleared on printer disconnect/reset.
+    std::map<std::string, std::map<int, NozzleFilamentInfo>> m_nozzle_filaments;
+
+    // Global filament name registry: filament_id -> display_name
+    // Shared across all printers. Never cleared (filament IDs are universally stable).
+    std::map<std::string, std::string> m_custom_filament_names;
 };
+
 
 static std::map<const Slic3r::MachineObject*, std::shared_ptr<Slic3r::VortekNozzleRack>> s_nozzle_racks;
 static std::map<const Slic3r::DevAms*, std::set<int>> s_ams_binded_extruders;
@@ -216,7 +258,7 @@ bool handle_ams_extruder_binding(
                 } else if (bind_switch_in == 1) {
                     binded_switcher_pos = Slic3r::VortekFilaSwitch::SwitchPos::POS_IN_A;
                 }
-                VORTEK_LOG(info, "handle_ams_extruder_binding: mapped 0xE to MAIN/DEPUTY, SwitchPos=" 
+                VORTEK_LOG(warn, "handle_ams_extruder_binding: mapped 0xE to MAIN/DEPUTY, SwitchPos=" 
                            << (binded_switcher_pos.has_value() ? std::to_string(binded_switcher_pos.value()) : "nullopt"));
             }
         } else {
@@ -226,7 +268,7 @@ bool handle_ams_extruder_binding(
             // extruder (MAIN_EXTRUDER_ID = 0). Switcher position is std::nullopt.
             binded_extruder_set = { MAIN_EXTRUDER_ID };
             binded_switcher_pos = std::nullopt;
-            VORTEK_LOG(info, "handle_ams_extruder_binding: mapped 0xE to MAIN only (no-FTS)");
+            VORTEK_LOG(warn, "handle_ams_extruder_binding: mapped 0xE to MAIN only (no-FTS)");
         }
         return true;
     } else {
@@ -265,10 +307,10 @@ void process_nozzle_placement(
     if (is_on_rack == 1) {
         if (rack) {
             rack->AddRackNozzle(nozzle_obj);
-            VORTEK_LOG(info, "process_nozzle_placement: added nozzle id=" << physical_id << " to rack");
+            VORTEK_LOG(warn, "process_nozzle_placement: added nozzle id=" << physical_id << " to rack");
         }
     } else {
-        VORTEK_LOG(info, "process_nozzle_placement: added active head nozzle id=" << physical_id);
+        VORTEK_LOG(warn, "process_nozzle_placement: added active head nozzle id=" << physical_id);
     }
 }
 
@@ -293,7 +335,7 @@ void sync_machine_nozzle_inventory_to_preset(const Slic3r::MachineObject* obj, S
     }
     int num_extruders = nozzle_diameter_opt->values.size();
 
-    VORTEK_LOG(info, "sync_machine_nozzle_inventory_to_preset: starting sync for " << num_extruders << " extruders");
+    VORTEK_LOG(warn, "sync_machine_nozzle_inventory_to_preset: starting sync for " << num_extruders << " extruders");
 
     if (nozzle_rack && nozzle_rack->IsSupported()) {
         // Nozzle rack is supported (Vortek tool-changer)
@@ -385,7 +427,7 @@ void sync_machine_nozzle_inventory_to_preset(const Slic3r::MachineObject* obj, S
         }
     }
 
-    VORTEK_LOG(info, "sync_machine_nozzle_inventory_to_preset: completed sync successfully");
+    VORTEK_LOG(warn, "sync_machine_nozzle_inventory_to_preset: completed sync successfully");
 }
 
 
@@ -461,13 +503,20 @@ std::string get_nozzle_wear(const Slic3r::DevNozzle& nozzle) { return "0"; }
 std::string get_nozzle_filament_id(const Slic3r::DevNozzle& nozzle, const Slic3r::DevNozzleSystem* system, bool is_on_rack) {
     int key = is_on_rack ? (16 + nozzle.m_nozzle_id) : nozzle.m_nozzle_id;
     std::string res = VortekNozzleFilamentManager::get_instance().get_filament_id(system, key);
-    VORTEK_LOG(debug, "get_nozzle_filament_id: system=" << system << ", physical_id=" << nozzle.m_nozzle_id << ", is_on_rack=" << is_on_rack << ", key=" << key << ", res=" << res);
+    std::string p_type = (system && system->GetOwner()) ? system->GetOwner()->printer_type : "unknown";
+    VORTEK_LOG(warn, "get_nozzle_filament_id: system=" << system << ", physical_id=" << nozzle.m_nozzle_id << ", is_on_rack=" << is_on_rack << ", key=" << key << ", res=" << res << ", printer_type=" << p_type);
     return res;
+}
+std::string get_custom_filament_name(const Slic3r::DevNozzleSystem* system, const std::string& id) {
+    return VortekNozzleFilamentManager::get_instance().get_custom_filament_name(system, id);
+}
+void set_custom_filament_name(const Slic3r::DevNozzleSystem* system, const std::string& id, const std::string& name) {
+    VortekNozzleFilamentManager::get_instance().set_custom_filament_name(system, id, name);
 }
 std::string get_nozzle_filament_color(const Slic3r::DevNozzle& nozzle, const Slic3r::DevNozzleSystem* system, bool is_on_rack) {
     int key = is_on_rack ? (16 + nozzle.m_nozzle_id) : nozzle.m_nozzle_id;
     std::string res = VortekNozzleFilamentManager::get_instance().get_filament_color(system, key);
-    VORTEK_LOG(debug, "get_nozzle_filament_color: system=" << system << ", physical_id=" << nozzle.m_nozzle_id << ", is_on_rack=" << is_on_rack << ", key=" << key << ", res=" << res);
+    VORTEK_LOG(warn, "get_nozzle_filament_color: system=" << system << ", physical_id=" << nozzle.m_nozzle_id << ", is_on_rack=" << is_on_rack << ", key=" << key << ", res=" << res);
     return res;
 }
 void parse_nozzle_filament(Slic3r::DevNozzleSystem* system, int nozzle_id, const nlohmann::json& njon) {
@@ -475,9 +524,27 @@ void parse_nozzle_filament(Slic3r::DevNozzleSystem* system, int nozzle_id, const
     int raw_id = njon.contains("id") ? njon["id"].get<int>() : nozzle_id;
     std::string id = njon.contains("fila_id") ? njon["fila_id"].get<std::string>() : "";
     std::string color = njon.contains("color_m") ? njon["color_m"].get<std::string>() : "";
-    VORTEK_LOG(info, "parse_nozzle_filament: system=" << system << ", nozzle_id=" << nozzle_id << ", raw_id=" << raw_id << ", cate=" << id << ", color=" << color << ", raw_json=" << njon.dump());
+    VORTEK_LOG(warn, "parse_nozzle_filament: system=" << system << ", nozzle_id=" << nozzle_id << ", raw_id=" << raw_id << ", cate=" << id << ", color=" << color << ", raw_json=" << njon.dump());
     VortekNozzleFilamentManager::get_instance().set_filament_info(system, raw_id, id, color);
+
+    // Reference to BBS: BambuStudio/src/slic3r/GUI/DeviceCore/DevNozzleSystem.cpp
+    // Resolve human-readable filament name from PresetBundle and cache it.
+    // Nozzle JSON only carries fila_id (e.g. "P1f749cd"), not tray_type/sub_brands,
+    // so we cannot build a fallback name here — PresetBundle lookup is the only option.
+    // The FilaSystem path (preprocess_filament_json) will overwrite the cache with a
+    // richer fallback if the preset is absent, so this is safe.
+    if (!id.empty()) {
+        std::string cached = VortekNozzleFilamentManager::get_instance().get_custom_filament_name(system, id);
+        if (cached.empty()) {
+            std::string resolved = Vortek::VortekProtocolExtension::get_instance().resolve_filament_name(system, id);
+            if (!resolved.empty()) {
+                VortekNozzleFilamentManager::get_instance().set_custom_filament_name(system, id, resolved);
+                VORTEK_LOG(warn, "parse_nozzle_filament: resolved name from PresetBundle: id=" << id << ", name=" << resolved);
+            }
+        }
+    }
 }
+
 bool is_nozzle_normal(const Slic3r::DevNozzle& nozzle) { return nozzle.m_nozzle_id != -1; }
 int get_nozzle_id(const Slic3r::DevNozzle& nozzle) { return nozzle.m_nozzle_id; }
 std::string to_nozzle_flow_string(Slic3r::NozzleFlowType flow_type) {
@@ -686,71 +753,81 @@ void clear_auto_nozzle_mapping(Slic3r::MachineObject* obj) {
 static std::map<std::string, std::pair<std::set<int>, std::optional<int>>> s_pending_ams_bindings;
 
 void preprocess_filament_json(Slic3r::MachineObject* obj, nlohmann::json& filament_json) {
+    VORTEK_LOG(warn, "preprocess_filament_json: entered, obj=" << obj << ", contains_ams=" << (filament_json.contains("ams") ? "true" : "false"));
     if (!obj || !filament_json.contains("ams")) return;
-    auto rack = get_nozzle_rack(obj->GetNozzleSystem());
-    if (!rack || !rack->IsSupported()) return;
+    bool is_h2c = is_h2c_printer(obj);
+    VORTEK_LOG(warn, "preprocess_filament_json: is_h2c_printer=" << (is_h2c ? "true" : "false") << ", printer_type=" << obj->printer_type);
+    if (!is_h2c) return;
     auto fs = get_fila_switch(obj);
     bool fts_installed = fs && fs->IsInstalled();
 
     s_pending_ams_bindings.clear();
 
-    for (auto& ams_item : filament_json["ams"]) {
-        if (!ams_item.contains("id") || !ams_item.contains("extruder_id")) continue;
-        
-        // Skip parsing if it's not an int (sometimes it's a string, though normally it's an int)
-        if (!ams_item["extruder_id"].is_number_integer()) continue;
-        
-        int ext_id = ams_item["extruder_id"].get<int>();
-        std::string ams_id = ams_item["id"].get<std::string>();
+    VORTEK_LOG(warn, "preprocess_filament_json: full_json=" << filament_json.dump());
 
-        if (ext_id == 0xE) {
-            // Mutate extruder_id in incoming JSON from 0xE to 0 (MAIN_EXTRUDER_ID).
-            // This bypasses the strict core check in DevFilaSystem.cpp (line 375),
-            // which erases the AMS if it sees an unmapped extruder_id of 0xE.
-            ams_item["extruder_id"] = MAIN_EXTRUDER_ID;
+    // 1. Delegate filament name mapping and JSON mutation to the protocol extension sublayer
+    Vortek::VortekProtocolExtension::get_instance().preprocess_filament_json(obj, filament_json);
+
+    // 2. Perform AMS extruder binding normalization (0xE -> 0 / FTS)
+    if (filament_json["ams"].contains("ams") && filament_json["ams"]["ams"].is_array()) {
+        for (auto& ams_item : filament_json["ams"]["ams"]) {
+            if (!ams_item.contains("id") || !ams_item.contains("extruder_id")) continue;
             
-            std::optional<int> binded_switcher_pos = std::nullopt;
-            if (ams_item.contains("info")) {
-                const std::string& info = ams_item["info"].get<std::string>();
+            // Skip parsing if it's not an int (sometimes it's a string, though normally it's an int)
+            if (!ams_item["extruder_id"].is_number_integer()) continue;
+            
+            int ext_id = ams_item["extruder_id"].get<int>();
+            std::string ams_id = ams_item["id"].get<std::string>();
+
+            if (ext_id == 0xE) {
+                // Mutate extruder_id in incoming JSON from 0xE to 0 (MAIN_EXTRUDER_ID).
+                // This bypasses the strict core check in DevFilaSystem.cpp (line 375),
+                // which erases the AMS if it sees an unmapped extruder_id of 0xE.
+                ams_item["extruder_id"] = MAIN_EXTRUDER_ID;
                 
-                // Extract FTS switch position from the original info string first!
-                int bind_switch_in = Slic3r::DevUtil::get_flag_bits(info, 24, 4);
-                if (bind_switch_in == 0) {
-                    binded_switcher_pos = Slic3r::VortekFilaSwitch::SwitchPos::POS_IN_B;
-                } else if (bind_switch_in == 1) {
-                    binded_switcher_pos = Slic3r::VortekFilaSwitch::SwitchPos::POS_IN_A;
-                }
+                std::optional<int> binded_switcher_pos = std::nullopt;
+                if (ams_item.contains("info")) {
+                    const std::string& info = ams_item["info"].get<std::string>();
+                    
+                    // Extract FTS switch position from the original info string first!
+                    int bind_switch_in = Slic3r::DevUtil::get_flag_bits(info, 24, 4);
+                    if (bind_switch_in == 0) {
+                        binded_switcher_pos = Slic3r::VortekFilaSwitch::SwitchPos::POS_IN_B;
+                    } else if (bind_switch_in == 1) {
+                        binded_switcher_pos = Slic3r::VortekFilaSwitch::SwitchPos::POS_IN_A;
+                    }
 
-                // Mutate the info string to clear bits 8-11 (so it represents extruder ID 0 instead of 0xE)
-                try {
-                    uint32_t val = std::stoul(info, nullptr, 16);
-                    val = (val & ~0xF00);
-                    std::stringstream ss;
-                    ss << "0x" << std::hex << val;
-                    ams_item["info"] = ss.str();
-                } catch (...) {
-                    // Fallback
+                    // Mutate the info string to clear bits 8-11 (so it represents extruder ID 0 instead of 0xE)
+                    try {
+                        uint32_t val = std::stoul(info, nullptr, 16);
+                        val = (val & ~0xF00);
+                        std::stringstream ss;
+                        ss << "0x" << std::hex << val;
+                        ams_item["info"] = ss.str();
+                    } catch (...) {
+                        // Fallback
+                    }
                 }
-            }
-            
-            if (fts_installed) {
-                // ── FTS MODE BRANCH ──────────────────────────────────────────
-                // Store pending bindings to both physical extruders and resolve the FTS direction.
-                std::set<int> binded_extruder_set = { MAIN_EXTRUDER_ID, DEPUTY_EXTRUDER_ID };
-                s_pending_ams_bindings[ams_id] = { binded_extruder_set, binded_switcher_pos };
-                VORTEK_LOG(info, "preprocess_filament_json: mapped 0xE to MAIN/DEPUTY for ams_id=" << ams_id);
+                
+                if (fts_installed) {
+                    // ── FTS MODE BRANCH ──────────────────────────────────────────
+                    // Store pending bindings to both physical extruders and resolve the FTS direction.
+                    std::set<int> binded_extruder_set = { MAIN_EXTRUDER_ID, DEPUTY_EXTRUDER_ID };
+                    s_pending_ams_bindings[ams_id] = { binded_extruder_set, binded_switcher_pos };
+                    VORTEK_LOG(warn, "preprocess_filament_json: mapped 0xE to MAIN/DEPUTY for ams_id=" << ams_id);
+                } else {
+                    // ── NO-FTS MODE BRANCH ───────────────────────────────────────
+                    // If FTS is not installed, bind slots only to the MAIN extruder (0),
+                    // and clear switcher position.
+                    std::set<int> binded_extruder_set = { MAIN_EXTRUDER_ID };
+                    s_pending_ams_bindings[ams_id] = { binded_extruder_set, std::nullopt };
+                    VORTEK_LOG(warn, "preprocess_filament_json: mapped 0xE to MAIN only (no-FTS) for ams_id=" << ams_id);
+                }
             } else {
-                // ── NO-FTS MODE BRANCH ───────────────────────────────────────
-                // If FTS is not installed, bind slots only to the MAIN extruder (0),
-                // and clear switcher position.
-                std::set<int> binded_extruder_set = { MAIN_EXTRUDER_ID };
+                // Ordinary single extruders
+                std::set<int> binded_extruder_set = { ext_id };
                 s_pending_ams_bindings[ams_id] = { binded_extruder_set, std::nullopt };
-                VORTEK_LOG(info, "preprocess_filament_json: mapped 0xE to MAIN only (no-FTS) for ams_id=" << ams_id);
             }
-        } else {
-            // Ordinary single extruders
-            std::set<int> binded_extruder_set = { ext_id };
-            s_pending_ams_bindings[ams_id] = { binded_extruder_set, std::nullopt };
         }
     }
 }
@@ -763,7 +840,7 @@ void apply_pending_ams_bindings(Slic3r::DevFilaSystem* fila_system) {
         auto it = ams_list.find(ams_id);
         if (it != ams_list.end() && it->second) {
             assign_ams_bindings(it->second, pending.second.first, pending.second.second);
-            VORTEK_LOG(info, "apply_pending_ams_bindings: applied pending bindings to ams_id=" << ams_id);
+            VORTEK_LOG(warn, "apply_pending_ams_bindings: applied pending bindings to ams_id=" << ams_id);
         }
     }
     s_pending_ams_bindings.clear();
@@ -783,7 +860,7 @@ bool apply_nozzle_mapping_from_device(Slic3r::MachineObject* obj, Slic3r::GUI::P
 
     plate->set_filament_map_mode(Slic3r::FilamentMapMode::fmmNozzleManual);
     plate->set_filament_nozzle_maps(nozzle_map);
-    VORTEK_LOG(info, "apply_nozzle_mapping_from_device: applied nozzle map from MQTT/Device, mode=fmmNozzleManual");
+    VORTEK_LOG(warn, "apply_nozzle_mapping_from_device: applied nozzle map from MQTT/Device, mode=fmmNozzleManual");
     return true;
 }
 
