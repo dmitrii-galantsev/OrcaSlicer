@@ -3653,9 +3653,6 @@ static void apply_to_print_region_config(PrintRegionConfig &out, const DynamicPr
                     } else {
                         auto* opt_vec_dst = static_cast<ConfigOptionVectorBase*>(my_opt);
                         const auto* opt_vec_src = static_cast<const ConfigOptionVectorBase*>(it->second.get());
-                        BOOST_LOG_TRIVIAL(warning) << "apply_to_print_region_config: contracting "
-                            << it->first << " via set_to_index, variant_index size="
-                            << variant_index.size();
                         opt_vec_dst->set_to_index(opt_vec_src, variant_index, 1);
                     }
                 }

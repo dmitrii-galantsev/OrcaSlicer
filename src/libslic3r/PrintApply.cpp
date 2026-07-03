@@ -1172,8 +1172,6 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
         new_full_config.update_values_to_printer_extruders(new_full_config, printer_options_with_variant_1, "printer_extruder_id", "printer_extruder_variant");
         //update print config related with variants
         print_variant_index = new_full_config.update_values_to_printer_extruders(new_full_config, print_options_with_variant, "print_extruder_id", "print_extruder_variant");
-        BOOST_LOG_TRIVIAL(warning) << "Print::apply: print_variant_index size=" << print_variant_index.size()
-            << " (multi-extruder=" << (print_variant_index.size() > 1 ? "yes" : "no") << ")";
 
         m_ori_full_print_config = new_full_config;
         new_full_config.update_values_to_printer_extruders_for_multiple_filaments(new_full_config, filament_options_with_variant,  "filament_self_index", "filament_extruder_variant");

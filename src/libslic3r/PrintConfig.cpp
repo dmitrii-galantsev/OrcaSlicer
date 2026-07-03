@@ -9801,17 +9801,6 @@ std::vector<int> DynamicPrintConfig::update_values_to_printer_extruders(DynamicP
                     break;
             }
         }
-        // Return variant_index for downstream per-object region contraction (ported from BBS).
-        {
-            std::string idx_str;
-            for (size_t i = 0; i < variant_index.size(); ++i) {
-                if (i > 0) idx_str += ",";
-                idx_str += std::to_string(variant_index[i]);
-            }
-            BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << ": returning variant_index=[" << idx_str
-                                       << "] size=" << variant_index.size()
-                                       << " id_name=" << id_name;
-        }
         return variant_index;
     }
     // Single-extruder or no different extruders: return empty variant_index (no contraction needed).
