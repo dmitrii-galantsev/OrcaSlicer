@@ -1250,14 +1250,7 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
         { apply_status = std::max<unsigned int>(apply_status, invalidated ? APPLY_STATUS_INVALIDATED : APPLY_STATUS_CHANGED); };
     if (! (print_diff.empty() && object_diff.empty() && region_diff.empty())) {
         update_apply_status(false);
-        //BBS: add more logs
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(", got print_diff %1%, object_diff %2%, region_diff %3%, set status to APPLY_STATUS_CHANGED")%print_diff.size() %object_diff.size() %region_diff.size();
-        // [Vortek] Diagnostic: dump exact keys causing config diff (visible at warning level)
-        if (!print_diff.empty()) {
-            std::string keys_str;
-            for (const auto& k : print_diff) { if (!keys_str.empty()) keys_str += ", "; keys_str += k; }
-            BOOST_LOG_TRIVIAL(warning) << "[Vortek] Print::apply print_diff keys (" << print_diff.size() << "): " << keys_str;
-        }
     }
 
     // Grab the lock for the Print / PrintObject milestones.
@@ -1274,12 +1267,6 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
     if (! full_config_diff.empty()) {
         //BBS: add more logs
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(" %1%: found full_config_diff changed.")%__LINE__;
-        // [Vortek] Diagnostic: dump exact keys causing full config diff
-        {
-            std::string keys_str;
-            for (const auto& k : full_config_diff) { if (!keys_str.empty()) keys_str += ", "; keys_str += k; }
-            BOOST_LOG_TRIVIAL(warning) << "[Vortek] Print::apply full_config_diff keys (" << full_config_diff.size() << "): " << keys_str;
-        }
         update_apply_status(this->invalidate_step(psGCodeExport));
         m_placeholder_parser.clear_config();
         // clear_config() wiped the constructor-set "version"; restore it for custom G-code.
