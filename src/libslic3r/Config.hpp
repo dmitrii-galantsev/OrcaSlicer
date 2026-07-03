@@ -363,6 +363,8 @@ public:
     virtual void set_with_restore(const ConfigOptionVectorBase* rhs, std::vector<int>& restore_index, int stride)           = 0;
     virtual void set_with_restore_2(const ConfigOptionVectorBase* rhs, std::vector<int>& restore_index, int start, int len, bool skip_error = false) = 0;
     virtual void set_only_diff(const ConfigOptionVectorBase* rhs, std::vector<int>& diff_index, int stride)                 = 0;
+    // BBS: contract per-variant vector options to physical extruder count using variant index mapping.
+    virtual void set_to_index(const ConfigOptionVectorBase* rhs, const std::vector<int>& dest_index, int stride) = 0;
     virtual void set_with_nil(const ConfigOptionVectorBase* rhs, const ConfigOptionVectorBase* inherits, int stride)        = 0;
     // Resize the vector of values, copy the newly added values from opt_default if provided.
     virtual void resize(size_t n, const ConfigOption *opt_default = nullptr) = 0;
@@ -584,6 +586,27 @@ public:
         }
         else
             throw ConfigurationError("ConfigOptionVector::set_only_diff(): Assigning an incompatible type");
+    }
+
+    // BBS: contract per-variant vector options to physical extruder count using variant index mapping.
+    // rhs: source vector from per-object DynamicPrintConfig (may have more elements than physical extruders)
+    // dest_index: maps physical extruder index → source variant index
+    void set_to_index(const ConfigOptionVectorBase* rhs, const std::vector<int>& dest_index, int stride) override
+    {
+        if (rhs->type() == this->type()) {
+            auto other = static_cast<const ConfigOptionVector<T>*>(rhs);
+            T v = other->values.front();
+            this->values.resize(dest_index.size() * stride, v);
+            for (size_t i = 0; i < dest_index.size(); i++) {
+                for (size_t j = 0; j < (size_t)stride; j++) {
+                    size_t src = dest_index[i] * stride + j;
+                    if (src < other->values.size() && !other->is_nil(src))
+                        this->values[i * stride + j] = other->values[src];
+                }
+            }
+        }
+        else
+            throw ConfigurationError("ConfigOptionVector::set_to_index(): Assigning an incompatible type");
     }
 
     //set a item related with extruder variants when saving user config, set the non-diff value of some extruder to nill

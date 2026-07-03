@@ -9631,7 +9631,7 @@ DynamicPrintConfig::get_filament_type() const
     return std::string();
 }
 
-void DynamicPrintConfig::update_values_to_printer_extruders(DynamicPrintConfig& printer_config, std::set<std::string>& key_set, std::string id_name, std::string variant_name, unsigned int stride, unsigned int extruder_id)
+std::vector<int> DynamicPrintConfig::update_values_to_printer_extruders(DynamicPrintConfig& printer_config, std::set<std::string>& key_set, std::string id_name, std::string variant_name, unsigned int stride, unsigned int extruder_id)
 {
     int extruder_count;
     bool different_extruder = printer_config.support_different_extruders(extruder_count);
@@ -9645,7 +9645,7 @@ void DynamicPrintConfig::update_values_to_printer_extruders(DynamicPrintConfig& 
         auto opt_nozzle_volume_type = dynamic_cast<const ConfigOptionEnumsGeneric*>(printer_config.option("nozzle_volume_type"));
         if (!opt_extruder_type || !opt_nozzle_volume_type) {
             BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(", Line %1%: extruder_type or nozzle_volume_type option not found, skipping")%__LINE__;
-            return;
+            return {};
         }
         std::vector<int> variant_index;
 
@@ -9686,7 +9686,7 @@ void DynamicPrintConfig::update_values_to_printer_extruders(DynamicPrintConfig& 
         const ConfigDef       *config_def     = this->def();
         if (!config_def) {
             BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << boost::format(", Line %1%: can not find config define")%__LINE__;
-            return;
+            return {};
         }
         for (auto& key: key_set)
         {
@@ -9801,7 +9801,21 @@ void DynamicPrintConfig::update_values_to_printer_extruders(DynamicPrintConfig& 
                     break;
             }
         }
+        // Return variant_index for downstream per-object region contraction (ported from BBS).
+        {
+            std::string idx_str;
+            for (size_t i = 0; i < variant_index.size(); ++i) {
+                if (i > 0) idx_str += ",";
+                idx_str += std::to_string(variant_index[i]);
+            }
+            BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << ": returning variant_index=[" << idx_str
+                                       << "] size=" << variant_index.size()
+                                       << " id_name=" << id_name;
+        }
+        return variant_index;
     }
+    // Single-extruder or no different extruders: return empty variant_index (no contraction needed).
+    return {};
 }
 
 void DynamicPrintConfig::update_values_to_printer_extruders_for_multiple_filaments(DynamicPrintConfig& printer_config, std::set<std::string>& key_set, std::string id_name, std::string variant_name)
@@ -10297,6 +10311,32 @@ void DynamicPrintConfig::update_diff_values_to_child_config(DynamicPrintConfig& 
         }
     }
     return;
+}
+
+// Reference to BBS: BambuStudio/src/libslic3r/PrintConfig.cpp L9052
+// Variant-aware config applicator: applies dynamic config to static config,
+// selecting correct variant values for vector options in key_set via variant_index.
+// If variant_index is empty, falls back to plain apply().
+void update_static_print_config_from_dynamic(ConfigBase& config, const DynamicPrintConfig& src_config, const std::vector<int>& variant_index, std::set<std::string>& key_set, int stride)
+{
+    if (!variant_index.empty()) {
+        const t_config_option_keys &keys = src_config.keys();
+        for (const auto& opt_key : keys) {
+            ConfigOption *opt_dst = config.option(opt_key);
+            const ConfigOption *opt_src = src_config.option(opt_key);
+            if (opt_dst && opt_src && (*opt_dst != *opt_src)) {
+                if (opt_src->is_scalar() || (key_set.find(opt_key) == key_set.end()))
+                    opt_dst->set(opt_src);
+                else {
+                    auto* opt_vec_dst = static_cast<ConfigOptionVectorBase*>(opt_dst);
+                    const auto* opt_vec_src = static_cast<const ConfigOptionVectorBase*>(opt_src);
+                    opt_vec_dst->set_to_index(opt_vec_src, variant_index, stride);
+                }
+            }
+        }
+    }
+    else
+        config.apply(src_config, true);
 }
 
 void compute_filament_override_value(const std::string& opt_key, const ConfigOption *opt_old_machine, const ConfigOption *opt_new_machine, const ConfigOption *opt_new_filament, const DynamicPrintConfig& new_full_config,

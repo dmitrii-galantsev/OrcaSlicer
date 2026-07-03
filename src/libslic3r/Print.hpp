@@ -497,7 +497,8 @@ public:
     // If ! m_slicing_params.valid, recalculate.
     void                    update_slicing_parameters();
 
-    static PrintObjectConfig object_config_from_model_object(const PrintObjectConfig &default_object_config, const ModelObject &object, size_t num_extruders);
+    // Reference to BBS: BambuStudio/src/libslic3r/Print.hpp L558
+    static PrintObjectConfig object_config_from_model_object(const PrintObjectConfig &default_object_config, const ModelObject &object, size_t num_extruders, const std::vector<int>& variant_index = {});
 
 private:
     void make_perimeters();
