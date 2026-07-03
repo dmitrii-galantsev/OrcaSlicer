@@ -7,6 +7,7 @@
 #include "libslic3r/PresetBundle.hpp"
 #include "libslic3r/Utils.hpp"
 #include "libslic3r/VortekLog.hpp"
+#include <ctime>
 #include <fstream>
 #include <boost/filesystem.hpp>
 
@@ -27,15 +28,48 @@ VortekProtocolExtension& VortekProtocolExtension::get_instance() {
 
 // ── Base preset index ────────────────────────────────────────────────────────
 
-void VortekProtocolExtension::ensure_base_presets_indexed() const {
-    std::lock_guard<std::mutex> lock(m_base_mutex);
-    if (m_base_indexed) return;
-    m_base_indexed = true;
+// Returns the max mtime of all user/*/filament/base/ directories.
+// Cheap: only stats directories, not individual files.
+// Returns 0 if not accessible or not found.
+// Reference to BBS: BambuStudio user data layout (user/<uid>/filament/base/)
+static std::time_t get_base_dirs_mtime() {
+    namespace fs = boost::filesystem;
+    std::time_t max_mtime = 0;
+    try {
+        const fs::path user_dir = fs::path(Slic3r::data_dir()) / "user";
+        if (!fs::exists(user_dir) || !fs::is_directory(user_dir)) return 0;
+        for (const auto& user_entry : fs::directory_iterator(user_dir)) {
+            if (!fs::is_directory(user_entry)) continue;
+            const fs::path base_dir = user_entry.path() / "filament" / "base";
+            if (!fs::exists(base_dir) || !fs::is_directory(base_dir)) continue;
+            const std::time_t t = fs::last_write_time(base_dir);
+            if (t > max_mtime) max_mtime = t;
+        }
+    } catch (...) {}
+    return max_mtime;
+}
 
-    // Scan user/*/filament/base/*.json for cloud-downloaded base presets.
-    // These presets have filament_id set (e.g. "P1f749cd") but live outside
-    // the standard PresetCollection iteration range.
+void VortekProtocolExtension::ensure_base_presets_indexed() const {
+    // mtime-based check: stat user/*/filament/base/ directories (cheap, no file reads).
+    // Rebuild only if directory mtime changed since last scan (new preset file added/removed).
+    // No UI dependency — pure data-layer, triggered by query needs.
     // Reference to BBS: BambuStudio user data layout (user/<uid>/filament/base/)
+    const std::time_t current_mtime = get_base_dirs_mtime();
+    {
+        std::lock_guard<std::mutex> lock(m_base_mutex);
+        if (current_mtime != 0 && current_mtime == m_base_dir_mtime) {
+            return;  // directory unchanged — index still valid
+        }
+        const bool is_first = (m_base_dir_mtime == 0);
+        VORTEK_LOG(warn, "VortekProtocolExtension: base preset index "
+            << (is_first ? "initial scan" : "rebuild (dir mtime changed)")
+            << ": stored_mtime=" << m_base_dir_mtime
+            << ", current_mtime=" << current_mtime);
+        m_base_dir_mtime = current_mtime;
+        m_base_filament_names.clear();
+    }
+    // Scan user/*/filament/base/*.json — only reached on mtime change.
+    // No wx/UI dependency — pure filesystem scan.
     namespace fs = boost::filesystem;
     try {
         const fs::path user_dir = fs::path(Slic3r::data_dir()) / "user";
@@ -55,8 +89,9 @@ void VortekProtocolExtension::ensure_base_presets_indexed() const {
                     if (j.is_discarded() || !j.contains("filament_id")) continue;
 
                     std::string fid = j["filament_id"].get<std::string>();
-                    if (fid.empty()) continue;
-                    // Skip if already found in a higher-priority pass
+                    if (fid.empty() || fid == "null") continue;
+                    // First-wins per filament_id (user presets take priority over vendor)
+                    std::lock_guard<std::mutex> lock(m_base_mutex);
                     if (m_base_filament_names.count(fid)) continue;
 
                     std::string name = j.contains("name") ? j["name"].get<std::string>() : "";
@@ -67,14 +102,15 @@ void VortekProtocolExtension::ensure_base_presets_indexed() const {
                         VORTEK_LOG(warn, "VortekProtocolExtension: indexed base preset: id=" << fid << ", name=" << display);
                     }
                 } catch (...) {
-                    // Skip malformed or unreadable JSON files silently
+                    // Skip malformed or unreadable JSON silently
                 }
             }
         }
-    } catch (...) {
-        // Skip if data dir not accessible (sandboxed or missing)
+    } catch (...) {}
+    {
+        std::lock_guard<std::mutex> lock(m_base_mutex);
+        VORTEK_LOG(warn, "VortekProtocolExtension: base preset index ready: " << m_base_filament_names.size() << " entries");
     }
-    VORTEK_LOG(warn, "VortekProtocolExtension: base preset index built: " << m_base_filament_names.size() << " entries");
 }
 
 std::string VortekProtocolExtension::lookup_base_preset_name(const std::string& filament_id) const {
@@ -86,7 +122,7 @@ std::string VortekProtocolExtension::lookup_base_preset_name(const std::string& 
 
 void VortekProtocolExtension::invalidate_base_preset_cache() {
     std::lock_guard<std::mutex> lock(m_base_mutex);
-    m_base_indexed = false;
+    m_base_dir_mtime = 0;  // reset to 0 = "never scanned" -> forces rescan on next query
     m_base_filament_names.clear();
     VORTEK_LOG(warn, "VortekProtocolExtension: base preset cache invalidated");
 }

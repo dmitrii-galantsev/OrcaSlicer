@@ -6,6 +6,7 @@
 #include <string>
 #include <mutex>
 #include <unordered_map>
+#include <ctime>
 #include <nlohmann/json.hpp>
 
 namespace Slic3r {
@@ -67,14 +68,16 @@ private:
     // Key:   filament_id (e.g. "P1f749cd")
     // Value: stripped display name (e.g. "Eryone PA PA6")
     //
+    // mtime-based invalidation: index is rebuilt when any user/*/filament/base/
+    // directory mtime changes (i.e. new preset file added or removed).
+    // No dependency on UI events — purely data-layer, triggered by query needs.
     // Thread-safe: all access is guarded by m_base_mutex.
-    // Not a static variable: lives in the singleton instance.
-    mutable std::mutex                           m_base_mutex;
-    mutable bool                                 m_base_indexed = false;
-    mutable std::unordered_map<std::string, std::string> m_base_filament_names;
+    mutable std::mutex                                    m_base_mutex;
+    mutable std::time_t                                   m_base_dir_mtime = 0;  // 0 = never scanned
+    mutable std::unordered_map<std::string, std::string>  m_base_filament_names;
 
-    // Scans user/*/filament/base/*.json exactly once per session.
-    // Must be called with m_base_mutex NOT held (it acquires the lock internally).
+    // Rebuilds the index if any user/*/filament/base/ directory mtime changed.
+    // Called without holding m_base_mutex (acquires it internally).
     void ensure_base_presets_indexed() const;
 };
 
