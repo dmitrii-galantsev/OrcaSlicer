@@ -140,7 +140,7 @@ std::optional<LayeredNozzleGroupResult> LayeredNozzleGroupResult::create(
         }
     }
     auto nozzle_list = build_nozzle_list(nozzle_groups);
-    VORTEK_LOG(info, "LayeredNozzleGroupResult::create (stats): stats size = " << nozzle_count.size() 
+    VORTEK_LOG(warn, "LayeredNozzleGroupResult::create (stats): stats size = " << nozzle_count.size() 
                       << ", nozzle_list size = " << nozzle_list.size() 
                       << ", diameter = " << diameter);
     
@@ -150,10 +150,10 @@ std::optional<LayeredNozzleGroupResult> LayeredNozzleGroupResult::create(
     for (auto v : filament_map) fm_oss << v << " ";
     for (auto v : filament_volume_map) fvm_oss << v << " ";
     for (auto v : filament_nozzle_map) fnm_oss << v << " ";
-    VORTEK_LOG(info, "  used_filaments: " << uf_oss.str());
-    VORTEK_LOG(info, "  filament_map (extruder): " << fm_oss.str());
-    VORTEK_LOG(info, "  filament_volume_map (vol_type): " << fvm_oss.str());
-    VORTEK_LOG(info, "  filament_nozzle_map (nozzle_slot): " << fnm_oss.str());
+    VORTEK_LOG(warn, "  used_filaments: " << uf_oss.str());
+    VORTEK_LOG(warn, "  filament_map (extruder): " << fm_oss.str());
+    VORTEK_LOG(warn, "  filament_volume_map (vol_type): " << fvm_oss.str());
+    VORTEK_LOG(warn, "  filament_nozzle_map (nozzle_slot): " << fnm_oss.str());
 
     std::vector<bool> used_nozzle(nozzle_list.size(), false);
     std::map<int, int> input_nozzle_id_to_output;

@@ -238,7 +238,7 @@ void patch_toolchange_dyn_config(
         }
         gcode.placeholder_parser().set("vortek_last_filament_id", new_filament_id);
         gcode.placeholder_parser().set("vortek_toolchange_count", tc);
-        VORTEK_LOG(info, "toolchange_count transition: " << last_filament_id << " -> " << new_filament_id << ", tc=" << tc);
+        VORTEK_LOG(warn, "toolchange_count transition: " << last_filament_id << " -> " << new_filament_id << ", tc=" << tc);
     }
 
     dyn_config.set_key_value("toolchange_count", new Slic3r::ConfigOptionInt(tc));
@@ -357,7 +357,7 @@ void patch_toolchange_dyn_config(
                 if (old_nozzle_id != nozzle_id) {
                     unloaded_mask |= (1 << old_nozzle_id);
                     gcode.placeholder_parser().set("vortek_extruders_unloaded_mask", unloaded_mask);
-                    VORTEK_LOG(info, "nozzle parked: old_nozzle_id=" << old_nozzle_id << ", unloaded_mask=" << unloaded_mask);
+                    VORTEK_LOG(warn, "nozzle parked: old_nozzle_id=" << old_nozzle_id << ", unloaded_mask=" << unloaded_mask);
                 }
             }
 
@@ -386,7 +386,7 @@ void patch_toolchange_dyn_config(
                 }
             }
 
-            VORTEK_LOG(info, "new_extruder_retracted_length: nozzle_id=" << nozzle_id 
+            VORTEK_LOG(warn, "new_extruder_retracted_length: nozzle_id=" << nozzle_id 
                              << ", initial_nozzle_id=" << initial_nozzle_id
                              << ", already_unloaded=" << already_unloaded 
                              << ", requires_unretract=" << requires_unretract

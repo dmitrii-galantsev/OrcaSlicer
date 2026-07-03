@@ -187,7 +187,7 @@ void PrintHooks::update_filament_maps_to_config(
             }
         }
         if (has_collision) {
-            VORTEK_LOG(info, "update_filament_maps_to_config: detected slot collisions in loaded nozzle map, recalculating...");
+            VORTEK_LOG(warn, "update_filament_maps_to_config: detected slot collisions in loaded nozzle map, recalculating...");
             needs_mapping = true;
         }
     }
@@ -267,7 +267,7 @@ void PrintHooks::update_filament_maps_to_config(
 
         if (nozzle_result) {
             print.set_nozzle_group_result(std::make_shared<Slic3r::MultiNozzleUtils::LayeredNozzleGroupResult>(*nozzle_result));
-            VORTEK_LOG(info, "update_filament_maps_to_config: initialized m_nozzle_group_result in Print");
+            VORTEK_LOG(warn, "update_filament_maps_to_config: initialized m_nozzle_group_result in Print");
         } else {
             VORTEK_LOG(error, "update_filament_maps_to_config: failed to create LayeredNozzleGroupResult");
         }
@@ -285,7 +285,7 @@ void PrintHooks::update_filament_maps_to_config(
                            print.config().filament_nozzle_map.values != final_nozzle_maps);
 
     if (maps_changed || volume_changed || nozzle_changed) {
-        VORTEK_LOG(info, "update_filament_maps_to_config: maps changed, applying to full configs...");
+        VORTEK_LOG(warn, "update_filament_maps_to_config: maps changed, applying to full configs...");
 
         if (maps_changed) {
             if (auto* opt = print.m_ori_full_print_config.option<Slic3r::ConfigOptionInts>("filament_map", true)) {
@@ -306,7 +306,7 @@ void PrintHooks::update_filament_maps_to_config(
         }
 
         if (nozzle_changed) {
-            VORTEK_LOG(info, "update_filament_maps_to_config: applying filament_nozzle_map to full configs");
+            VORTEK_LOG(warn, "update_filament_maps_to_config: applying filament_nozzle_map to full configs");
             if (auto* opt = print.m_ori_full_print_config.option<Slic3r::ConfigOptionInts>("filament_nozzle_map", true)) {
                 opt->values = final_nozzle_maps;
             }
@@ -371,11 +371,11 @@ void PrintHooks::update_to_config_by_nozzle_group_result(
         if (auto* opt = print.m_full_print_config.option<Slic3r::ConfigOptionInts>("filament_nozzle_map", true)) {
             opt->values = nozzle_map;
         }
-        VORTEK_LOG(info, "update_to_config_by_nozzle_group_result: updated filament_nozzle_map in full configs");
+        VORTEK_LOG(warn, "update_to_config_by_nozzle_group_result: updated filament_nozzle_map in full configs");
     }
 
     int extruder_count = print.config().nozzle_diameter.values.size();
-    VORTEK_LOG(info, "update_to_config_by_nozzle_group_result: carriage count = " << extruder_count);
+    VORTEK_LOG(warn, "update_to_config_by_nozzle_group_result: carriage count = " << extruder_count);
     int extruder_volume_type_count = 1;
 
     std::unordered_map<int, std::vector<Slic3r::ExtruderNozleInfo>> filament_extruder_map;
@@ -429,7 +429,7 @@ void PrintHooks::update_to_config_by_nozzle_group_result(
 void PrintHooks::init_vortek_params(Slic3r::PrintConfigDef* def_ptr)
 {
     using namespace Slic3r;
-    VORTEK_LOG(info, "init_vortek_params: registering 18 Vortek configuration parameters");
+    VORTEK_LOG(warn, "init_vortek_params: registering 18 Vortek configuration parameters");
 
     ConfigOptionDef* def = def_ptr->add("extruder_max_nozzle_count", coInts);
     def->mode = comDevelop;
@@ -654,7 +654,7 @@ void PrintHooks::compute_vortek_derived_maps(
     const auto* opt_preset_phys_map = print.m_ori_full_print_config.option<Slic3r::ConfigOptionInts>("physical_extruder_map");
     if (opt_preset_phys_map && !opt_preset_phys_map->values.empty()) {
         out_physical_extruder_map = opt_preset_phys_map->values;
-        VORTEK_LOG(info, "compute_vortek_derived_maps: using preset physical_extruder_map=["
+        VORTEK_LOG(warn, "compute_vortek_derived_maps: using preset physical_extruder_map=["
             << out_physical_extruder_map[0] << "," << (out_physical_extruder_map.size() > 1 ? std::to_string(out_physical_extruder_map[1]) : "?") << "]");
     } else {
         // Fallback: compute from print_extruder_id if preset is missing

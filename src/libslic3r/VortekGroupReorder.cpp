@@ -24,7 +24,7 @@ bool GroupReorder::handle_nozzle_manual_reorder(
         return false;
     }
 
-    VORTEK_LOG(info, "processing fmmNozzleManual reorder for " << used_filaments.size() << " used filaments");
+    VORTEK_LOG(warn, "processing fmmNozzleManual reorder for " << used_filaments.size() << " used filaments");
 
     // 1. Build manual filament map (0-based instead of 1-based GUI representation)
     auto manual_filament_map = print_config->filament_map.values;
@@ -48,7 +48,7 @@ bool GroupReorder::handle_nozzle_manual_reorder(
         return false;
     }
 
-    VORTEK_LOG(info, "nozzle group result built successfully, dynamic nozzle map = " << nozzle_result->is_support_dynamic_nozzle_map());
+    VORTEK_LOG(warn, "nozzle group result built successfully, dynamic nozzle map = " << nozzle_result->is_support_dynamic_nozzle_map());
 
     // 3. Store result on print
     print->set_nozzle_group_result(std::make_shared<Slic3r::MultiNozzleUtils::LayeredNozzleGroupResult>(*nozzle_result));

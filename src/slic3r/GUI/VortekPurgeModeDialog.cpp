@@ -21,7 +21,7 @@ VortekPurgeModeDialog::VortekPurgeModeDialog(wxWindow* parent, Slic3r::PrimeVolu
     : wxDialog(parent, wxID_ANY, _L("Purge Mode Settings"), wxDefaultPosition, wxDefaultSize, wxDEFAULT_DIALOG_STYLE),
       m_mode(mode)
 {
-    VORTEK_LOG(info, "VortekPurgeModeDialog: opened with mode " << (int)mode);
+    VORTEK_LOG(warn, "VortekPurgeModeDialog: opened with mode " << (int)mode);
 
     SetBackgroundColour(*wxWHITE);
     wxGetApp().UpdateDlgDarkUI(this);
@@ -85,7 +85,7 @@ VortekPurgeModeDialog::VortekPurgeModeDialog(wxWindow* parent, Slic3r::PrimeVolu
     // Click events on cards and children
     auto select_std = [this](wxMouseEvent&) {
         m_mode = Slic3r::PrimeVolumeMode::pvmDefault;
-        VORTEK_LOG(info, "VortekPurgeModeDialog: standard option selected");
+        VORTEK_LOG(warn, "VortekPurgeModeDialog: standard option selected");
         update_selection();
     };
     m_standard_card->Bind(wxEVT_LEFT_DOWN, select_std);
@@ -94,7 +94,7 @@ VortekPurgeModeDialog::VortekPurgeModeDialog(wxWindow* parent, Slic3r::PrimeVolu
 
     auto select_sav = [this](wxMouseEvent&) {
         m_mode = Slic3r::PrimeVolumeMode::pvmSaving;
-        VORTEK_LOG(info, "VortekPurgeModeDialog: prime saving option selected");
+        VORTEK_LOG(warn, "VortekPurgeModeDialog: prime saving option selected");
         update_selection();
     };
     m_saving_card->Bind(wxEVT_LEFT_DOWN, select_sav);
@@ -103,7 +103,7 @@ VortekPurgeModeDialog::VortekPurgeModeDialog(wxWindow* parent, Slic3r::PrimeVolu
 
     // Button actions
     Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
-        VORTEK_LOG(info, "VortekPurgeModeDialog: confirmed with mode " << (int)m_mode);
+        VORTEK_LOG(warn, "VortekPurgeModeDialog: confirmed with mode " << (int)m_mode);
         EndModal(wxID_OK);
     }, wxID_APPLY); // Confirm (wxID_APPLY matches DialogButtons "Confirm" action)
     Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { EndModal(wxID_CANCEL); }, wxID_CANCEL);

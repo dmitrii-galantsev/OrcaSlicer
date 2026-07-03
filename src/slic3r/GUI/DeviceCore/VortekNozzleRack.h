@@ -36,6 +36,7 @@ public:
         RACK_STATUS_PLACE_HOTEND = 7,
         RACK_STATUS_PICK_HOTEND = 8,
         RACK_STATUS_LOCK_HOTEND = 9,
+        RACK_STATUS_PRINTING = 10,
         RACK_STATUS_END,
     };
 
