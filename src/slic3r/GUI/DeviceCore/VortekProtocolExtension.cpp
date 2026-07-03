@@ -5,14 +5,12 @@
 #include "slic3r/GUI/DeviceCore/DevFilaSystem.h"
 #include "slic3r/GUI/DeviceCore/VortekDeviceHooks.hpp"
 #include "libslic3r/PresetBundle.hpp"
+#include "libslic3r/Utils.hpp"
 #include "libslic3r/VortekLog.hpp"
+#include <fstream>
+#include <boost/filesystem.hpp>
 
 namespace Vortek {
-
-VortekProtocolExtension& VortekProtocolExtension::get_instance() {
-    static VortekProtocolExtension instance;
-    return instance;
-}
 
 // Strip " @..." printer suffix from preset name.
 // "Bambu PLA Basic @BBL H2C 0.4 nozzle" → "Bambu PLA Basic"
@@ -22,20 +20,109 @@ static std::string strip_printer_suffix(const std::string& name) {
     return (at_pos != std::string::npos) ? name.substr(0, at_pos) : name;
 }
 
+VortekProtocolExtension& VortekProtocolExtension::get_instance() {
+    static VortekProtocolExtension instance;
+    return instance;
+}
+
+// ── Base preset index ────────────────────────────────────────────────────────
+
+void VortekProtocolExtension::ensure_base_presets_indexed() const {
+    std::lock_guard<std::mutex> lock(m_base_mutex);
+    if (m_base_indexed) return;
+    m_base_indexed = true;
+
+    // Scan user/*/filament/base/*.json for cloud-downloaded base presets.
+    // These presets have filament_id set (e.g. "P1f749cd") but live outside
+    // the standard PresetCollection iteration range.
+    // Reference to BBS: BambuStudio user data layout (user/<uid>/filament/base/)
+    namespace fs = boost::filesystem;
+    try {
+        const fs::path user_dir = fs::path(Slic3r::data_dir()) / "user";
+        if (!fs::exists(user_dir) || !fs::is_directory(user_dir)) return;
+
+        for (const auto& user_entry : fs::directory_iterator(user_dir)) {
+            if (!fs::is_directory(user_entry)) continue;
+            const fs::path base_dir = user_entry.path() / "filament" / "base";
+            if (!fs::exists(base_dir) || !fs::is_directory(base_dir)) continue;
+
+            for (const auto& entry : fs::directory_iterator(base_dir)) {
+                if (entry.path().extension() != ".json") continue;
+                try {
+                    std::ifstream f(entry.path().string());
+                    if (!f.is_open()) continue;
+                    nlohmann::json j = nlohmann::json::parse(f, nullptr, false);
+                    if (j.is_discarded() || !j.contains("filament_id")) continue;
+
+                    std::string fid = j["filament_id"].get<std::string>();
+                    if (fid.empty()) continue;
+                    // Skip if already found in a higher-priority pass
+                    if (m_base_filament_names.count(fid)) continue;
+
+                    std::string name = j.contains("name") ? j["name"].get<std::string>() : "";
+                    if (name.empty()) name = entry.path().stem().string();
+                    std::string display = strip_printer_suffix(name);
+                    if (!display.empty()) {
+                        m_base_filament_names[fid] = display;
+                        VORTEK_LOG(warn, "VortekProtocolExtension: indexed base preset: id=" << fid << ", name=" << display);
+                    }
+                } catch (...) {
+                    // Skip malformed or unreadable JSON files silently
+                }
+            }
+        }
+    } catch (...) {
+        // Skip if data dir not accessible (sandboxed or missing)
+    }
+    VORTEK_LOG(warn, "VortekProtocolExtension: base preset index built: " << m_base_filament_names.size() << " entries");
+}
+
+std::string VortekProtocolExtension::lookup_base_preset_name(const std::string& filament_id) const {
+    ensure_base_presets_indexed();
+    std::lock_guard<std::mutex> lock(m_base_mutex);
+    auto it = m_base_filament_names.find(filament_id);
+    return (it != m_base_filament_names.end()) ? it->second : "";
+}
+
+void VortekProtocolExtension::invalidate_base_preset_cache() {
+    std::lock_guard<std::mutex> lock(m_base_mutex);
+    m_base_indexed = false;
+    m_base_filament_names.clear();
+    VORTEK_LOG(warn, "VortekProtocolExtension: base preset cache invalidated");
+}
+
+// ── Preset name lookup helpers ────────────────────────────────────────────────
+
 // Look up a clean display name from the installed preset collection by filament_id.
 // filament_id is inherited from the base preset to all child presets.
 // Returns stripped name (e.g. "Bambu PLA Basic") or "" if not found.
 // Reference to BBS: BambuStudio/src/libslic3r/Preset.cpp#L1698 (filament_id inherited from parent)
+// Three-pass search:
+//   Pass 1: begin()..end()              — user/system visible presets (highest priority)
+//   Pass 2: lbegin()..begin()           — generic default presets
+//   Pass 3: m_base_filament_names index — cloud-downloaded base/ presets (lazily scanned)
 static std::string preset_name_by_filament_id(const std::string& filament_id) {
     if (!Slic3r::GUI::wxGetApp().preset_bundle) return "";
-    const auto& bundle = *Slic3r::GUI::wxGetApp().preset_bundle;
+    auto& bundle = *Slic3r::GUI::wxGetApp().preset_bundle;  // non-const: lbegin() is not const
+    // Pass 1: user/visible presets
     for (auto it = bundle.filaments.begin(); it != bundle.filaments.end(); ++it) {
         if (it->filament_id == filament_id) {
             return strip_printer_suffix(it->name);
         }
     }
-    return "";
+    // Pass 2: default/generic presets (before m_num_default_presets cut)
+    // Reference to BBS: BambuStudio/src/libslic3r/Preset.cpp (lbegin)
+    for (auto it = bundle.filaments.lbegin(); it != bundle.filaments.begin(); ++it) {
+        if (it->filament_id == filament_id) {
+            return strip_printer_suffix(it->name);
+        }
+    }
+    // Pass 3: base preset index (user/*/filament/base/*.json)
+    // Cloud-downloaded base presets that are NOT in the PresetCollection iteration range.
+    // Scanned lazily on first call, cached for the session (invalidated on preset sync).
+    return VortekProtocolExtension::get_instance().lookup_base_preset_name(filament_id);
 }
+
 
 std::string VortekProtocolExtension::resolve_filament_name(const std::string& filament_id) const {
     // Reference to BBS: BambuStudio/src/slic3r/GUI/DeviceCore/DevFilaSystem.cpp#L789
