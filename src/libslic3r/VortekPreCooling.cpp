@@ -594,7 +594,28 @@ void PreCooling::inject_cooling_heating_command(
     }
 
     // perform cooling first and then perform heating
-    float mid_temp = std::max(room_temperature, (curr_temp * ext_heating_rate + target_temp * ext_cooling_rate - complete_free_time_gap * ext_cooling_rate * ext_heating_rate) / (ext_cooling_rate + ext_heating_rate));
+    // H2C: this branch cools a nozzle that WILL be reused. Do not let it drop to room temperature:
+    // on the Vortek carousel a switched-away nozzle is parked in the rack, and driving it to ~room
+    // forces a long cool-to-park + reheat that the firmware blocks on, stalling the toolchange. Floor
+    // the cool at the filament's configured idle temp (filament_pre_cooling_temperature_nc) — the
+    // intended park temperature — so the pre-toolchange reheat is short. (The partial-free path above
+    // already floors at this temp; the pure-cooldown/final-idle path legitimately cools to room.)
+    // Ported from 284ae6e2a5, which was lost in the VortekPreCooling rewrite.
+    // NOTE: m_filament_pre_cooling_temps_nc is populated from filament_pre_cooling_temperature
+    // (the BBS timing value, commonly 0 to keep partial-free cooling disabled) rather than from
+    // filament_pre_cooling_temperature_nc, so it is usually 0 here. Fall back to a safe carousel
+    // park floor of 180 C when it is unset -- identical to the fallback the intra-extruder
+    // nozzle-change branch already uses above. This branch is only reached for a nozzle that WILL
+    // be reheated (the caller passes pre_heating=true for every non-final block), so flooring the
+    // cool is always correct; the final-idle path cools via the pre_cooling-only branch and still
+    // reaches room temperature.
+    int park_temp_nc = 0;
+    if (block.last_filament_id >= 0 && block.last_filament_id < (int) m_filament_pre_cooling_temps_nc.size())
+        park_temp_nc = m_filament_pre_cooling_temps_nc[block.last_filament_id];
+    if (park_temp_nc <= 0)
+        park_temp_nc = 180;
+    float reuse_cool_floor = std::max(room_temperature, (float) park_temp_nc);
+    float mid_temp = std::max(reuse_cool_floor, (curr_temp * ext_heating_rate + target_temp * ext_cooling_rate - complete_free_time_gap * ext_cooling_rate * ext_heating_rate) / (ext_cooling_rate + ext_heating_rate));
     float heating_temp = target_temp - mid_temp;
     float heating_start_time = get_cum_time(move_iter_upper) - heating_temp / ext_heating_rate;
     auto heating_move_iter = std::upper_bound(move_iter_lower, move_iter_upper + 1, heating_start_time, [this](float time, const Slic3r::GCodeProcessorResult::MoveVertex& a) { return time < get_cum_time(m_moves.cbegin() + (&a - &m_moves[0])); });
@@ -615,7 +636,7 @@ void PreCooling::inject_cooling_heating_command(
     VORTEK_LOG(warning, "[DBG] real_cooling_time=" << real_cooling_time << " real_delta_temp=" << real_delta_temp);
     if (real_delta_temp == 0)
         return;
-    int cooling_temp = std::max((int)room_temperature, (int)curr_temp - real_delta_temp);
+    int cooling_temp = std::max((int)reuse_cool_floor, (int)curr_temp - real_delta_temp);
     if (!suppress_cooling_emission) {
         // Reference to BBS: cooldown injected at partial_free_lower_id (BEFORE TC), not AT TC line.
         unsigned int cooldown_id = (block.partial_free_lower_id < block.free_lower_gcode_id)
