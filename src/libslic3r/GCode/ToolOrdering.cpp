@@ -1306,6 +1306,31 @@ void ToolOrdering::reorder_extruders_for_minimum_flush_volume(bool reorder_first
         } else if (map_mode == FilamentMapMode::fmmNozzleManual) {
             is_vortek_handled = ::Vortek::GroupReorder::handle_nozzle_manual_reorder(
                 m_print, print_config, used_filaments, filament_maps, number_of_extruders);
+        } else if (map_mode == FilamentMapMode::fmmManual) {
+            // [Vortek] H2C fix: In plain Manual mode the user supplied an explicit
+            // filament->extruder map, so we must NOT recompute it (unlike the Auto branch).
+            // However, update_filament_maps_to_config() also has the side effect of building
+            // and storing the print's nozzle_group_result, which the GCodeProcessor pre-cooling/
+            // pre-heating post-processor requires (its gate is get_nozzle_group_result()).
+            // Skipping it here (the previous behavior) left Manual-mode multi-nozzle prints with
+            // no carousel M632 priming -> the carousel can stall at nozzle changes.
+            //
+            // Only do this when the print actually uses the carousel (extruder 2 / "Right").
+            // filament_maps is 1-based here: 1 = Left (fixed nozzle), 2 = Right (carousel).
+            // If every filament is on the fixed Left nozzle there are no nozzle changes, so no
+            // nozzle_group_result / M632 priming is needed; initializing it there is both
+            // pointless and would drive the single-nozzle print down the multi-nozzle fake-wipe-
+            // tower path. Re-running the hook with the EXISTING config maps preserves the
+            // assignment; the hook is idempotent (matching maps -> no rewrite -> no re-slice
+            // loop) and a no-op on non-H2C printers.
+            const bool uses_carousel = std::any_of(filament_maps.begin(), filament_maps.end(),
+                                                    [](int m) { return m == 2; });
+            if (uses_carousel) {
+                m_print->update_filament_maps_to_config(
+                    filament_maps,
+                    m_print->config().filament_volume_map.values,
+                    m_print->config().filament_nozzle_map.values);
+            }
         }
 
         if (!is_vortek_handled) {
