@@ -290,6 +290,12 @@ made in-range or CLI rejects the file). `tpu_hf_repro.3mf` = the benchy with `pr
   `ConfigOption*` element types for the switch cases), `incomingCalls`/`prepareCallHierarchy` (trace
   the Print→Vortek call ordering that matters here), `workspaceSymbol` (confirm whether an add_h2c
   symbol still exists in v2 core).
+- **Cross-tree LSP works:** pass a path into `../orcaaddh2c/...`; that tree has its own
+  `build/compile_commands.json`, so clangd navigates the oracle (`add_h2c_wip`) too.
+- **Caveat — fresh index under-reports:** right after a `cmake` configure, clangd's background index
+  is incomplete and `findReferences` misses call sites (queried oracle
+  `get_extruder_nozzle_volume_count` returned only def+delegator, missing the real `Print.cpp:3276`
+  caller). Let it index, and cross-check completeness with `rg` before trusting a ref list.
 - **Keep git/sed/rg for cross-branch work:** LSP indexes only one workspace, so verbatim extraction
   from `add_h2c` and A/B diffing between the two trees still needs `git show <branch>:<file>` + sed +
   `rg`. (User pref: `rg`/`fd` over grep; `rg` rejects `-E`.) Net: LSP for "what/where/who-calls" in
