@@ -9037,6 +9037,9 @@ int DynamicPrintConfig::get_index_for_extruder(int extruder_or_filament_id, std:
     if (variant_opt != nullptr) {
         int v_size = variant_opt->values.size();
         const bool has_complete_id_map = id_opt && int(id_opt->values.size()) >= v_size;
+        // nvtHybrid not supported in presets, switch to nvtStandard to match the preset values
+        if (nozzle_volume_type == nvtHybrid)
+            nozzle_volume_type = nvtStandard;
         std::string extruder_variant = get_extruder_variant_string(extruder_type, nozzle_volume_type);
         for (int index = 0; index < v_size; index++)
         {
