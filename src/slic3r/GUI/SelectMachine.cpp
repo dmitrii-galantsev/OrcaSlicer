@@ -1554,7 +1554,9 @@ void SelectMachineDialog::show_status(PrintDialogStatus status, std::vector<wxSt
         Enable_Send_Button(false);
     } else if (status == PrintDialogStatus::PrintStatusNozzleMatchInvalid) {
         Enable_Refresh_Button(true);
-        Enable_Send_Button(false);
+        // Orca: allow send despite nozzle flow-type mismatch (BBL hard-blocks; we downgrade to a
+        // warning, matching add_h2c). A hard block here left the H2C sync/send flow stuck.
+        Enable_Send_Button(true);
     } else if (status == PrintStatusNozzleDiameterMismatch) {
         Enable_Refresh_Button(true);
         Enable_Send_Button(false);
