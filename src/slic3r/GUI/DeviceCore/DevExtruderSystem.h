@@ -51,7 +51,7 @@ public:
     wxString GetDisplayName() const;
 
     // installed nozzle info
-    bool           HasNozzleInstalled() const = delete;//{ return m_has_nozzle; }
+    bool           HasNozzleInstalled() const  { return m_has_nozzle; }
 
     int            GetNozzleId() const { return m_current_nozzle_id; }
     int            GetTargetNozzleId() const = delete;//{ return m_target_nozzle_id; }
@@ -84,7 +84,7 @@ private:
     int m_ext_id; // 0-right 1-left
 
     // current nozzle
-    bool   m_has_nozzle = false;
+    bool   m_has_nozzle = true; // default true: A/P/legacy series do not support nozzle detection
     int    m_current_nozzle_id = 0;  // nozzle id now. for some machine, the extruder may have serveral nozzles
     int    m_target_nozzle_id = 0; // target nozzle id
 

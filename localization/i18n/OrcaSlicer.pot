@@ -18414,3 +18414,34 @@ msgstr ""
 msgid "Please wait a moment..."
 msgstr ""
 
+
+msgid "Right extruder hotend not detected. Cannot set nozzle temperature."
+msgstr ""
+
+msgid "Cannot switch extruder when the printer is not at FDM mode"
+msgstr ""
+
+msgid "\"Load\" or \"Unload\" is not supported for external spool while using Filament Track Switch."
+msgstr ""
+
+msgid "The Filament Track Switch has not been setup. Please setup on printer."
+msgstr ""
+
+msgid "The selected slot is not loaded in the extruder."
+msgstr ""
+
+msgid "No extruder found for the selected slot."
+msgstr ""
+
+msgid "Recheck"
+msgstr ""
+
+msgid "Disable Purification for This Print"
+msgstr ""
+
+msgid "Don't Remind Me"
+msgstr ""
+
+msgid "Abort"
+msgstr ""
+

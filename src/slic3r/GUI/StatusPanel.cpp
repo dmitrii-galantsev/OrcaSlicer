@@ -2261,6 +2261,29 @@ void StatusBasePanel::show_nozzle_rack_group(bool show)
     }
 }
 
+void StatusBasePanel::jump_to_Rack()
+{
+    // Orca renders the nozzle rack as its own always-present group (m_nozzle_rack_box)
+    // rather than BambuStudio's AMS/rack toggle. Equivalent behaviour: only when the rack
+    // is supported, ensure the group is visible and scroll it into view.
+    auto rack = obj ? obj->GetNozzleRack() : nullptr;
+    if (!rack || !rack->IsSupported())
+        return;
+
+    show_nozzle_rack_group(true);
+
+    if (m_nozzle_rack_box) {
+        int xu = 0, yu = 0;
+        GetScrollPixelsPerUnit(&xu, &yu);
+        if (yu > 0) {
+            int vx = 0, vy = 0;
+            GetViewStart(&vx, &vy);
+            const int logical_y = m_nozzle_rack_box->GetPosition().y + vy * yu;
+            Scroll(vx, logical_y / yu);
+        }
+    }
+}
+
 void StatusBasePanel::show_filament_load_group(bool show)
 {
     if (m_scale_panel->IsShown() != show) {
@@ -3547,6 +3570,39 @@ void StatusPanel::update_ams_control_state(std::string ams_id, std::string slot_
         }
     }
 
+    // H2C: Filament Track Switch (F2) + slot-loaded (F5) load/unload guards — ported from BambuStudio.
+    // Gated on FTS-installed / is_enable_np so single-extruder/legacy printers keep existing behavior.
+    if (!ams_id.empty() && !slot_id.empty()) {
+        auto fila_switch = obj->GetFilaSwitch();
+        if (fila_switch && fila_switch->IsInstalled()) {
+            if (devPrinterUtil::IsVirtualSlot(ams_id)) {
+                load_error_info   = _L("\"Load\" or \"Unload\" is not supported for external spool while using Filament Track Switch.");
+                unload_error_info = load_error_info;
+            } else if (!fila_switch->IsReady()) {
+                load_error_info   = _L("The Filament Track Switch has not been setup. Please setup on printer.");
+                unload_error_info = load_error_info;
+            }
+        }
+
+        if (obj->is_enable_np && !devPrinterUtil::IsVirtualSlot(ams_id)) {
+            auto ams_item = obj->GetFilaSystem()->GetAmsById(ams_id);
+            if (ams_item) {
+                int extder_id = ams_item->GetExtruderId(); // -1 == not bound to any extruder
+                if (extder_id >= 0) {
+                    auto extder = obj->GetExtderSystem()->GetExtderById(extder_id);
+                    if (!extder || !extder->HasFilamentInExt() ||
+                        extder->GetSlotNow().ams_id != ams_id || extder->GetSlotNow().slot_id != slot_id) {
+                        unload_error_info = _L("The selected slot is not loaded in the extruder.");
+                    }
+                } else if (fila_switch && fila_switch->IsInstalled()) {
+                    unload_error_info = _L("The selected slot is not loaded in the extruder.");
+                } else {
+                    unload_error_info = _L("No extruder found for the selected slot.");
+                }
+            }
+        }
+    }
+
     m_ams_control->EnableLoadFilamentBtn(load_error_info.empty(), ams_id, slot_id, load_error_info);
     m_ams_control->EnableUnLoadFilamentBtn(unload_error_info.empty(), ams_id, slot_id,unload_error_info);
 }
@@ -4113,6 +4169,14 @@ void StatusPanel::on_set_nozzle_temp(int nozzle_id)
 
     try {
         long nozzle_temp;
+
+        // H2C (F3): block temperature set when the extruder hotend is not detected (ported from BambuStudio)
+        auto set_temp_extder = obj->GetExtderSystem()->GetExtderById(nozzle_id);
+        if (set_temp_extder && !set_temp_extder->HasNozzleInstalled()) {
+            MessageDialog msg_dlg(this, _L("Right extruder hotend not detected. Cannot set nozzle temperature."), _L("Warning"), wxICON_WARNING | wxOK);
+            msg_dlg.ShowModal();
+            return;
+        }
 
         if (nozzle_id == MAIN_EXTRUDER_ID) {
             wxString str = m_tempCtrl_nozzle->GetTextCtrl()->GetValue();
@@ -4988,6 +5052,13 @@ void StatusPanel::on_nozzle_selected(wxCommandEvent &event)
         /*Enable switch head while printing is paused STUDIO-9789*/
         if ((obj->is_in_printing() && !obj->is_in_printing_pause()) || obj->ams_status_main == AMS_STATUS_MAIN_FILAMENT_CHANGE) {
             MessageDialog dlg(nullptr, _L("The printer is busy with another print job."), _L("Error"), wxICON_WARNING | wxOK);
+            dlg.ShowModal();
+            return;
+        }
+
+        // H2C (F4): forbid extruder switch outside FDM mode (ported from BambuStudio; is_fdm_type == BBL IsFdmMode)
+        if (!obj->is_fdm_type()) {
+            MessageDialog dlg(nullptr, _L("Cannot switch extruder when the printer is not at FDM mode"), _L("Warning"), wxICON_WARNING | wxOK);
             dlg.ShowModal();
             return;
         }
