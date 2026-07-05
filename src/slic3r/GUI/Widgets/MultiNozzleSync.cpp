@@ -644,7 +644,7 @@ MultiNozzleStatusTable::MultiNozzleStatusTable(wxWindow* parent): wxPanel(parent
 
     m_table = new HotEndTable(this);
 
-    nozzle_area_sizer->Add(m_badge, 0, wxLEFT | wxRIGHT, FromDIP(20));
+    nozzle_area_sizer->Add(m_badge, 0, wxLEFT | wxRIGHT, FromDIP(10));
     nozzle_area_sizer->Add(m_table, 0, wxRIGHT, FromDIP(10));
 
     main_sizer->Add(nozzle_area_sizer);
@@ -703,8 +703,8 @@ Slic3r::GUI::MultiNozzleSyncDialog::MultiNozzleSyncDialog(wxWindow* parent,std::
 
     m_tips = new Label(this, "");
     wxBoxSizer* label_sizer = new wxBoxSizer(wxHORIZONTAL);
-    label_sizer->Add(m_tips, 0, wxLEFT | wxRIGHT, FromDIP(25));
-    main_sizer->Add(label_sizer, 0, wxTOP | wxBOTTOM, FromDIP(15));
+    label_sizer->Add(m_tips, 0, wxLEFT | wxRIGHT, FromDIP(12));
+    main_sizer->Add(label_sizer, 0, wxTOP | wxBOTTOM, FromDIP(8));
 
     m_list_table = new NozzleListTable(this);
 
@@ -713,12 +713,12 @@ Slic3r::GUI::MultiNozzleSyncDialog::MultiNozzleSyncDialog(wxWindow* parent,std::
         this->OnSelectRadio(idx);
         });
 
-    main_sizer->Add(m_list_table, 0, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(25));
+    main_sizer->Add(m_list_table, 0, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(12));
 
     m_nozzle_table = new MultiNozzleStatusTable(this);
     wxBoxSizer* table_sizer = new wxBoxSizer(wxHORIZONTAL);
-    table_sizer->Add(m_nozzle_table, 0, wxLEFT | wxRIGHT, FromDIP(25));
-    main_sizer->Add(table_sizer, 0, wxTOP | wxBOTTOM, FromDIP(15));
+    table_sizer->Add(m_nozzle_table, 0, wxLEFT | wxRIGHT, FromDIP(12));
+    main_sizer->Add(table_sizer, 0, wxTOP | wxBOTTOM, FromDIP(8));
 
     wxBoxSizer* button_sizer = new wxBoxSizer(wxHORIZONTAL);
 
@@ -727,7 +727,7 @@ Slic3r::GUI::MultiNozzleSyncDialog::MultiNozzleSyncDialog(wxWindow* parent,std::
 
     m_caution = new Label(this, _L("Caution: Mixing nozzle diameters in one print is not supported. If the selected size is only on one extruder, single-extruder printing will be enforced."));
     m_caution->SetForegroundColour("#909090");
-    main_sizer->Add(m_caution, 0, wxLEFT | wxRIGHT, FromDIP(25));
+    main_sizer->Add(m_caution, 0, wxLEFT | wxRIGHT, FromDIP(12));
 
     StateColor btn_bg_green(
         std::pair<wxColour, int>(wxColour(144, 144, 144), StateColor::Disabled),
@@ -752,10 +752,10 @@ Slic3r::GUI::MultiNozzleSyncDialog::MultiNozzleSyncDialog(wxWindow* parent,std::
     m_cancel_btn->SetCornerRadius(FromDIP(12));
 
     button_sizer->AddStretchSpacer();
-    button_sizer->Add(m_cancel_btn, 0, wxALL, FromDIP(10));
-    button_sizer->Add(m_confirm_btn, 0, wxALL, FromDIP(10));
+    button_sizer->Add(m_cancel_btn, 0, wxALL, FromDIP(6));
+    button_sizer->Add(m_confirm_btn, 0, wxALL, FromDIP(6));
 
-    main_sizer->Add(button_sizer, 0, wxEXPAND | wxALL, FromDIP(10));
+    main_sizer->Add(button_sizer, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, FromDIP(8));
 
     SetSizer(main_sizer);
 
