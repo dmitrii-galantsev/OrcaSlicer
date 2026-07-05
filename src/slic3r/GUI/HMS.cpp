@@ -12,7 +12,7 @@ static const char* HMS_PATH = "hms";
 static const char* HMS_LOCAL_IMG_PATH = "hms/local_image";
 
 // the local HMS info
-static unordered_set<string> package_dev_id_types {"094", "239", "093", "22E"};
+static unordered_set<string> package_dev_id_types {"094", "239", "093", "20P", "22E", "31B", "26A"};
 
 // HMS should be disabled when stealth mode is on or networking is not installed
 static bool should_disable_hms()

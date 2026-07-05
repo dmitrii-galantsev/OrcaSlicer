@@ -190,8 +190,44 @@ wxString Slic3r::get_stage_string(int stage)
         return _L("Measuring Surface");
     case 58:
         return _L("Thermal Preconditioning for first layer optimization");
+    case 59:
+        return _L("Homing Blade Holder");                             // O1C
+    case 60:
+        return _L("Calibrating Camera Offset");                       // O1C
+    case 61:
+        return _L("Calibrating Blade Holder Position");               // O1C
+    case 62:
+        return _L("Hotend Pick and Place Test");                      // H2C carousel
+    case 63:
+        return _L("Waiting for the Chamber temperature to equalize"); // H2C chamber
+    case 64:
+        return _L("Preparing Hotend");                                // H2C carousel
     case 65:
         return _L("Calibrating the detection position of nozzle clumping"); // N7
+    case 66:
+        return _L("Purifying the chamber air");                       // H2C air filtration
+    case 67:
+        return _L("Measuring Rotary Attachment");
+    case 68:
+        return _L("The toolhead moves above the purge chute");
+    case 69:
+        return _L("Cooling down the nozzle");                         // H2C carousel pre-cool
+    case 70:
+        return _L("The toolhead moves to the center of the heatbed");
+    case 71:
+        return _L("Active Arc Fitting");
+    case 72:
+        return _L("Hotend Type Detection");                          // H2C nozzle detect
+    case 73:
+        return _L("Build plate alignment detection");
+    case 74:
+        return _L("Heatbed surface foreign object detection");
+    case 75:
+        return _L("Heatbed underside foreign object detection");
+    case 76:
+        return _L("Pre-extrusion before printing");
+    case 77:
+        return _L("Preparing AMS");                                   // H2C AMS-HT prep
     default:
         BOOST_LOG_TRIVIAL(info) << "stage = " << stage;
     }
