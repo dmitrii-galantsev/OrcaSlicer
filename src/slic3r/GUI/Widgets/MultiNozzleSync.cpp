@@ -195,7 +195,7 @@ ExtruderBadge::ExtruderBadge(wxWindow* parent) : wxPanel(parent)
 {
     wxSizer* main_sizer = new wxBoxSizer(wxVERTICAL);
     SetBackgroundColour("#F8F8F8");
-    wxBitmap icon = create_scaled_bitmap("extruder_badge_none_selected", nullptr, FromDIP(90));
+    wxBitmap icon = create_scaled_bitmap("extruder_badge_none_selected", nullptr, FromDIP(70));
 
     auto extruder_label = new Label(this, _L("Extruder"));
 
@@ -264,7 +264,7 @@ void ExtruderBadge::SetExtruderValid(bool right_on)
         badge_name = "extruder_badge_none_selected";
     else
         badge_name = "extruder_badge_none_selected_single";
-    wxBitmap icon = create_scaled_bitmap(badge_name, nullptr, FromDIP(90));
+    wxBitmap icon = create_scaled_bitmap(badge_name, nullptr, FromDIP(70));
     badget->SetBitmap(icon);
 
     m_right_on = right_on;
@@ -290,7 +290,7 @@ void ExtruderBadge::SetExtruderStatus(bool left_selected, bool right_selected)
         badge_name = "extruder_badge_none_selected_single";
     }
 
-    wxBitmap icon = create_scaled_bitmap(badge_name, nullptr, FromDIP(90));
+    wxBitmap icon = create_scaled_bitmap(badge_name, nullptr, FromDIP(70));
     badget->SetBitmap(icon);
     Layout();
 }
@@ -462,7 +462,7 @@ StaticBox* HotEndTable::CreateNozzleBox(const std::vector<int>& nozzle_indices)
         for (auto& child : nozzle_item->GetChildren())
             child->SetBackgroundColour("#EEEEEE");
         m_nozzle_items[idx] = nozzle_item;
-        h_sizer->Add(nozzle_item, 0, wxALL, FromDIP(8));
+        h_sizer->Add(nozzle_item, 0, wxALL, FromDIP(4));
     }
 
     nozzle_box->SetSizer(h_sizer);
