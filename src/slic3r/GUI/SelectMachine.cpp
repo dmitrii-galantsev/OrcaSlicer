@@ -1524,9 +1524,12 @@ bool SelectMachineDialog::CheckErrorSyncNozzleMappingResultV0(MachineObject* obj
         return true; // would use V1 nozzle mapping
     }
 
+    // If the slice's nozzle-group result isn't available yet, we cannot build the auto-mapping
+    // request — do NOT block send (fall back to sending without an explicit nozzle map, i.e. the
+    // pre-feature behavior). Also skip when the slice uses no carousel/right nozzles.
     auto nozzle_group_res = VortekUtilBackend::GetNozzleGroupResult(m_plater);
-    if (nozzle_group_res && nozzle_group_res->get_used_nozzles_in_extruder(LOGIC_R_EXTRUDER_ID).empty()) {
-        return true; // slice uses no carousel/right nozzles
+    if (!nozzle_group_res || nozzle_group_res->get_used_nozzles_in_extruder(LOGIC_R_EXTRUDER_ID).empty()) {
+        return true;
     }
 
     auto obj_nozzle_mapping_ptr = Vortek::DeviceHooks::get_nozzle_mapping(obj_);
