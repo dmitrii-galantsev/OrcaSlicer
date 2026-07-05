@@ -1012,6 +1012,21 @@ void print_ams_mapping_result(std::vector<FilamentInfo>& result)
     }
 }
 
+// H2C: invalidate both the GUI copy and the persistent obj-level nozzle-mapping cache.
+// Ported from BBL SelectMachineDialog::clear_nozzle_mapping (SelectMachine.cpp:6521-6527).
+// Clearing the DevNozzleMappingCtrl result is the ONLY thing that flips HasResult() back to
+// false, which is what lets CheckErrorSyncNozzleMappingResultV0 re-request a fresh mapping.
+// Orca uses get_my_machine(m_printer_last_select) because it has no get_current_machine().
+void SelectMachineDialog::clear_nozzle_mapping()
+{
+    m_nozzle_mapping_result.clear();
+    DeviceManager* dev = Slic3r::GUI::wxGetApp().getDeviceManager();
+    MachineObject* obj_ = dev ? dev->get_my_machine(m_printer_last_select) : nullptr;
+    if (obj_ && obj_->get_nozzle_mapping_result()) {
+        obj_->get_nozzle_mapping_result()->Clear();
+    }
+}
+
 bool SelectMachineDialog::use_dynamic_nozzle_map() const
 {
     // Stub: BBL gates this on enable_filament_dynamic_map config +
@@ -2878,6 +2893,25 @@ void SelectMachineDialog::on_set_finish_mapping(wxCommandEvent &evt)
     }
 
     update_filament_change_count();
+
+    // H2C (V0 static nozzle map only): the manual AMS pick just mutated m_ams_mapping_result, which is a
+    // direct input to CtrlGetAutoNozzleMappingV0. BBL keeps V1 (tray-independent) so it needs no manual-pick
+    // invalidation; Orca forces V0 (use_dynamic_nozzle_map()==false), so we apply BBL's own V0-input dirty
+    // rule here (mirror of flow-cali BBL:5664-5667 / PA BBL:5710-5713): clear the stale cache and re-request
+    // V0 with the updated mapping, otherwise task_nozzle_mapping keeps the pre-pick (auto) routing and the
+    // printer loads the wrong slot/nozzle. Guarded on the nozzle rack so non-H2C jobs are unaffected.
+    DeviceManager* dev = Slic3r::GUI::wxGetApp().getDeviceManager();
+    MachineObject* obj = dev ? dev->get_my_machine(m_printer_last_select) : nullptr;
+    if (obj && obj->GetNozzleRack() && obj->GetNozzleRack()->IsSupported() && !use_dynamic_nozzle_map()
+        && m_print_type == PrintFromType::FROM_NORMAL) {
+        clear_nozzle_mapping();
+        if (obj->get_nozzle_mapping_result()) {
+            int rtn = obj->get_nozzle_mapping_result()->CtrlGetAutoNozzleMappingV0(
+                m_plater, m_ams_mapping_result, m_checkbox_list["flow_cali"]->getValueInt(), 1);
+            s_nozzle_mapping_last_request_time = (rtn == 0) ? time(nullptr) : 0;
+        }
+        update_show_status(); // block send behind PrintStatusRackNozzleMappingWaiting until the fresh result arrives
+    }
 }
 
 void SelectMachineDialog::on_print_job_cancel(wxCommandEvent &evt)
@@ -3222,6 +3256,9 @@ void SelectMachineDialog::on_selection_changed(wxCommandEvent &event)
             obj->command_get_version();
             obj->command_request_push_all();
         }
+        if (obj->get_nozzle_mapping_result()) {
+            obj->get_nozzle_mapping_result()->SetPlater(m_plater); // BBL SelectMachine.cpp:3706
+        }
         if (!dev->get_selected_machine()) {
             dev->set_selected_machine(m_printer_last_select);
         } else if (dev->get_selected_machine()->get_dev_id() != m_printer_last_select) {
@@ -3237,6 +3274,9 @@ void SelectMachineDialog::on_selection_changed(wxCommandEvent &event)
 
 
     //reset print status
+    // H2C: the GUI copy is cleared above, but the nozzle-mapping cache lives on the persistent
+    // MachineObject; wipe it too so the newly selected printer re-requests V0 (BBL SelectMachine.cpp:3722).
+    clear_nozzle_mapping();
     show_status(PrintDialogStatus::PrintStatusInit);
     update_show_status();
     update_print_status_msg();
