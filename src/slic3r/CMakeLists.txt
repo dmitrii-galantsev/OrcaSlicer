@@ -301,6 +301,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/Jobs/ThreadSafeQueue.hpp
     GUI/Jobs/UpgradeNetworkJob.cpp
     GUI/Jobs/UpgradeNetworkJob.hpp
+    GUI/Jobs/OpenBambooInstallJob.cpp
+    GUI/Jobs/OpenBambooInstallJob.hpp
     GUI/Jobs/Worker.hpp
     GUI/KBShortcutsDialog.cpp
     GUI/KBShortcutsDialog.hpp
@@ -679,6 +681,8 @@ set(SLIC3R_GUI_SOURCES
     Utils/WxFontUtils.hpp
     Utils/FileTransferUtils.cpp
     Utils/FileTransferUtils.hpp
+    Utils/OpenBambooPlugin.cpp
+    Utils/OpenBambooPlugin.hpp
 )
 
 add_subdirectory(GUI/DeviceCore)

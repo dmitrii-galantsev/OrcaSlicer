@@ -468,8 +468,7 @@ PrintParams SendMultiMachinePage::request_params(MachineObject* obj)
     PrintPrepareData job_data;
     m_plater->get_print_job_data(&job_data);
 
-    std::string temp_file = Slic3r::resources_dir() + "/check_access_code.txt";
-    auto check_access_code_path = temp_file.c_str();
+    std::string check_access_code_path = get_access_code_probe_path();
     BOOST_LOG_TRIVIAL(trace) << "sned_job: check_access_code_path = " << check_access_code_path;
     job_data._temp_path = fs::path(check_access_code_path);
 

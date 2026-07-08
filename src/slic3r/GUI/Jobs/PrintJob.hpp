@@ -29,6 +29,15 @@ public:
     }
 };
 
+// Returns a path to a small writable probe file for the LAN access-code preflight
+// (start_send_gcode_to_sdcard / verify_job). The probe must live on a writable
+// filesystem: some networking plugins (e.g. open-bamboo-networking) create a
+// sibling ".upload" temp copy next to it, which fails under a read-only
+// resources_dir() (Flatpak /app, read-only media). Creates/refreshes the copy in
+// data_dir()/cache; falls back to the read-only resource file if that is not
+// possible.
+std::string get_access_code_probe_path();
+
 class PlateListData
 {
 public:

@@ -1256,9 +1256,25 @@ wxBoxSizer *PreferencesDialog::create_item_network_plugin_version(wxString title
     if (current_version.empty()) {
         current_version = get_latest_network_version();
     }
+    bool current_is_obn = app_config->get("network_plugin_source") == "openbamboo";
     int current_selection = 0;
 
     m_available_versions = get_all_available_versions();
+
+    // Add Open Bamboo Networking (open-source, LAN-only drop-in) as one more entry.
+    std::string obn_version = app_config->get("network_plugin_obn_version");
+    bool obn_installed = !obn_version.empty() && Slic3r::NetworkAgent::versioned_library_exists(obn_version);
+    NetworkLibraryVersionInfo obn_entry;
+    obn_entry.version      = obn_installed ? obn_version : "";
+    obn_entry.display_name = "Open Bamboo Networking (LAN, open-source)";
+    if (!obn_installed) {
+        obn_entry.display_name += " \xE2\x80\x94 " + std::string("not installed");
+    }
+    obn_entry.is_latest    = false;
+    obn_entry.is_discovered = false;
+    obn_entry.is_openbamboo = true;
+    m_available_versions.push_back(obn_entry);
+    size_t obn_index = m_available_versions.size() - 1;
 
     for (size_t i = 0; i < m_available_versions.size(); i++) {
         const auto& ver = m_available_versions[i];
@@ -1274,60 +1290,115 @@ wxBoxSizer *PreferencesDialog::create_item_network_plugin_version(wxString title
             label += " " + _L("(Latest)");
         }
         m_network_version_combo->Append(label);
-        if (current_version == ver.version) {
+        if (!ver.is_openbamboo && !current_is_obn && current_version == ver.version) {
             current_selection = i;
         }
+    }
+    if (current_is_obn) {
+        current_selection = (int)obn_index;
     }
 
     m_network_version_combo->SetSelection(current_selection);
     m_sizer->Add(m_network_version_combo, 0, wxALIGN_CENTER);
 
-    m_network_version_combo->GetDropDown().Bind(wxEVT_COMBOBOX, [this](wxCommandEvent& e) {
+    auto last_good_selection = std::make_shared<int>(current_selection);
+
+    m_network_version_combo->GetDropDown().Bind(wxEVT_COMBOBOX, [this, last_good_selection](wxCommandEvent& e) {
         int selection = e.GetSelection();
-        if (selection >= 0 && selection < (int)m_available_versions.size()) {
-            const auto& selected_ver = m_available_versions[selection];
-            std::string new_version = selected_ver.version;
-            std::string old_version = app_config->get_network_plugin_version();
-            if (old_version.empty()) {
-                old_version = get_latest_network_version();
+        if (selection < 0 || selection >= (int)m_available_versions.size()) {
+            e.Skip();
+            return;
+        }
+        const auto& selected_ver = m_available_versions[selection];
+
+        if (selected_ver.is_openbamboo) {
+            std::string obn_ver = app_config->get("network_plugin_obn_version");
+            bool installed = !obn_ver.empty() && Slic3r::NetworkAgent::versioned_library_exists(obn_ver);
+
+            if (!installed) {
+                wxString msg = _L("This will download the latest Open Bamboo Networking plug-in from GitHub "
+                                  "(github.com/ClusterM/open-bamboo-networking) and switch OrcaSlicer to it.\n\n"
+                                  "Open Bamboo Networking is an open-source, community-maintained replacement for "
+                                  "the proprietary Bambu network plug-in. It is configured for LAN-only use.\n\n"
+                                  "Continue?");
+                MessageDialog confirm(this, msg, _L("Open Bamboo Networking"), wxYES_NO | wxICON_QUESTION);
+                if (confirm.ShowModal() != wxID_YES) {
+                    // ComboBox's own internal handler (bound on the same DropDown, in its
+                    // ctor) runs after this one and force-applies the new selection, so
+                    // reverting here would just be overwritten; defer it to run afterwards.
+                    auto *combo = m_network_version_combo;
+                    CallAfter([combo, last_good_selection]() { combo->SetSelection(*last_good_selection); });
+                    e.Skip();
+                    return;
+                }
+                OpenBambooProgressDialog dlg(_L("Installing Open Bamboo Networking"));
+                dlg.ShowModal();
+            } else {
+                app_config->set_network_plugin_version(obn_ver);
+                app_config->set_bool("installed_networking", true);
+                app_config->set("network_plugin_source", "openbamboo");
+                app_config->save();
+
+                if (wxGetApp().hot_reload_network_plugin()) {
+                    MessageDialog dlg(this, _L("Network plug-in switched successfully."), _L("Success"), wxOK | wxICON_INFORMATION);
+                    dlg.ShowModal();
+                } else {
+                    MessageDialog dlg(this, _L("Failed to load network plug-in. Please restart the application."), _L("Restart Required"), wxOK | wxICON_WARNING);
+                    dlg.ShowModal();
+                }
+            }
+            *last_good_selection = selection;
+            e.Skip();
+            return;
+        }
+
+        std::string new_version = selected_ver.version;
+        std::string old_version = app_config->get_network_plugin_version();
+        if (old_version.empty()) {
+            old_version = get_latest_network_version();
+        }
+        bool old_was_obn = app_config->get("network_plugin_source") == "openbamboo";
+
+        app_config->set_network_plugin_version(new_version);
+        app_config->set("network_plugin_source", "");
+        app_config->save();
+        *last_good_selection = selection;
+
+        if (new_version != old_version || old_was_obn) {
+            BOOST_LOG_TRIVIAL(info) << "Network plugin version changed from " << old_version << " to " << new_version;
+
+            // Legacy vs. modern is inferred from the configured plugin version
+            // (set above via set_network_plugin_version); no separate flag to update.
+
+            if (!selected_ver.warning.empty()) {
+                MessageDialog warn_dlg(this, wxString::FromUTF8(selected_ver.warning), _L("Warning"), wxOK | wxCANCEL | wxICON_WARNING);
+                if (warn_dlg.ShowModal() != wxID_OK) {
+                    app_config->set_network_plugin_version(old_version);
+                    app_config->save();
+                    e.Skip();
+                    return;
+                }
             }
 
-            app_config->set_network_plugin_version(new_version);
-            app_config->save();
-
-            if (new_version != old_version) {
-                BOOST_LOG_TRIVIAL(info) << "Network plugin version changed from " << old_version << " to " << new_version;
-
-                if (!selected_ver.warning.empty()) {
-                    MessageDialog warn_dlg(this, wxString::FromUTF8(selected_ver.warning), _L("Warning"), wxOK | wxCANCEL | wxICON_WARNING);
-                    if (warn_dlg.ShowModal() != wxID_OK) {
-                        app_config->set_network_plugin_version(old_version);
-                        app_config->save();
-                        e.Skip();
-                        return;
-                    }
-                }
-
-                // Check if the selected version already exists on disk
-                if (Slic3r::NetworkAgent::versioned_library_exists(new_version)) {
-                    BOOST_LOG_TRIVIAL(info) << "Version " << new_version << " already exists on disk, triggering hot reload";
-                    if (wxGetApp().hot_reload_network_plugin()) {
-                        MessageDialog dlg(this, _L("Network plug-in switched successfully."), _L("Success"), wxOK | wxICON_INFORMATION);
-                        dlg.ShowModal();
-                    } else {
-                        MessageDialog dlg(this, _L("Failed to load network plug-in. Please restart the application."), _L("Restart Required"), wxOK | wxICON_WARNING);
-                        dlg.ShowModal();
-                    }
+            // Check if the selected version already exists on disk
+            if (Slic3r::NetworkAgent::versioned_library_exists(new_version)) {
+                BOOST_LOG_TRIVIAL(info) << "Version " << new_version << " already exists on disk, triggering hot reload";
+                if (wxGetApp().hot_reload_network_plugin()) {
+                    MessageDialog dlg(this, _L("Network plug-in switched successfully."), _L("Success"), wxOK | wxICON_INFORMATION);
+                    dlg.ShowModal();
                 } else {
-                    wxString msg = wxString::Format(
-                        _L("You've selected network plug-in version %s.\n\nWould you like to download and install this version now?\n\nNote: The application may need to restart after installation."),
-                        wxString::FromUTF8(new_version));
+                    MessageDialog dlg(this, _L("Failed to load network plug-in. Please restart the application."), _L("Restart Required"), wxOK | wxICON_WARNING);
+                    dlg.ShowModal();
+                }
+            } else {
+                wxString msg = wxString::Format(
+                    _L("You've selected network plug-in version %s.\n\nWould you like to download and install this version now?\n\nNote: The application may need to restart after installation."),
+                    wxString::FromUTF8(new_version));
 
-                    MessageDialog dlg(this, msg, _L("Download Network Plug-in"), wxYES_NO | wxICON_QUESTION);
-                    if (dlg.ShowModal() == wxID_YES) {
-                        DownloadProgressDialog progress_dlg(_L("Downloading Network Plug-in"));
-                        progress_dlg.ShowModal();
-                    }
+                MessageDialog dlg(this, msg, _L("Download Network Plug-in"), wxYES_NO | wxICON_QUESTION);
+                if (dlg.ShowModal() == wxID_YES) {
+                    DownloadProgressDialog progress_dlg(_L("Downloading Network Plug-in"));
+                    progress_dlg.ShowModal();
                 }
             }
         }
@@ -1947,7 +2018,11 @@ void PreferencesDialog::create_items()
     auto item_enable_plugin    = create_item_checkbox(_L("Enable Bambu network plug-in"), "", "installed_networking");
     g_sizer->Add(item_enable_plugin);
 
-    auto item_plugin_version = create_item_network_plugin_version(_L("Network plug-in version"), _L("Select the network plug-in version to use"));
+    auto item_plugin_version = create_item_network_plugin_version(
+        _L("Network plug-in version"),
+        _L("Select the network plug-in to use. Choose a Bambu plug-in version, or 'Open Bamboo Networking' "
+           "for the open-source, LAN-only alternative — it will be downloaded and installed automatically "
+           "the first time it's selected."));
     g_sizer->Add(item_plugin_version);
 
     g_sizer->AddSpacer(FromDIP(10));
