@@ -18,7 +18,7 @@ static const int LeftExtruderIdx = 0;
 static const int RightExtruderIdx = 1;
 
 ManualNozzleCountDialog::ManualNozzleCountDialog(wxWindow *parent, NozzleVolumeType volume_type, int standard_count, int highflow_count, int max_nozzle_count, bool force_no_zero)
-    : GUI::DPIDialog(parent, wxID_ANY, "Set nozzle count", wxDefaultPosition, wxDefaultSize, wxCAPTION | wxCLOSE_BOX), m_volume_type(volume_type)
+    : GUI::DPIDialog(parent, wxID_ANY, _L("Set nozzle count"), wxDefaultPosition, wxDefaultSize, wxCAPTION | wxCLOSE_BOX), m_volume_type(volume_type)
 {
     this->SetBackgroundColour(*wxWHITE);
     std::string icon_path = (boost::format("%1%/images/BambuStudioTitle.ico") % resources_dir()).str();
@@ -195,7 +195,7 @@ ExtruderBadge::ExtruderBadge(wxWindow* parent) : wxPanel(parent)
 {
     wxSizer* main_sizer = new wxBoxSizer(wxVERTICAL);
     SetBackgroundColour("#F8F8F8");
-    wxBitmap icon = create_scaled_bitmap("extruder_badge_none_selected", nullptr, FromDIP(90));
+    wxBitmap icon = create_scaled_bitmap("extruder_badge_none_selected", nullptr, FromDIP(70));
 
     auto extruder_label = new Label(this, _L("Extruder"));
 
@@ -264,7 +264,7 @@ void ExtruderBadge::SetExtruderValid(bool right_on)
         badge_name = "extruder_badge_none_selected";
     else
         badge_name = "extruder_badge_none_selected_single";
-    wxBitmap icon = create_scaled_bitmap(badge_name, nullptr, FromDIP(90));
+    wxBitmap icon = create_scaled_bitmap(badge_name, nullptr, FromDIP(70));
     badget->SetBitmap(icon);
 
     m_right_on = right_on;
@@ -290,7 +290,7 @@ void ExtruderBadge::SetExtruderStatus(bool left_selected, bool right_selected)
         badge_name = "extruder_badge_none_selected_single";
     }
 
-    wxBitmap icon = create_scaled_bitmap(badge_name, nullptr, FromDIP(90));
+    wxBitmap icon = create_scaled_bitmap(badge_name, nullptr, FromDIP(70));
     badget->SetBitmap(icon);
     Layout();
 }
@@ -462,7 +462,7 @@ StaticBox* HotEndTable::CreateNozzleBox(const std::vector<int>& nozzle_indices)
         for (auto& child : nozzle_item->GetChildren())
             child->SetBackgroundColour("#EEEEEE");
         m_nozzle_items[idx] = nozzle_item;
-        h_sizer->Add(nozzle_item, 0, wxALL, FromDIP(8));
+        h_sizer->Add(nozzle_item, 0, wxALL, FromDIP(4));
     }
 
     nozzle_box->SetSizer(h_sizer);
@@ -644,7 +644,7 @@ MultiNozzleStatusTable::MultiNozzleStatusTable(wxWindow* parent): wxPanel(parent
 
     m_table = new HotEndTable(this);
 
-    nozzle_area_sizer->Add(m_badge, 0, wxLEFT | wxRIGHT, FromDIP(20));
+    nozzle_area_sizer->Add(m_badge, 0, wxLEFT | wxRIGHT, FromDIP(10));
     nozzle_area_sizer->Add(m_table, 0, wxRIGHT, FromDIP(10));
 
     main_sizer->Add(nozzle_area_sizer);
@@ -703,8 +703,8 @@ Slic3r::GUI::MultiNozzleSyncDialog::MultiNozzleSyncDialog(wxWindow* parent,std::
 
     m_tips = new Label(this, "");
     wxBoxSizer* label_sizer = new wxBoxSizer(wxHORIZONTAL);
-    label_sizer->Add(m_tips, 0, wxLEFT | wxRIGHT, FromDIP(25));
-    main_sizer->Add(label_sizer, 0, wxTOP | wxBOTTOM, FromDIP(15));
+    label_sizer->Add(m_tips, 0, wxLEFT | wxRIGHT, FromDIP(12));
+    main_sizer->Add(label_sizer, 0, wxTOP | wxBOTTOM, FromDIP(8));
 
     m_list_table = new NozzleListTable(this);
 
@@ -713,12 +713,12 @@ Slic3r::GUI::MultiNozzleSyncDialog::MultiNozzleSyncDialog(wxWindow* parent,std::
         this->OnSelectRadio(idx);
         });
 
-    main_sizer->Add(m_list_table, 0, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(25));
+    main_sizer->Add(m_list_table, 0, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(12));
 
     m_nozzle_table = new MultiNozzleStatusTable(this);
     wxBoxSizer* table_sizer = new wxBoxSizer(wxHORIZONTAL);
-    table_sizer->Add(m_nozzle_table, 0, wxLEFT | wxRIGHT, FromDIP(25));
-    main_sizer->Add(table_sizer, 0, wxTOP | wxBOTTOM, FromDIP(15));
+    table_sizer->Add(m_nozzle_table, 0, wxLEFT | wxRIGHT, FromDIP(12));
+    main_sizer->Add(table_sizer, 0, wxTOP | wxBOTTOM, FromDIP(8));
 
     wxBoxSizer* button_sizer = new wxBoxSizer(wxHORIZONTAL);
 
@@ -727,7 +727,7 @@ Slic3r::GUI::MultiNozzleSyncDialog::MultiNozzleSyncDialog(wxWindow* parent,std::
 
     m_caution = new Label(this, _L("Caution: Mixing nozzle diameters in one print is not supported. If the selected size is only on one extruder, single-extruder printing will be enforced."));
     m_caution->SetForegroundColour("#909090");
-    main_sizer->Add(m_caution, 0, wxLEFT | wxRIGHT, FromDIP(25));
+    main_sizer->Add(m_caution, 0, wxLEFT | wxRIGHT, FromDIP(12));
 
     StateColor btn_bg_green(
         std::pair<wxColour, int>(wxColour(144, 144, 144), StateColor::Disabled),
@@ -752,10 +752,10 @@ Slic3r::GUI::MultiNozzleSyncDialog::MultiNozzleSyncDialog(wxWindow* parent,std::
     m_cancel_btn->SetCornerRadius(FromDIP(12));
 
     button_sizer->AddStretchSpacer();
-    button_sizer->Add(m_cancel_btn, 0, wxALL, FromDIP(10));
-    button_sizer->Add(m_confirm_btn, 0, wxALL, FromDIP(10));
+    button_sizer->Add(m_cancel_btn, 0, wxALL, FromDIP(6));
+    button_sizer->Add(m_confirm_btn, 0, wxALL, FromDIP(6));
 
-    main_sizer->Add(button_sizer, 0, wxEXPAND | wxALL, FromDIP(10));
+    main_sizer->Add(button_sizer, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, FromDIP(8));
 
     SetSizer(main_sizer);
 

@@ -740,6 +740,8 @@ public:
     int command_set_nozzle(int temp);
     int command_set_nozzle_new(int nozzle_id, int temp);
     int command_refresh_nozzle();
+    int command_purification_disable();
+    int command_dont_remind_next_time(json& mqtt_guard_json);
     int command_set_chamber(int temp);
     int check_resume_condition();
     // ams controls

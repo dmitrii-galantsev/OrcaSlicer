@@ -5651,9 +5651,13 @@ void PresetBundle::update_compatible(PresetSelectCompatibleType select_other_pri
     class PreferedFilamentProfileMatch : public PreferedProfileMatch
     {
     public:
-        PreferedFilamentProfileMatch(const Preset *preset, const std::string &prefered_name) :
+        // Orca: prefered_type lets callers keep the slot's material family when there is no
+        // Preset to read filament_type from (preset == nullptr, e.g. the stored filament was
+        // hidden/removed from the enabled filament list). When preset is non-null its own
+        // filament_type still wins.
+        PreferedFilamentProfileMatch(const Preset *preset, const std::string &prefered_name, const std::string &prefered_type = std::string()) :
             PreferedProfileMatch(preset ? preset->alias : std::string(), prefered_name),
-            m_prefered_filament_type(preset ? preset->config.opt_string("filament_type", 0) : std::string()) {}
+            m_prefered_filament_type(preset ? preset->config.opt_string("filament_type", 0) : prefered_type) {}
 
         int operator()(const Preset &preset) const
         {
@@ -5740,14 +5744,38 @@ void PresetBundle::update_compatible(PresetSelectCompatibleType select_other_pri
             	if (select_other_filament_if_incompatible == PresetSelectCompatibleType::Always || filament_preset_was_compatible.front())
                 	this->filament_presets.front() = this->filaments.get_edited_preset().name;
             } else {
+                // Orca: collect the filament types that actually exist in the collection, longest
+                // first (so "PCTG"/"PETG"/"PLA-CF" win over "PC"/"PET"/"PLA"). Used to recover a
+                // slot's intended material family from its stored name when the preset itself is
+                // gone (find_preset returns nullptr), so the fallback below stays same-type instead
+                // of collapsing every orphaned slot to the first compatible filament.
+                std::vector<std::string> known_filament_types;
+                for (const Preset &p : this->filaments) {
+                    if (p.is_default)
+                        continue;
+                    const std::string t = p.config.opt_string("filament_type", 0);
+                    if (!t.empty() && std::find(known_filament_types.begin(), known_filament_types.end(), t) == known_filament_types.end())
+                        known_filament_types.push_back(t);
+                }
+                std::sort(known_filament_types.begin(), known_filament_types.end(),
+                          [](const std::string &a, const std::string &b) { return a.size() > b.size(); });
+                auto guess_filament_type = [&known_filament_types](const std::string &name) -> std::string {
+                    const std::string upper = boost::to_upper_copy(name);
+                    for (const std::string &t : known_filament_types)
+                        if (upper.find(boost::to_upper_copy(t)) != std::string::npos)
+                            return t;
+                    return std::string();
+                };
                 for (size_t idx = 0; idx < this->filament_presets.size(); ++ idx) {
                     std::string &filament_name = this->filament_presets[idx];
                     Preset      *preset = this->filaments.find_preset(filament_name, false);
                     if (preset == nullptr || (! preset->is_compatible && (select_other_filament_if_incompatible == PresetSelectCompatibleType::Always || filament_preset_was_compatible[idx])))
                         // Pick a compatible profile. If there are prefered_filament_profiles, use them.
+                        // When the preset is missing, keep the material family inferred from its name.
                         filament_name = this->filaments.first_compatible(
                             PreferedFilamentProfileMatch(preset,
-                                (idx < prefered_filament_profiles.size()) ? prefered_filament_profiles[idx] : prefered_filament_profile)).name;
+                                (idx < prefered_filament_profiles.size()) ? prefered_filament_profiles[idx] : prefered_filament_profile,
+                                preset == nullptr ? guess_filament_type(filament_name) : std::string())).name;
                 }
             }
         }

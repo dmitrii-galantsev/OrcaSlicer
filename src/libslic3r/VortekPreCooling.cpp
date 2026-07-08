@@ -681,14 +681,18 @@ Slic3r::GCodeProcessor::TimeProcessor::InsertedLinesMap PreCooling::run_pre_scan
     std::vector<int> filament_nozzle_temps_fl_int(processor.m_filament_nozzle_temp_first_layer.begin(), processor.m_filament_nozzle_temp_first_layer.end());
     std::vector<std::pair<unsigned int, unsigned int>> skippable_blocks;
 
+    // Orca stores a per-block delta in MoveVertex.time[] (GCodeViewer sums it per move type); the
+    // ported pre-cooling expects BBL's cumulative time and measures idle windows as a difference of
+    // two moves' time[]. Pass a local cumulative view so windows aren't ~0 s (which would skip all
+    // pre-heat/M632), without disturbing the shared per-block semantics.
     std::vector<Slic3r::GCodeProcessorResult::MoveVertex> cumulative_moves = processor.m_result.moves;
-    std::array<float, static_cast<size_t>(Slic3r::PrintEstimatedStatistics::ETimeMode::Count)> running_time;
-    running_time.fill(0.f);
-    for (auto& move : cumulative_moves) {
-        for (size_t i = 0; i < running_time.size(); ++i) {
-            running_time[i] += move.time[i];
-            move.time[i] = running_time[i];
-        }
+    if (!cumulative_moves.empty()) {
+        std::vector<double> running(cumulative_moves.front().time.size(), 0.0);
+        for (auto& mv : cumulative_moves)
+            for (size_t m = 0; m < mv.time.size() && m < running.size(); ++m) {
+                running[m] += mv.time[m];
+                mv.time[m] = static_cast<float>(running[m]);
+            }
     }
 
     auto pre_cooling_injector = std::make_unique<PreCooling>(

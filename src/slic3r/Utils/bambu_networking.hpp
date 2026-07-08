@@ -338,6 +338,7 @@ struct NetworkLibraryVersionInfo {
     bool is_latest;
     std::string warning;
     bool is_discovered;
+    bool is_openbamboo = false;
 
     static NetworkLibraryVersionInfo from_static(const NetworkLibraryVersion& v) {
         return {
@@ -348,6 +349,7 @@ struct NetworkLibraryVersionInfo {
             v.url_override ? v.url_override : "",
             v.is_latest,
             v.warning ? v.warning : "",
+            false,
             false
         };
     }
@@ -355,7 +357,7 @@ struct NetworkLibraryVersionInfo {
     static NetworkLibraryVersionInfo from_discovered(const std::string& full_version,
                                                       const std::string& base,
                                                       const std::string& sfx) {
-        return {full_version, base, sfx, full_version, "", false, "", true};
+        return {full_version, base, sfx, full_version, "", false, "", true, false};
     }
 };
 

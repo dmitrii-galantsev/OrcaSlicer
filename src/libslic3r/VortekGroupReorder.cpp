@@ -412,7 +412,7 @@ std::vector<Slic3r::FilamentPlanRes> GroupReorder::plan_filament_mapping_and_ord
         auto nozzle_filament_map = tool_status.get_nozzle_filament_map();
         auto group_result = Slic3r::ToolOrdering::get_recommended_filament_maps(
             print, range_layer_fils, mode, physical_unprintables,
-            geometric_unprintables, unprintable_volumes, nozzle_filament_map);
+            geometric_unprintables);
 
         // Refine result with active nozzle statuses
         auto new_group_result = refine_groups_by_Nozzle_State(ctx, group_result, nozzle_filament_map);

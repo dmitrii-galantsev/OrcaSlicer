@@ -15,8 +15,37 @@
 #include "slic3r/Utils/FileTransferUtils.hpp"
 #include "slic3r/Utils/BBLNetworkPlugin.hpp"
 
+#include <fstream>
+
 namespace Slic3r {
 namespace GUI {
+
+std::string get_access_code_probe_path()
+{
+    static const std::string k_probe_name = "check_access_code.txt";
+    const std::string        fallback     = (fs::path(resources_dir()) / k_probe_name).string();
+
+    // resources_dir() is read-only by design (Flatpak /app, read-only media); place the
+    // probe under the writable data_dir()/cache so plugins deriving a sibling ".upload"
+    // path from it can write. Fall back to the read-only resource on any failure.
+    try {
+        fs::path cache_dir = fs::path(data_dir()) / "cache";
+        if (data_dir().empty())
+            return fallback;
+        fs::create_directories(cache_dir);
+        fs::path probe = cache_dir / k_probe_name;
+        if (!fs::exists(probe)) {
+            std::ofstream ofs(probe.string(), std::ios::binary | std::ios::trunc);
+            ofs << "just a test file";
+            if (!ofs)
+                return fallback;
+        }
+        return probe.string();
+    } catch (const std::exception &e) {
+        BOOST_LOG_TRIVIAL(warning) << "get_access_code_probe_path failed, using read-only resource: " << e.what();
+        return fallback;
+    }
+}
 
 static auto check_gcode_failed_str      = _u8L("Abnormal print file data: please slice again.");
 static auto     printjob_cancel_str         = _u8L("Task canceled.");
@@ -53,8 +82,7 @@ void PrintJob::prepare()
 {
     if (job_data.is_from_plater)
         m_plater->get_print_job_data(&job_data);
-    std::string temp_file = Slic3r::resources_dir() + "/check_access_code.txt";
-    auto check_access_code_path = temp_file.c_str();
+    std::string check_access_code_path = get_access_code_probe_path();
     BOOST_LOG_TRIVIAL(trace) << "sned_job: check_access_code_path = " << check_access_code_path;
     job_data._temp_path = fs::path(check_access_code_path);
 }

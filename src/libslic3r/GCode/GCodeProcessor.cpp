@@ -1429,6 +1429,9 @@ void GCodeProcessor::run_post_process()
     TimeProcessor::InsertedLinesMap precooling_inserted_lines;
 
     if (m_enable_pre_heating && m_nozzle_group_result) {
+        // BBL schedules pre-cool/heat for any free gap (uses 0); the 30 s struct default is never
+        // lowered, so sub-30 s idle gaps emit no M632 and the H2C carousel toolchange stalls. Match BBL.
+        m_inject_time_threshold = 0.f;
         precooling_inserted_lines = Vortek::PreCooling::run_pre_scan(*this, in.f);
     }
 

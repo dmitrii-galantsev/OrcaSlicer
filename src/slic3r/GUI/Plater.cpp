@@ -8764,10 +8764,26 @@ unsigned int Plater::priv::update_background_process(bool force_validation, bool
                 if (obj_ && obj_->is_multi_extruders()) {
                     auto* nozzle_system = obj_->GetNozzleSystem();
                     if (nozzle_system) {
+                        // Only seed nozzles whose physical diameter is actually used by this
+                        // print. Otherwise a nozzle of the wrong diameter still mounted from a
+                        // previous job (e.g. a 0.4 nozzle left in the carousel head while we are
+                        // slicing a 0.6 print) would, via color match, bias the nozzle mapping
+                        // toward that stale pocket and cause an unnecessary toolchange to the
+                        // wrong-diameter nozzle at print start. BBL never reuses a wrong-diameter
+                        // nozzle; restricting the seed to matching diameters mirrors that.
+                        const auto& target_diameters = background_process.fff_print()->config().nozzle_diameter.values;
+                        auto diameter_in_use = [&](float dia) {
+                            for (double td : target_diameters)
+                                if (std::fabs(static_cast<double>(dia) - td) < 0.01) return true;
+                            return false;
+                        };
                         for (const auto& [id, nozzle] : nozzle_system->GetExtNozzles()) {
                             auto clr = nozzle.GetFilamentColor();
-                            if (!clr.empty())
-                                device_nozzle_colors[id] = clr;
+                            if (clr.empty())
+                                continue;
+                            if (!diameter_in_use(nozzle.GetNozzleDiameter()))
+                                continue;
+                            device_nozzle_colors[id] = clr;
                         }
                     }
                 }
@@ -9914,9 +9930,10 @@ void Plater::priv::set_current_panel(wxPanel* panel, bool no_slice)
         return;
 
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": current_panel %1%, new_panel %2%")%current_panel%panel;
-#ifdef __WXMAC__
+    // Force a synchronous render once the new panel is both shown and reloaded, so the
+    // stale GL framebuffer of the previous view is not visible for a frame. Only needed
+    // when switching away from an existing panel (skip the very first activation).
     bool force_render = (current_panel != nullptr);
-#endif // __WXMAC__
 
     //BBS: add slice logic when switch to preview page
     auto do_reslice = [this, no_slice]() {
@@ -10049,18 +10066,8 @@ void Plater::priv::set_current_panel(wxPanel* panel, bool no_slice)
 
     // to reduce flickering when changing view, first set as visible the new current panel
     for (wxPanel* p : panels) {
-        if (p == current_panel) {
-#ifdef __WXMAC__
-            // On Mac we need also to force a render to avoid flickering when changing view
-            if (force_render) {
-                if (p == view3D)
-                    dynamic_cast<View3D*>(p)->get_canvas3d()->render();
-                else if (p == preview)
-                    dynamic_cast<Preview*>(p)->get_canvas3d()->render();
-            }
-#endif // __WXMAC__
+        if (p == current_panel)
             p->Show();
-        }
     }
     // then set to invisible the other
     for (wxPanel* p : panels) {
@@ -10210,6 +10217,18 @@ void Plater::priv::set_current_panel(wxPanel* panel, bool no_slice)
     }
 
     current_panel->SetFocusFromKbd();
+
+    // The panel is now shown and its scene/print has been reloaded above. Force a
+    // synchronous render so the freshly-shown canvas paints current data instead of
+    // briefly leaking the previous view's stale framebuffer (visible on GTK/Linux).
+    if (force_render) {
+        if (current_panel == view3D)
+            view3D->get_canvas3d()->render();
+        else if (current_panel == preview)
+            preview->get_canvas3d()->render();
+        else if (current_panel == assemble_view)
+            assemble_view->get_canvas3d()->render();
+    }
 
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": successfully, exit");
 }

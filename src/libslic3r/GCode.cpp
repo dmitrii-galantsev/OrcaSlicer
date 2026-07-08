@@ -3523,7 +3523,10 @@ void GCode::_do_export(Print& print, GCodeOutputStream &file, ThumbnailsGenerato
     }
 
     // Orca: when air filtration is supported, check if it needs to be activated during printing and set the exhaust fan speed accordingly
-    if (m_config.support_air_filtration.value) {
+    // H2C reports support_cooling_filter (not support_air_filtration) but still drives the exhaust fan via
+    // activate_air_filtration; force-enable for H2C to match BambuStudio.
+    const bool h2c_force_air_filt = print.config().printer_model.value.find("H2C") != std::string::npos;
+    if (m_config.support_air_filtration.value || h2c_force_air_filt) {
         bool activate_air_filtration_during_print = false;
         int  during_print_exhaust_fan_speed = 0;
 
@@ -3894,7 +3897,9 @@ void GCode::_do_export(Print& print, GCodeOutputStream &file, ThumbnailsGenerato
         file.write(m_writer.set_chamber_temperature(0, false));  //close chamber_temperature
 
     // Orca: when air filtration is supported, check if it needs to be activated after print completion and set the exhaust fan speed accordingly
-    if (m_config.support_air_filtration.value) {
+    // H2C (support_cooling_filter) is force-enabled to match BambuStudio.
+    if (m_config.support_air_filtration.value ||
+        print.config().printer_model.value.find("H2C") != std::string::npos) {
         bool activate_air_filtration_on_completion = false;
         int complete_print_exhaust_fan_speed = 0;
 

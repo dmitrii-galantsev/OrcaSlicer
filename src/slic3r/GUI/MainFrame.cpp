@@ -1268,7 +1268,10 @@ void MainFrame::init_tabpanel() {
                 wxPostEvent(m_plater, SimpleEvent(EVT_GLVIEWTOOLBAR_PREVIEW));
                 m_param_panel->OnActivate();
             }
-            fit_tab_labels(); // ORCA on switching prepare / preview
+            // ORCA: do NOT call fit_tab_labels() here. Tab width does not change on a
+            // page switch, so recompacting labels only triggers redundant top-level
+            // Layout() churn, which GTK renders as a visible window jump. Label
+            // compaction is handled by the resize handler and printer-change events.
         }
         //else if (panel == m_param_panel)
         //    m_param_panel->OnActivate();

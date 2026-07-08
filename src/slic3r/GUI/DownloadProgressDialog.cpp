@@ -23,6 +23,7 @@
 #include "GUI_App.hpp"
 #include "Jobs/BoostThreadWorker.hpp"
 #include "Jobs/PlaterWorker.hpp"
+#include "Jobs/OpenBambooInstallJob.hpp"
 
 #include "Widgets/HyperLink.hpp" // ORCA
 
@@ -206,6 +207,8 @@ void DownloadProgressDialog::update_release_note(std::string release_note, std::
 
 std::unique_ptr<UpgradeNetworkJob> DownloadProgressDialog::make_job() { return std::make_unique<UpgradeNetworkJob>(); }
 
+std::unique_ptr<UpgradeNetworkJob> OpenBambooProgressDialog::make_job() { return std::make_unique<OpenBambooInstallJob>(); }
+
 void DownloadProgressDialog::on_finish()
 {
     if (wxGetApp().hot_reload_network_plugin()) {
@@ -214,6 +217,14 @@ void DownloadProgressDialog::on_finish()
 
     MessageDialog dlg(nullptr,
         _L("The network plug-in was installed but could not be loaded. Please restart the application."),
+        _L("Restart Required"), wxOK | wxICON_INFORMATION);
+    dlg.ShowModal();
+}
+
+void OpenBambooProgressDialog::on_finish()
+{
+    MessageDialog dlg(nullptr,
+        _L("Open Bamboo Networking was installed successfully. Please restart OrcaSlicer to finish switching to it."),
         _L("Restart Required"), wxOK | wxICON_INFORMATION);
     dlg.ShowModal();
 }

@@ -24,7 +24,6 @@ typedef std::function<void(int status, int percent, bool& cancel)> InstallProgre
 
 class UpgradeNetworkJob : public Job
 {
-    wxWindow *           m_event_handle{nullptr};
     std::function<void()> m_success_fun{nullptr};
     bool                m_job_finished{ false };
     int                 m_print_job_completed_id = 0;
@@ -32,6 +31,7 @@ class UpgradeNetworkJob : public Job
     InstallProgressFn pro_fn { nullptr };
 
 protected:
+    wxWindow *           m_event_handle{nullptr};
     std::string name;
     std::string package_name;
 

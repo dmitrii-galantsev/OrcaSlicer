@@ -56,6 +56,20 @@ protected:
     virtual void                               on_finish();
 };
 
+// Same progress UI, but installs the Open Bamboo Networking plugin from GitHub.
+// Hot-reloading a networking plugin binary can wedge the UI (lingering plugin
+// threads on dlclose), so on_finish() skips the base hot reload and prompts for a
+// restart; the config is already persisted, so the new plugin loads on next launch.
+class OpenBambooProgressDialog : public DownloadProgressDialog
+{
+public:
+    OpenBambooProgressDialog(wxString title) : DownloadProgressDialog(title) {}
+
+protected:
+    std::unique_ptr<UpgradeNetworkJob> make_job() override;
+    void                               on_finish() override;
+};
+
 
 }
 }

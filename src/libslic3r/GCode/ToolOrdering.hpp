@@ -280,9 +280,7 @@ public:
     * 0 based group id
     */
 
-    static MultiNozzleUtils::LayeredNozzleGroupResult get_recommended_filament_maps(Print* print, const std::vector<std::vector<unsigned int>>& layer_filaments, const FilamentMapMode mode, const std::vector<std::set<int>>& physical_unprintables, const std::vector<std::set<int>>& geometric_unprintables,
-                                                                                   const std::map<int, std::set<NozzleVolumeType>> &unprintable_volumes = {},
-                                                                                   const std::unordered_map<int, int>& nozzle_status = {});
+    static MultiNozzleUtils::LayeredNozzleGroupResult get_recommended_filament_maps(Print* print, const std::vector<std::vector<unsigned int>>& layer_filaments, const FilamentMapMode mode, const std::vector<std::set<int>>& physical_unprintables, const std::vector<std::set<int>>& geometric_unprintables);
 
     // H2C port: Cached layer/unprintable data for GroupReorder.
     // BBL ref: BambuStudio/src/libslic3r/GCode/ToolOrdering.hpp:346-353

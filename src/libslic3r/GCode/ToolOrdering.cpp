@@ -1217,9 +1217,7 @@ MultiNozzleUtils::LayeredNozzleGroupResult ToolOrdering::get_recommended_filamen
     const std::vector<std::vector<unsigned int>>& layer_filaments,
     const FilamentMapMode mode,
     const std::vector<std::set<int>>& physical_unprintables,
-    const std::vector<std::set<int>>& geometric_unprintables,
-    const std::map<int, std::set<NozzleVolumeType>>& unprintable_volumes,
-    const std::unordered_map<int, int>& nozzle_status)
+    const std::vector<std::set<int>>& geometric_unprintables)
 {
     using namespace FilamentGroupUtils;
     using namespace MultiNozzleUtils;
@@ -1468,13 +1466,11 @@ MultiNozzleUtils::LayeredNozzleGroupResult ToolOrdering::get_recommended_filamen
                 FilamentGroupMultiNozzle fg(context);
                 ret = fg.calc_filament_group_by_pam();
             }
-
             auto result_opt = LayeredNozzleGroupResult::create(ret, context.nozzle_info.nozzle_list, used_filaments);
             if (!result_opt) {
                 return LayeredNozzleGroupResult();
             }
             auto result = *result_opt;
-
             if (mode == FilamentMapMode::fmmManual) {
                 auto result_map = result.get_extruder_map();
                 for (auto fid : used_filaments) {
@@ -1626,13 +1622,10 @@ void ToolOrdering::reorder_extruders_for_minimum_flush_volume(bool reorder_first
             // Reuse existing nozzle group result if already computed (e.g., by a
             // previous slice), otherwise compute fresh from filament maps
             if (auto existing = m_print->get_layered_nozzle_group_result()) {
-
                 filament_maps = existing->get_extruder_map();
             } else {
-
-                auto device_nozzle_status = Vortek::NozzleState::resolve_for_print(m_print);
                 auto group_result = ToolOrdering::get_recommended_filament_maps(m_print, layer_filaments, map_mode, physical_unprintables,
-                                                                                geometric_unprintables, {}, device_nozzle_status);
+                                                                                geometric_unprintables);
                 // Store result so bbs_3mf serialization can access it for
                 // <nozzle> tag and group_id generation
                 m_print->set_nozzle_group_result(std::make_shared<MultiNozzleUtils::LayeredNozzleGroupResult>(group_result));

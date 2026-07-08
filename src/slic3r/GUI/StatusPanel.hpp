@@ -617,6 +617,7 @@ public:
     void           show_ams_group(bool show = true);
     void           show_nozzle_rack_group(bool show = true);
     void show_filament_load_group(bool show = true);
+    void           jump_to_Rack();
     MediaPlayCtrl* get_media_play_ctrl() {return m_media_play_ctrl;};
 };
 

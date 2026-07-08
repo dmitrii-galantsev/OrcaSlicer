@@ -190,8 +190,44 @@ wxString Slic3r::get_stage_string(int stage)
         return _L("Measuring Surface");
     case 58:
         return _L("Thermal Preconditioning for first layer optimization");
+    case 59:
+        return _L("Homing Blade Holder");                             // O1C
+    case 60:
+        return _L("Calibrating Camera Offset");                       // O1C
+    case 61:
+        return _L("Calibrating Blade Holder Position");               // O1C
+    case 62:
+        return _L("Hotend Pick and Place Test");                      // H2C carousel
+    case 63:
+        return _L("Waiting for the Chamber temperature to equalize"); // H2C chamber
+    case 64:
+        return _L("Preparing Hotend");                                // H2C carousel
     case 65:
         return _L("Calibrating the detection position of nozzle clumping"); // N7
+    case 66:
+        return _L("Purifying the chamber air");                       // H2C air filtration
+    case 67:
+        return _L("Measuring Rotary Attachment");
+    case 68:
+        return _L("The toolhead moves above the purge chute");
+    case 69:
+        return _L("Cooling down the nozzle");                         // H2C carousel pre-cool
+    case 70:
+        return _L("The toolhead moves to the center of the heatbed");
+    case 71:
+        return _L("Active Arc Fitting");
+    case 72:
+        return _L("Hotend Type Detection");                          // H2C nozzle detect
+    case 73:
+        return _L("Build plate alignment detection");
+    case 74:
+        return _L("Heatbed surface foreign object detection");
+    case 75:
+        return _L("Heatbed underside foreign object detection");
+    case 76:
+        return _L("Pre-extrusion before printing");
+    case 77:
+        return _L("Preparing AMS");                                   // H2C AMS-HT prep
     default:
         BOOST_LOG_TRIVIAL(info) << "stage = " << stage;
     }
@@ -1547,6 +1583,52 @@ int MachineObject::command_refresh_nozzle(){
     json j;
     j["print"]["sequence_id"]    = std::to_string(MachineObject::m_sequence_id++);
     j["print"]["command"]        = "refresh_nozzle";
+
+    return this->publish_json(j, 1);
+}
+
+int MachineObject::command_purification_disable()
+{
+    json j;
+    j["print"]["command"] = "close_air_filt";
+    j["print"]["sequence_id"] = std::to_string(MachineObject::m_sequence_id++);
+
+    return this->publish_json(j, 1);
+}
+
+int MachineObject::command_dont_remind_next_time(json& mqtt_guard_json)
+{
+    if (!mqtt_guard_json.contains("command") ||
+        !mqtt_guard_json.contains("err_index") ||
+        mqtt_guard_json["err_index"].empty()) return -1;
+
+    json j;
+    j["print"]["command"] = mqtt_guard_json["command"].get<std::string>();
+    j["print"]["sequence_id"] = std::to_string(MachineObject::m_sequence_id++);
+
+    try {
+        int err_index = mqtt_guard_json["err_index"].get<int>();
+
+        if (mqtt_guard_json.contains("err_ignored") &&
+            mqtt_guard_json["err_ignored"].is_array()) {
+            j["print"]["err_ignored"] = mqtt_guard_json["err_ignored"];
+            j["print"]["err_ignored"].push_back(err_index);
+        } else {
+            j["print"]["err_ignored"] = std::vector<int>{err_index};
+        }
+
+        for (auto& item : j["print"]["err_ignored"]) {
+            if (!item.is_number_integer()) continue;
+
+            json item_json;
+            item_json["idx"] = item.get<int>();
+            item_json["mode"] = 1; // 1-next time ignore, 2-always ignore
+            j["print"]["rm_idx"].push_back(item_json);
+        }
+    } catch (const json::exception& e) {
+        BOOST_LOG_TRIVIAL(error) << "JSON parsing error in command_dont_remind_next_time: " << e.what();
+        return -1;
+    }
 
     return this->publish_json(j, 1);
 }
@@ -3014,6 +3096,11 @@ int MachineObject::parse_json(std::string tunnel, std::string payload, bool key_
 
 
             if (jj.contains("command")) {
+                // H2C: parse the printer's auto nozzle-mapping reply (no-ops unless command/sequence_id match)
+                if (m_nozzle_mapping_ptr) {
+                    m_nozzle_mapping_ptr->ParseAutoNozzleMapping(jj);
+                }
+
                 if (jj["command"].get<std::string>() == "ams_change_filament") {
                     if (jj.contains("errno")) {
                         if (jj["errno"].is_number()) {
