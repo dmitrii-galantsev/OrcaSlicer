@@ -36,6 +36,72 @@ SCENARIO("Generic config validation performs as expected.", "[Config]") {
     }
 }
 
+// H2C: a modifier/object override of a multi-variant option is stored in extruder-variant space
+// (one slot per nozzle variant, with "nil" for the variants the user did not touch). When such an
+// override is reduced into the active per-extruder space it must NOT leak the nil (NaN) slots,
+// otherwise wall speeds turn into garbage/negative values. ConfigOptionVector::set_to_index() does
+// that reduction; this test pins its behavior on the exact pattern produced by the GUI.
+SCENARIO("ConfigOptionVector::set_to_index reduces variant-space overrides without leaking nil.", "[Config]") {
+    GIVEN("A nullable float option holding a modifier override \"200,nil,200,nil\" (2 extruders x 2 variants)") {
+        ConfigOptionFloatsNullable src;
+        REQUIRE(src.deserialize("200,nil,200,nil"));
+        REQUIRE(src.size() == 4);
+        REQUIRE(src.is_nil(1));
+        REQUIRE(src.is_nil(3));
+
+        WHEN("reduced over a base [166,166] with both extruders on their Standard slot {0,2}") {
+            ConfigOptionFloatsNullable dst;
+            dst.values = {166., 166.};
+            std::vector<int> variant_index = {0, 2};
+            dst.set_to_index(&src, variant_index, 1);
+            THEN("both extruders take the override value, none is nil/NaN") {
+                REQUIRE(dst.size() == 2);
+                REQUIRE_FALSE(dst.is_nil(0));
+                REQUIRE_FALSE(dst.is_nil(1));
+                REQUIRE_THAT(dst.values[0], Catch::Matchers::WithinAbs(200., 1e-9));
+                REQUIRE_THAT(dst.values[1], Catch::Matchers::WithinAbs(200., 1e-9));
+            }
+        }
+
+        WHEN("reduced over a base [166,166] with both extruders on their High Flow (nil) slot {1,3}") {
+            ConfigOptionFloatsNullable dst;
+            dst.values = {166., 166.};
+            std::vector<int> variant_index = {1, 3};
+            dst.set_to_index(&src, variant_index, 1);
+            THEN("nil slots keep the base value instead of becoming NaN") {
+                REQUIRE(dst.size() == 2);
+                REQUIRE_FALSE(dst.is_nil(0));
+                REQUIRE_FALSE(dst.is_nil(1));
+                REQUIRE_THAT(dst.values[0], Catch::Matchers::WithinAbs(166., 1e-9));
+                REQUIRE_THAT(dst.values[1], Catch::Matchers::WithinAbs(166., 1e-9));
+            }
+        }
+    }
+
+    // Regression: only the RIGHT nozzle's speed is overridden ("nil,nil,200,nil"), so the LEFT
+    // nozzle slot is nil. The LEFT extruder must keep its base value, NOT inherit the override's
+    // nil front() (which previously produced NaN -> negative wall speeds).
+    GIVEN("A nullable float override \"nil,nil,200,nil\" (only the RIGHT nozzle Standard set)") {
+        ConfigOptionFloatsNullable src;
+        REQUIRE(src.deserialize("nil,nil,200,nil"));
+        REQUIRE(src.is_nil(0));
+
+        WHEN("reduced over base [166,166] with extruders on Standard slots {0,2}") {
+            ConfigOptionFloatsNullable dst;
+            dst.values = {166., 166.};
+            std::vector<int> variant_index = {0, 2};
+            dst.set_to_index(&src, variant_index, 1);
+            THEN("LEFT keeps its base value, RIGHT gets the override, neither is nil/NaN") {
+                REQUIRE(dst.size() == 2);
+                REQUIRE_FALSE(dst.is_nil(0));
+                REQUIRE_FALSE(dst.is_nil(1));
+                REQUIRE_THAT(dst.values[0], Catch::Matchers::WithinAbs(166., 1e-9)); // LEFT: base preserved (was NaN before fix)
+                REQUIRE_THAT(dst.values[1], Catch::Matchers::WithinAbs(200., 1e-9)); // RIGHT: override applied
+            }
+        }
+    }
+}
+
 SCENARIO("Config accessor functions perform as expected.", "[Config]") {
     GIVEN("A config generated from default options") {
         Slic3r::DynamicPrintConfig config = Slic3r::DynamicPrintConfig::full_print_config();
