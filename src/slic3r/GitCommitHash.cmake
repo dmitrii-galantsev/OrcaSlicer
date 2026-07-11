@@ -6,12 +6,18 @@
 # commit without a reconfigure. The header is rewritten only when the value
 # changes.
 #
-# Inputs: SOURCE_DIR, OUT_FILE.
+# Inputs: SOURCE_DIR, OUT_FILE, and optionally HASH_OVERRIDE - the caller's git_commit_hash
+# captured at configure time, for builds where the environment is not carried through to the
+# build step (the Flatpak manifest sets it on the configure command only).
 
 find_package(Git QUIET)
 
 set(HASH "")
 set(SUFFIX "")
+
+if (DEFINED HASH_OVERRIDE AND NOT "${HASH_OVERRIDE}" STREQUAL "")
+    set(ENV{git_commit_hash} "${HASH_OVERRIDE}")
+endif ()
 
 if (DEFINED ENV{git_commit_hash} AND NOT "$ENV{git_commit_hash}" STREQUAL "")
     if (GIT_FOUND AND EXISTS "${SOURCE_DIR}/.git")

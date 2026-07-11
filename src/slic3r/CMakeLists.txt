@@ -935,11 +935,14 @@ encoding_check(libslic3r_gui)
 # Windows. Both build into libslic3r_gui, so the header only has to exist before
 # that target builds.
 set(_git_commit_hash_header "${CMAKE_CURRENT_BINARY_DIR}/git_commit_hash.h")
+# The script runs at build time and cannot see a git_commit_hash exported only for the
+# configure command, which is how the Flatpak manifest passes it.
 add_custom_target(git_commit_hash_header
     BYPRODUCTS "${_git_commit_hash_header}"
     COMMAND ${CMAKE_COMMAND}
         "-DSOURCE_DIR=${CMAKE_SOURCE_DIR}"
         "-DOUT_FILE=${_git_commit_hash_header}"
+        "-DHASH_OVERRIDE=$ENV{git_commit_hash}"
         -P "${CMAKE_CURRENT_LIST_DIR}/GitCommitHash.cmake"
     COMMENT "Resolving the git commit hash")
 add_dependencies(libslic3r_gui git_commit_hash_header)
