@@ -299,6 +299,9 @@ echo -e "flatpak-builder version: $FLATPAK_BUILDER_VERSION"
 BUILDER_ARGS=(
     --arch="$ARCH"
     --user
+    # Otherwise every failed run leaves another orca_deps-N tree, tens of GB,
+    # under $CACHE_DIR/build.
+    --delete-build-dirs
     --install-deps-from=flathub
     --repo="$BUILD_DIR/repo"
     --verbose
@@ -319,6 +322,25 @@ fi
 if [[ "$ENABLE_CCACHE" == true ]]; then
     BUILDER_ARGS+=(--ccache)
     echo -e "${GREEN}Using ccache for compiler caching${NC}"
+
+    # flatpak-builder --ccache bind-mounts $CACHE_DIR/ccache to /run/ccache
+    # inside the sandbox and sets CCACHE_DIR=/run/ccache, so a ccache.conf
+    # written here is read by the in-sandbox ccache. The default max_size is
+    # only 5GiB — too small to survive multiple OrcaSlicer rebuilds (~2-4GB of
+    # objects each), which causes eviction and needless cache misses. Bump it.
+    # This ccache is fully isolated from the host ~/.ccache used by cmake builds.
+    #
+    # Only max_size is tuned. Do NOT add sloppiness flags such as system_headers
+    # or include_file_ctime/mtime here: they let ccache reuse objects when a
+    # changed header should have invalidated them, which produced stale object
+    # files with old function signatures -> undefined-symbol link failures after
+    # a header/signature change. compiler_check=content is left at ccache's safe
+    # default (mtime); the sandbox toolchain is pinned by the SDK anyway.
+    mkdir -p "$CACHE_DIR/ccache"
+    cat > "$CACHE_DIR/ccache/ccache.conf" <<'CCACHE_CONF'
+max_size = 25.0G
+CCACHE_CONF
+    echo -e "${GREEN}Configured sandbox ccache (25G) at $CACHE_DIR/ccache${NC}"
 fi
 
 # Disable rofiles-fuse if requested (workaround for FUSE issues)
