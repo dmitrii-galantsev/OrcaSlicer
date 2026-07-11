@@ -1644,16 +1644,27 @@ static MultiNozzleUtils::LayeredNozzleGroupResult build_group_result_from_map(
     const size_t filament_nums = print_config.filament_colour.values.size();
     const bool   has_multiple_nozzle = std::any_of(print_config.extruder_max_nozzle_count.values.begin(), print_config.extruder_max_nozzle_count.values.end(),
                                                    [](int v) { return v > 1; });
-    // Orca: same sizing guard as the manual grouping paths — create() indexes the volume/nozzle
-    // maps per used filament with no bounds check, so only maps sized to the filament count are
-    // trusted (mis-sized maps can arrive from stale projects or CLI runs until the per-filament
-    // synthesis lands there). Unsized maps fall through to the extruder-level wrap below.
-    if (has_multiple_nozzle &&
-        print_config.filament_volume_map.values.size() == filament_nums &&
-        print_config.filament_nozzle_map.values.size() == filament_nums) {
-        float diameter = print_config.nozzle_diameter.values.empty() ? 0.4f : static_cast<float>(print_config.nozzle_diameter.values.front());
-        if (auto g = LayeredNozzleGroupResult::create(used_filaments, filament_map_0based, print_config.filament_volume_map.values, print_config.filament_nozzle_map.values, get_extruder_nozzle_stats(print_config.extruder_nozzle_stats.values), diameter))
-            return *g;
+    if (has_multiple_nozzle) {
+        // The 6-arg create indexes filament_volume_map/filament_nozzle_map by filament id and
+        // extruder_nozzle_stats by extruder id. These per-filament maps are populated by the GUI
+        // nozzle-mapping flow; in headless/CLI slicing (and any path that never ran that flow) they
+        // are empty, so guard their sizes before taking the multi-nozzle branch — otherwise create
+        // reads out of range and crashes (seen on H2C carousel + print-by-object). When they are
+        // missing, fall through to the default-nozzle-list path below (nozzle_id == extruder_id),
+        // which is correct for the single-nozzle-per-extruder resolution used here.
+        const auto& filament_volume_map = print_config.filament_volume_map.values;
+        const auto& filament_nozzle_map = print_config.filament_nozzle_map.values;
+        const auto extruder_nozzle_stats = get_extruder_nozzle_stats(print_config.extruder_nozzle_stats.values);
+        size_t max_filament_idx = filament_map_0based.size();
+        for (unsigned int f : used_filaments) max_filament_idx = std::max<size_t>(max_filament_idx, size_t(f) + 1);
+        const bool maps_ok = filament_volume_map.size() >= max_filament_idx &&
+                             filament_nozzle_map.size() >= max_filament_idx &&
+                             extruder_nozzle_stats.size() >= extruder_nums;
+        if (maps_ok) {
+            float diameter = print_config.nozzle_diameter.values.empty() ? 0.4f : static_cast<float>(print_config.nozzle_diameter.values.front());
+            if (auto g = LayeredNozzleGroupResult::create(used_filaments, filament_map_0based, filament_volume_map, filament_nozzle_map, extruder_nozzle_stats, diameter))
+                return *g;
+        }
     }
     auto nozzle_list = build_default_nozzle_list(print_config, extruder_nums);
     if (auto group = LayeredNozzleGroupResult::create(filament_map_0based, nozzle_list, used_filaments))
@@ -2151,9 +2162,15 @@ void ToolOrdering::reorder_extruders_for_minimum_flush_volume(bool reorder_first
     // placeholders are unchanged; H2C/A2L resolve to a nozzle-granular result (dynamic mode
     // resolves per-layer). GCode consumes this via Print::get_layered_nozzle_group_result().
     m_nozzle_group_result = grouping_result;
-    // Orca: the ToolOrdering member is stored unconditionally, but the Print-level store is gated
-    // behind the not-sequential check hoisted above.
-    if (m_print != nullptr && not_sequential)
+    // Store the grouping result Print-level so GCode's placeholders (nozzle_diameter_at_nozzle_id[],
+    // nozzle_volume_types[], initial_nozzle_id, ...) can resolve. This must happen for the by-object
+    // (sequential, multi-object) path too: build_group_result_from_map above produces a valid result
+    // for it, and H2C/A2L start-G-code indexes nozzle_diameter_at_nozzle_id[] — leaving it unset made
+    // the placeholder vector empty and failed the print ("Indexing an empty vector variable"). The
+    // result encodes nozzle_id == extruder_id for single-nozzle-per-extruder printers, so storing it
+    // unconditionally (ignoring the not_sequential gate that governs the map write-back above) is a
+    // no-op for them.
+    if (m_print != nullptr)
         m_print->set_nozzle_group_result(std::make_shared<MultiNozzleUtils::LayeredNozzleGroupResult>(m_nozzle_group_result));
 
     auto maps_without_group = filament_maps;
