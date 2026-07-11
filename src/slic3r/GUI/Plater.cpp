@@ -3415,12 +3415,17 @@ void Sidebar::update_presets(Preset::Type preset_type)
             auto type = extruders_def->enum_labels[extruders->values[index]];
             int select = -1;
             for (size_t i = 0; i < nozzle_volumes_def->enum_labels.size(); ++i) {
-                // get_at falls back to the first entry when a profile defines no per-extruder value,
-                // so extruders without an explicit sub-nozzle count never offer Hybrid. A nullable-int
-                // nil is INT_MAX (> 1) and would otherwise falsely pass the gate, so exclude it too.
-                if (boost::algorithm::contains(extruder_variants->values[index], type + " " + nozzle_volumes_def->enum_labels[i]) ||
-                    extruder_max_nozzle_count->get_at(index) > 1 && extruder_max_nozzle_count->get_at(index) != ConfigOptionIntsNullable::nil_value() &&
-                    nozzle_volumes_def->enum_keys_map->at(nozzle_volumes_def->enum_values[i]) == nvtHybrid) {
+                // A carousel nozzle (extruder_max_nozzle_count > 1, i.e. H2C right nozzle) can hold
+                // several physical nozzles, so it additionally offers the Hybrid ("mixed") flow type
+                // even though that string is not in its printer_extruder_variant list. Guard the
+                // optional extruder_max_nozzle_count so non-carousel/single-nozzle printers are
+                // unaffected.
+                bool variant_match = boost::algorithm::contains(extruder_variants->values[index], type + " " + nozzle_volumes_def->enum_labels[i]);
+                bool hybrid_match  = extruder_max_nozzle_count &&
+                                     index < (int) extruder_max_nozzle_count->values.size() &&
+                                     extruder_max_nozzle_count->values[index] > 1 &&
+                                     nozzle_volumes_def->enum_keys_map->at(nozzle_volumes_def->enum_values[i]) == nvtHybrid;
+                if (variant_match || hybrid_match) {
                     if (nozzle_volumes_def->enum_keys_map->at(nozzle_volumes_def->enum_values[i]) == NozzleVolumeType::nvtHighFlow &&(diameter == "0.2" ||
                         is_skip_high_flow_printer(printer_model)))
                         continue;

@@ -520,9 +520,6 @@ static std::set<NozzleVolumeType> get_valid_nozzle_volume_type() {
     std::set<NozzleVolumeType> type;
     for (int i = 0; i <= nvtMaxNozzleVolumeType; ++i) {
         auto t = static_cast<NozzleVolumeType>(i);
-        // Hybrid is not a physical nozzle variant: presets never define it, so it must not
-        // produce a variant string.
-        if (t == nvtHybrid) continue;
         type.insert(t);
     }
     return type;
