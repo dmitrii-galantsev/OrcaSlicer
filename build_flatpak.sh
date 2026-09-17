@@ -290,6 +290,30 @@ mkdir -p "$BUILD_DIR/cache" "$BUILD_DIR/flatpak-builder"
 # Set environment variables to match GitHub Actions
 export FLATPAK_BUILDER_N_JOBS=$JOBS
 
+# flatpak-builder runs `appstreamcli compose` on the host at the end of the build. Some
+# flatpak-builder packagings (notably the Nix one) export GDK_PIXBUF_MODULE_FILE from their
+# own launcher wrapper, which makes that host appstreamcli load a foreign librsvg pixbuf
+# loader. If the two disagree on the librsvg ABI the app's SVG icon fails to load with
+# "undefined symbol: rsvg_handle_get_pixbuf_and_error", the component is dropped, and the
+# build dies on an opaque "E: file-read-error" plus "E: filters-but-no-output".
+#
+# Unsetting the variable here does not help, and testing for it here does not either: the
+# wrapper exports it into its own environment after we exec it, so it is invisible from this
+# script. Shim appstreamcli on PATH unconditionally instead, so only that one child loses the
+# variable and flatpak-builder keeps the loaders it wanted for itself. Harmless where the
+# variable was never set.
+if REAL_APPSTREAMCLI=$(command -v appstreamcli); then
+    mkdir -p "$BUILD_DIR/bin"
+    cat > "$BUILD_DIR/bin/appstreamcli" <<SHIM
+#!/bin/sh
+unset GDK_PIXBUF_MODULE_FILE GDK_PIXBUF_MODULEDIR
+exec "$REAL_APPSTREAMCLI" "\$@"
+SHIM
+    chmod +x "$BUILD_DIR/bin/appstreamcli"
+    export PATH="$(cd "$BUILD_DIR/bin" && pwd):$PATH"
+    echo -e "${YELLOW}Shimmed appstreamcli to drop GDK_PIXBUF_MODULE_FILE${NC}"
+fi
+
 echo -e "${BLUE}Running flatpak-builder...${NC}"
 echo -e "Using $JOBS parallel jobs for flatpak-builder and $FLATPAK_BUILDER_N_JOBS for module builds"
 
