@@ -173,6 +173,9 @@ namespace Slic3r
         const bool first_real_agent = (m_agent == nullptr && agent != nullptr);
         m_agent = agent;
 
+        // The printer-agent swap never reaches here; it re-arms from set_live_printer_agent().
+        m_auto_connect_done = false;
+
         std::lock_guard<std::mutex> lock(listMutex);
         for (auto& it : localMachineList) {
             if (it.second) {
@@ -451,6 +454,7 @@ namespace Slic3r
                 }
             }
             update_local_machine(*obj, config);
+            auto_connect_last_machine();
         }
         catch (...) {
             ;
@@ -1026,6 +1030,8 @@ namespace Slic3r
         {
             BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << " exception=" << e.what();
         }
+
+        auto_connect_last_machine();
     }
 
     void DeviceManager::update_user_machine_list_info(const std::string& provider)
@@ -1050,6 +1056,11 @@ namespace Slic3r
 
     void DeviceManager::record_user_last_machine(const std::string& dev_id)
     {
+        // An empty id is an involuntary teardown (agent swap, lost connection), never a user
+        // choice. Recording it would erase the printer auto_connect_last_machine() reconnects to.
+        if (dev_id.empty())
+            return;
+
         if (AppConfig* config = get_app_config()) {
             config->set("user_last_selected_machine", dev_id);
         }
@@ -1080,6 +1091,41 @@ namespace Slic3r
         const auto& last_monitor_machine = get_user_last_machine();
         if (userMachineList.find(last_monitor_machine) != userMachineList.end())
             set_selected_machine(last_monitor_machine);
+    }
+
+    void DeviceManager::auto_connect_last_machine()
+    {
+        if (m_auto_connect_done)
+            return;
+
+        AppConfig* config = Slic3r::GUI::wxGetApp().app_config;
+        if (!config || !config->get_bool("auto_connect_last_printer"))
+            return;
+
+        // Something already holds the selection - the user, or an agent that selected its
+        // configured printer. Stand down for the rest of the run rather than displacing it.
+        if (!selected_machine.empty()) {
+            m_auto_connect_done = true;
+            return;
+        }
+
+        const std::string dev_id = get_user_last_machine();
+        if (dev_id.empty())
+            return;
+
+        // The candidate set set_selected_machine() connects from. Until the remembered printer
+        // turns up in it, do nothing and let a later discovery or device list refresh try again.
+        auto candidates = get_my_machine_list(get_current_printer_agent_id());
+        auto it         = candidates.find(dev_id);
+        if (it == candidates.end())
+            return;
+        // is_avaliable() only checks bind_state, and connect() fails outright on an empty ip.
+        if (it->second->is_lan_mode_printer() && it->second->get_dev_ip().empty())
+            return;
+
+        BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ": reconnecting last selected machine, dev_id = " << dev_id;
+        m_auto_connect_done = true;
+        set_selected_machine(dev_id);
     }
 
     void DeviceManager::OnMachineBindStateChanged(MachineObject* obj, const std::string& new_state)

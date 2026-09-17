@@ -4084,6 +4084,9 @@ void GUI_App::set_live_printer_agent(std::shared_ptr<IPrinterAgent> agent)
         // why: retain agent-owned LAN discoveries so agents without automatic discovery (for
         // example the Moonraker-based Qidi/Snapmaker agents) can reuse them after a switch.
         dev->clear_other_devices();
+        // The deselect above is the swap's doing; let the incoming agent reconnect the
+        // remembered printer. DeviceManager::set_agent() does not run on this path.
+        dev->rearm_auto_connect();
     }
 
     m_agent->set_printer_agent(agent);

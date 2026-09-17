@@ -33,6 +33,7 @@ private:
     DeviceManagerRefresher* m_refresher{ nullptr };
 
     bool m_enable_mutil_machine = false;
+    bool m_auto_connect_done    = false;
 
     std::mutex listMutex;
     std::string selected_machine;                               /* dev_id */
@@ -87,6 +88,13 @@ public:
     void clear_other_devices();
 
     void load_last_machine();
+
+    // Reconnect the printer the user last selected, at most once per run, as soon as it turns
+    // up in discovery or the cloud device list. Never picks any other machine.
+    void auto_connect_last_machine();
+
+    void rearm_auto_connect() { m_auto_connect_done = false; }
+
     void update_user_machine_list_info(const std::string& provider);
     void parse_user_print_info(std::string body);
     void reload_printer_settings();

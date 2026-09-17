@@ -258,6 +258,9 @@ void AppConfig::set_defaults()
     if (get("reverse_mouse_wheel_zoom").empty())
         set_bool("reverse_mouse_wheel_zoom", false);
 
+    if (get("auto_connect_last_printer").empty())
+        set_bool("auto_connect_last_printer", true);
+
     if (get("enable_append_color_by_sync_ams").empty())
         set_bool("enable_append_color_by_sync_ams", true);
     if (get("enable_merge_color_by_sync_ams").empty())
