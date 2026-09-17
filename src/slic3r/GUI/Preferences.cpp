@@ -1974,6 +1974,9 @@ void PreferencesDialog::create_items()
     auto item_hide_login_side_panel = create_item_checkbox(_L("Hide login side panel"), _L("Hide the login side panel on the home page."), "hide_login_side_panel");
     g_sizer->Add(item_hide_login_side_panel);
 
+    auto item_auto_connect     = create_item_checkbox(_L("Reconnect the last used printer on startup"), _L("Connect to the printer that was selected when OrcaSlicer was last closed, as soon as it is found on the network. No other printer is connected to automatically."), "auto_connect_last_printer");
+    g_sizer->Add(item_auto_connect);
+
     auto item_network_test     = create_item_button(_L("Network test"), _L("Test") + " " + dots, "", _L("Open Network Test"), []() {
         NetworkTestDialog dlg(wxGetApp().mainframe);
         dlg.ShowModal();
