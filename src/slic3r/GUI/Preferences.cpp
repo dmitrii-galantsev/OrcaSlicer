@@ -2208,6 +2208,9 @@ void PreferencesDialog::create_items()
         {_L("Filament & Color"), _L("Color only")});
     g_sizer->Add(item_filament_sync_mode);
 
+    auto item_keep_matching_filament = create_item_checkbox(_L("Keep filament presets that already match"), _L("When syncing filaments, leave a slot's preset alone if the loaded filament is of the same type, and update only its color. Turn this off to always replace the preset with the one the printer reports."), "sync_ams_keep_preset_on_type_match");
+    g_sizer->Add(item_keep_matching_filament);
+
     auto item_system_sync      = create_item_checkbox(_L("Update built-in presets automatically."), "", "sync_system_preset");
     g_sizer->Add(item_system_sync);
 

@@ -269,6 +269,8 @@ void AppConfig::set_defaults()
         set_bool("ams_sync_match_full_use_color_dist", false);
     if (get("sync_ams_filament_mode").empty())
         set("sync_ams_filament_mode", "0"); // 0: filament+color, 1: color only
+    if (get("sync_ams_keep_preset_on_type_match").empty())
+        set_bool("sync_ams_keep_preset_on_type_match", true);
 
     if (get("camera_orbit_mult").empty())
         set("camera_orbit_mult", "1.0");

@@ -6336,7 +6336,8 @@ void Sidebar::sync_ams_list(bool is_from_big_sync_btn)
     std::vector<std::pair<DynamicPrintConfig *,std::string>> unknowns;
     auto enable_append  = wxGetApp().app_config->get_bool("enable_append_color_by_sync_ams");
     auto sync_color_only = wxGetApp().app_config->get("sync_ams_filament_mode") == "1";
-    auto n              = wxGetApp().preset_bundle->sync_ams_list(unknowns, !sync_result.direct_sync, sync_result.sync_maps, enable_append, merge_info, sync_color_only);
+    auto keep_on_type_match = wxGetApp().app_config->get_bool("sync_ams_keep_preset_on_type_match");
+    auto n              = wxGetApp().preset_bundle->sync_ams_list(unknowns, !sync_result.direct_sync, sync_result.sync_maps, enable_append, merge_info, sync_color_only, keep_on_type_match);
     wxString detail;
     for (auto & uk : unknowns) {
         auto tray_name     = uk.first->opt_string("tray_name", 0u);

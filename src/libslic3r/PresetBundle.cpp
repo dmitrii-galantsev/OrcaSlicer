@@ -3814,7 +3814,7 @@ void PresetBundle::get_ams_cobox_infos(AMSComboInfo& combox_info)
     }
 }
 
-unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfig *,std::string>> &unknowns, bool use_map, std::map<int, AMSMapInfo> &maps, bool enable_append, MergeFilamentInfo &merge_info, bool color_only)
+unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfig *,std::string>> &unknowns, bool use_map, std::map<int, AMSMapInfo> &maps, bool enable_append, MergeFilamentInfo &merge_info, bool color_only, bool keep_on_type_match)
 {
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << "use_map:" << use_map << " enable_append:" << enable_append;
     std::vector<std::string> ams_filament_presets;
@@ -3883,6 +3883,23 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
         }
         bool has_type = false;
         auto filament_type = ams.opt_string("filament_type", 0u);
+        // A tuned preset is not interchangeable with whatever the tray's RFID id resolves to,
+        // so a tray of the same type only updates the colour. get_filament_type() keeps a
+        // support spool (PLA-S) from matching plain PLA. Positional, hence direct sync only.
+        if (keep_on_type_match && !use_map && !filament_type.empty() &&
+            ams_filament_presets.size() < this->filament_presets.size()) {
+            Preset *cur_preset = filaments.find_preset(this->filament_presets[ams_filament_presets.size()]);
+            std::string cur_display_type, tray_display_type;
+            if (cur_preset && cur_preset->get_filament_type(cur_display_type) == ams.get_filament_type(tray_display_type)) {
+                BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": slot %1% keeps %2%, tray type matches")
+                                               % ams_filament_presets.size() % cur_preset->name;
+                ams_filament_presets.push_back(cur_preset->name);
+                ams_filament_colors.push_back(filament_color);
+                ams_filament_color_types.push_back(filament_color_type);
+                ams_multi_color_filment.push_back(filament_multi_color);
+                continue;
+            }
+        }
         auto iter = std::find_if(filaments.begin(), filaments.end(), [this, &filament_id, &has_type, filament_type](auto &f) {
             has_type |= f.config.opt_string("filament_type", 0u) == filament_type;
             return f.is_compatible && filaments.get_preset_base(f) == &f && f.filament_id == filament_id; });
