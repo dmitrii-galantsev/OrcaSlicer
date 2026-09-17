@@ -88,6 +88,10 @@ public:
     // start a connection the user's first manual printer switch then tore down mid-flight.
     void auto_connect_last_machine();
 
+    // Let auto_connect_last_machine() run again. Call after anything that tears the selection
+    // down on purpose, so the incoming state gets its own attempt.
+    void rearm_auto_connect() { m_auto_connect_done = false; }
+
     void update_user_machine_list_info(const std::string& provider);
     void parse_user_print_info(std::string body);
     void reload_printer_settings();

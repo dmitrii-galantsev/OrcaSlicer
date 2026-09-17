@@ -3968,6 +3968,11 @@ void GUI_App::set_live_printer_agent(std::shared_ptr<IPrinterAgent> agent)
         // target to filter against then, so fall back to the original "keep all My Devices"
         // behavior rather than guessing.
         dev->clear_other_devices(agent ? agent->get_agent_info().id : std::string());
+        // why: the deselect above is the swap's own doing, not the user's. Re-arm so the
+        // incoming agent still gets to reconnect the remembered printer when its discovery
+        // turns it up. DeviceManager::set_agent() does not run on this path - it only fires
+        // when the NetworkAgent itself is constructed.
+        dev->rearm_auto_connect();
     }
 
     m_agent->set_printer_agent(agent);

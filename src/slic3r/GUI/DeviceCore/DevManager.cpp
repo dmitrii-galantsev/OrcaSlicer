@@ -145,8 +145,9 @@ namespace Slic3r
         const bool first_real_agent = (m_agent == nullptr && agent != nullptr);
         m_agent = agent;
 
-        // An agent swap clears the selection, so let the incoming agent reconnect its own
-        // remembered printer.
+        // A new NetworkAgent means a fresh device world; let the auto-connect run again.
+        // The printer-agent swap is a separate path that never reaches here - it re-arms
+        // itself from GUI_App::set_live_printer_agent().
         m_auto_connect_done = false;
 
         std::lock_guard<std::mutex> lock(listMutex);
@@ -943,6 +944,16 @@ namespace Slic3r
 
     void DeviceManager::record_user_last_machine(const std::string& dev_id)
     {
+        // Never record a deselect. set_selected_machine("") is only ever an involuntary
+        // teardown - the startup printer-agent swap (GUI_App::set_live_printer_agent), a lost
+        // or failed connection, the refresher - and none of them mean "the user wants no
+        // printer". Recording the empty id there erased the remembered machine before
+        // discovery had even run, which left auto_connect_last_machine() and
+        // load_last_machine() with nothing to reconnect to. A stale id is harmless: both
+        // validate it against the live machine list before selecting.
+        if (dev_id.empty())
+            return;
+
         if (Slic3r::GUI::wxGetApp().app_config) {
             Slic3r::GUI::wxGetApp().app_config->set("user_last_selected_machine", dev_id);
         }
