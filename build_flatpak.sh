@@ -288,6 +288,22 @@ mkdir -p "$BUILD_DIR/cache" "$BUILD_DIR/flatpak-builder"
 # Set environment variables to match GitHub Actions
 export FLATPAK_BUILDER_N_JOBS=$JOBS
 
+# Some flatpak-builder launchers (the Nix one) export GDK_PIXBUF_MODULE_FILE, which makes the
+# host `appstreamcli compose` load an incompatible librsvg loader, drop the app icon and fail
+# with "E: filters-but-no-output". The launcher sets it after exec, where this script cannot
+# unset it, so a shim drops it for appstreamcli alone.
+if REAL_APPSTREAMCLI=$(command -v appstreamcli); then
+    mkdir -p "$BUILD_DIR/bin"
+    cat > "$BUILD_DIR/bin/appstreamcli" <<SHIM
+#!/bin/sh
+unset GDK_PIXBUF_MODULE_FILE GDK_PIXBUF_MODULEDIR
+exec "$REAL_APPSTREAMCLI" "\$@"
+SHIM
+    chmod +x "$BUILD_DIR/bin/appstreamcli"
+    export PATH="$(cd "$BUILD_DIR/bin" && pwd):$PATH"
+    echo -e "${YELLOW}Shimmed appstreamcli to drop GDK_PIXBUF_MODULE_FILE${NC}"
+fi
+
 echo -e "${BLUE}Running flatpak-builder...${NC}"
 echo -e "Using $JOBS parallel jobs for flatpak-builder and $FLATPAK_BUILDER_N_JOBS for module builds"
 
