@@ -373,6 +373,12 @@ ObjectList::~ObjectList()
 
 void ObjectList::set_min_height()
 {
+    // The sidebar shares its height between the list and the settings below by proportion, which
+    // leaves a 1280x800 touchscreen about one row. Three rows, each with 2 px GTK cell padding.
+    if (touch_input_enabled()) {
+        const int em = wxGetApp().em_unit();
+        SetMinSize(wxSize(-1, 3 * (object_list_row_height(em, FromDIP(2)) + FromDIP(4))));
+    }
     // BBS
 #if 0
     if (m_items_count == size_t(-1))

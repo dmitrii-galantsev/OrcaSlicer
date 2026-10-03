@@ -296,6 +296,7 @@
 #include "DeviceCore/DevManager.h"
 #include "DeviceCore/DevConfigUtil.h"
 #include "DeviceCore/DevDefs.h"
+#include "TouchKeypad.hpp"
 
 using boost::optional;
 namespace fs = boost::filesystem;
@@ -4266,6 +4267,19 @@ void Sidebar::change_top_border_for_mode_sizer(bool increase_border)
 }
 
 
+// The user's filaments_area_preferred_count, capped to four filaments (two rows) on a short
+// touchscreen: at 1280x800 the full list leaves the object list below it a single row. The rest scroll.
+static int filaments_area_preferred_count(wxWindow* window)
+{
+    int count = std::stoi(wxGetApp().app_config->get("filaments_area_preferred_count"));
+    if (touch_input_enabled()) {
+        const int display = wxDisplay::GetFromWindow(window);
+        if (wxDisplay(display == wxNOT_FOUND ? 0u : unsigned(display)).GetClientArea().GetHeight() < window->FromDIP(900))
+            count = std::min(count, 4);
+    }
+    return count;
+}
+
 // ---- Mixed-color filament sidebar support ----
 // The mixed rows get their own scroll area, capped by Orca's filaments_area_preferred_count
 // row budget rather than BBS's fixed 3-row / 12-filament limit.
@@ -4278,7 +4292,7 @@ void Sidebar::recalc_filament_scroll_sizes()
     auto left_sizer  = p->sizer_filaments->GetItem((size_t) 0)->GetSizer();
     auto combo_sizer = left_sizer->GetItem((size_t) 0)->GetSizer();
     const int row_h  = combo_sizer ? combo_sizer->GetSize().GetHeight() : 0;
-    int preferred_rows = std::ceil(0.5 * std::stoi(wxGetApp().app_config->get("filaments_area_preferred_count")));
+    int preferred_rows = std::ceil(0.5 * filaments_area_preferred_count(this));
     const int max_h = (row_h > 0) ? preferred_rows * row_h : -1;
 
     auto content_size = p->m_mixed_scroll_area->GetSizer()->GetMinSize();
@@ -5396,7 +5410,7 @@ void Sidebar::update_filaments_area_height()
     // ORCA use a height with user preference
     auto left_sizer          = p->sizer_filaments->GetItem((size_t) 0)->GetSizer();
     auto combo_sizer         = left_sizer->GetItem((size_t) 0)->GetSizer();
-    int  preferred_rows      = std::ceil(0.5 * std::stoi(wxGetApp().app_config->get("filaments_area_preferred_count")));
+    int  preferred_rows      = std::ceil(0.5 * filaments_area_preferred_count(this));
     auto height_with_borders = combo_sizer->GetSize().GetHeight(); // gets height from sizer instead static numbers
     p->m_panel_filament_content->SetMaxSize(wxSize{-1, preferred_rows * height_with_borders});
 
@@ -5413,7 +5427,7 @@ void Sidebar::update_filaments_counter(bool force_layout)
 // ORCA
 {
     int  current_count       = p->combos_filament.size();
-    int  preferred_count     = std::stoi(wxGetApp().app_config->get("filaments_area_preferred_count"));
+    int  preferred_count     = filaments_area_preferred_count(this);
     bool isShown             = p->m_panel_filament_content->IsShown();
     auto counter             = p->m_staticText_filament_count;
 
