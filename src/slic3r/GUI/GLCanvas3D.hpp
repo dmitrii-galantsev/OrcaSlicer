@@ -1463,6 +1463,7 @@ private:
     void _render_selection_center() { m_selection.render_center(m_gizmos.is_dragging()); }
 #endif // ENABLE_RENDER_SELECTION_CENTER
     void _check_and_update_toolbar_icon_scale();
+    float _fit_toolbars_for_touch(float auto_size, float cnv_width, GLToolbar& collapse_toolbar);
     void _render_overlays();
     void _render_overlay_toolbars();
     size_t _overlay_signature(const ImDrawData* draw_data) const;

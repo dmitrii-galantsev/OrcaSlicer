@@ -176,6 +176,7 @@ private:
     Data m_data;
     EActionType m_last_action_type;
     EHighlightState m_highlight_state;
+    bool m_wanted{ true };
 public:
     // remember left position for rendering menu
     mutable float render_left_pos;
@@ -204,6 +205,8 @@ public:
     bool is_hovered() const { return (m_state == Hover) || (m_state == HoverPressed) || (m_state == HoverDisabled); }
     bool is_pressed() const { return (m_state == Pressed) || (m_state == HoverPressed); }
     bool is_visible() const { return m_data.visible; }
+    // What the visibility callback asked for, before an overflow hide.
+    bool is_wanted() const { return m_wanted; }
     bool is_separator() const { return m_type == Separator; }
 
     bool is_left_toggable() const { return m_data.left.toggable; }
@@ -216,7 +219,7 @@ public:
     void reset_last_action_type() { m_last_action_type = Undefined; }
 
     // returns true if the state changes
-    bool update_visibility();
+    bool update_visibility(bool overflow_hidden = false);
     // returns true if the state changes
     bool update_enabled_state();
 
@@ -336,6 +339,7 @@ private:
     Layout m_layout;
 
     ItemsList m_items;
+    std::vector<std::string> m_overflow_hidden;
 
     struct MouseCapture
     {
@@ -409,6 +413,13 @@ public:
     void set_additional_tooltip(int item_id, const std::string& text);
     void set_tooltip(int item_id, const std::string& text);
     int  get_visible_items_cnt() const;
+
+    // Items named here stay hidden whatever their visibility callback says, for a toolbar that
+    // would not fit otherwise. Returns true if the set changed.
+    bool set_overflow_hidden(const std::vector<std::string>& names);
+    // Horizontal width with icons of the given size if exactly the named items were hidden for overflow.
+    float get_width_with_overflow(float icons_size, const std::vector<std::string>& hidden) const;
+    bool is_item_wanted(const std::string& name) const;
 
     // returns true if any item changed its state
     bool update_items_state();

@@ -9347,6 +9347,8 @@ void GLCanvas3D::_check_and_update_toolbar_icon_scale()
     if (size_i % 2 != 0)
         size_i -= 1;
     float size   = size_i;
+    if (m_canvas_type == ECanvasType::CanvasView3D)
+        size = _fit_toolbars_for_touch(size, (float) cnv_size.get_width(), collapse_toolbar);
 
     // Set current size for all top toolbars. It will be used for next calculations
     //BBS: GUI refactor: GLToolbar
@@ -9394,6 +9396,69 @@ void GLCanvas3D::_check_and_update_toolbar_icon_scale()
     new_scale /= get_scale();
     if (fabs(new_scale - scale) > 0.05) // scale is changed by 5% and more
         wxGetApp().set_auto_toolbar_icon_scale(new_scale);
+}
+
+// The auto scale would shrink the top bar to about 18 px on a 1280 px Steam Deck. In touch mode
+// the icons stay at least this size and the least used ones leave the bar instead; the main
+// toolbar ones are also in the object context menu.
+static const float TOUCH_TOOLBAR_MIN_ICON_SIZE = 32.0f;
+
+float GLCanvas3D::_fit_toolbars_for_touch(float auto_size, float cnv_width, GLToolbar& collapse_toolbar)
+{
+    struct Spare
+    {
+        const char*            item;
+        GLGizmosManager::EType gizmo;
+    };
+    static const Spare spares[] = {
+        { "more", GLGizmosManager::Undefined },
+        { "fewer", GLGizmosManager::Undefined },
+        { "splitobjects", GLGizmosManager::Undefined },
+        { "splitvolumes", GLGizmosManager::Undefined },
+        { nullptr, GLGizmosManager::TextureDisplacement },
+        { nullptr, GLGizmosManager::BrimEars },
+        { nullptr, GLGizmosManager::Assembly },
+        { nullptr, GLGizmosManager::MeshBoolean },
+        { "layersediting", GLGizmosManager::Undefined },
+        { nullptr, GLGizmosManager::FuzzySkin },
+        { nullptr, GLGizmosManager::Seam },
+    };
+
+    std::vector<std::string>            hidden_items;
+    std::vector<GLGizmosManager::EType> hidden_gizmos;
+    float                               size = auto_size;
+
+    const AppConfig* cfg = wxGetApp().app_config;
+    if (cfg != nullptr && cfg->get_bool("touch_input")) {
+        const float min_size = 2.0f * std::round(0.5f * TOUCH_TOOLBAR_MIN_ICON_SIZE * get_scale());
+        const float collapse_width = collapse_toolbar.is_enabled() ?
+            collapse_toolbar.get_width() - collapse_toolbar.get_icons_size() + 0.5f * min_size : 0.0f;
+        auto width = [&]() {
+            return m_main_toolbar.get_width_with_overflow(min_size, hidden_items) +
+                   m_gizmos.get_scaled_total_width_with_overflow(min_size, hidden_gizmos) +
+                   m_assemble_view_toolbar.get_width_with_overflow(min_size, {}) +
+                   m_separator_toolbar.get_width_with_overflow(min_size, {}) + 2.0f * collapse_width;
+        };
+        for (const Spare& spare : spares) {
+            if (width() <= cnv_width)
+                break;
+            if (spare.item != nullptr) {
+                if (m_main_toolbar.is_item_wanted(spare.item) && !m_main_toolbar.is_item_pressed(spare.item))
+                    hidden_items.emplace_back(spare.item);
+            } else if (m_gizmos.is_selectable_ignoring_overflow(spare.gizmo) && m_gizmos.get_current_type() != spare.gizmo)
+                hidden_gizmos.push_back(spare.gizmo);
+        }
+        if (width() <= cnv_width)
+            size = std::max(auto_size, min_size);
+    }
+
+    bool changed = m_main_toolbar.set_overflow_hidden(hidden_items);
+    changed |= m_gizmos.set_overflow_hidden(hidden_gizmos);
+    if (changed) {
+        set_as_dirty();
+        request_extra_frame();
+    }
+    return size;
 }
 
 // The ImGui half of the overlay, drawn by ImGui at the end of the frame.

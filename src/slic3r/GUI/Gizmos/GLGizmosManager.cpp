@@ -101,10 +101,33 @@ std::vector<size_t> GLGizmosManager::get_selectable_idxs() const
     }
     else {
         for (size_t i = 0; i < m_gizmos.size(); ++i)
-            if (m_gizmos[i]->is_selectable())
+            if (m_gizmos[i]->is_selectable() &&
+                std::find(m_overflow_hidden.begin(), m_overflow_hidden.end(), (EType) i) == m_overflow_hidden.end())
                 out.push_back(i);
     }
     return out;
+}
+
+bool GLGizmosManager::set_overflow_hidden(const std::vector<EType>& types)
+{
+    if (types == m_overflow_hidden)
+        return false;
+    m_overflow_hidden = types;
+    return true;
+}
+
+bool GLGizmosManager::is_selectable_ignoring_overflow(EType type) const
+{
+    return type < m_gizmos.size() && m_gizmos[type]->is_selectable();
+}
+
+float GLGizmosManager::get_scaled_total_width_with_overflow(float icons_size, const std::vector<EType>& hidden) const
+{
+    size_t count = 0;
+    for (size_t i = 0; i < m_gizmos.size(); ++i)
+        if (m_gizmos[i]->is_selectable() && std::find(hidden.begin(), hidden.end(), (EType) i) == hidden.end())
+            ++count;
+    return m_layout.scale * (2.0f * m_layout.border + (float) count * (icons_size + m_layout.gap_x) - m_layout.gap_x);
 }
 
 //BBS: GUI refactor: GLToolbar&&Gizmo adjust
@@ -694,6 +717,8 @@ size_t GLGizmosManager::get_overlay_state_hash() const
     boost::hash_combine(hash, (int)m_current);
     boost::hash_combine(hash, (int)m_highlight.first);
     boost::hash_combine(hash, m_highlight.second);
+    for (EType type : m_overflow_hidden)
+        boost::hash_combine(hash, (int) type);
     return hash;
 }
 

@@ -147,6 +147,7 @@ private:
     EType m_current;
     EType m_hover;
     std::pair<EType, bool> m_highlight; // bool true = higlightedShown, false = highlightedHidden
+    std::vector<EType> m_overflow_hidden;
 
     //BBS: GUI refactor: add object manipulation
     GizmoObjectManipulation m_object_manipulation;
@@ -334,6 +335,13 @@ public:
     void update_after_undo_redo(const UndoRedo::Snapshot& snapshot);
 
     int get_selectable_icons_cnt() const { return get_selectable_idxs().size(); }
+
+    // Gizmos left off the icon bar so that it fits; menus and shortcuts still open them.
+    // Returns true if the set changed.
+    bool set_overflow_hidden(const std::vector<EType>& types);
+    bool is_selectable_ignoring_overflow(EType type) const;
+    // Icon bar width with icons of the given size if exactly these gizmos were left off for overflow.
+    float get_scaled_total_width_with_overflow(float icons_size, const std::vector<EType>& hidden) const;
 
     // To end highlight set gizmo = undefined
     void set_highlight(EType gizmo, bool highlight_shown) { m_highlight = std::pair<EType, bool>(gizmo, highlight_shown); }

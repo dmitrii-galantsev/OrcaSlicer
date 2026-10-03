@@ -107,9 +107,10 @@ GLToolbarItem::GLToolbarItem(GLToolbarItem::EType type, const GLToolbarItem::Dat
     render_left_pos = 0.0f;
 }
 
-bool GLToolbarItem::update_visibility()
+bool GLToolbarItem::update_visibility(bool overflow_hidden)
 {
-    bool visible = m_data.visibility_callback();
+    m_wanted = m_data.visibility_callback();
+    bool visible = m_wanted && !overflow_hidden;
     bool ret = (m_data.visible != visible);
     if (ret)
         m_data.visible = visible;
@@ -1589,24 +1590,75 @@ bool GLToolbar::update_items_visibility()
     bool ret = false;
 
     for (GLToolbarItem* item : m_items) {
-        ret |= item->update_visibility();
+        const bool hidden = std::find(m_overflow_hidden.begin(), m_overflow_hidden.end(), item->get_name()) != m_overflow_hidden.end();
+        ret |= item->update_visibility(hidden);
+    }
+
+    // updates separators visibility to avoid having two of them consecutive
+    bool any_item_visible = false;
+    GLToolbarItem* trailing_separator = nullptr;
+    std::vector<std::pair<GLToolbarItem*, bool>> separators;
+    for (GLToolbarItem* item : m_items) {
+        if (!item->is_separator()) {
+            any_item_visible |= item->is_visible();
+            if (item->is_visible())
+                trailing_separator = nullptr;
+        } else {
+            separators.emplace_back(item, any_item_visible);
+            if (any_item_visible)
+                trailing_separator = item;
+            any_item_visible = false;
+        }
+    }
+    for (auto& [separator, visible] : separators) {
+        // Overflow hiding can empty the group after the last separator.
+        if (separator == trailing_separator && !m_overflow_hidden.empty())
+            visible = false;
+        separator->set_visible(visible);
     }
 
     if (ret)
         m_layout.dirty = true;
 
-    // updates separators visibility to avoid having two of them consecutive
-    bool any_item_visible = false;
-    for (GLToolbarItem* item : m_items) {
-        if (!item->is_separator())
-            any_item_visible |= item->is_visible();
-        else {
-            item->set_visible(any_item_visible);
-            any_item_visible = false;
+    return ret;
+}
+
+bool GLToolbar::set_overflow_hidden(const std::vector<std::string>& names)
+{
+    if (names == m_overflow_hidden)
+        return false;
+    m_overflow_hidden = names;
+    update_items_visibility();
+    m_layout.dirty = true;
+    return true;
+}
+
+float GLToolbar::get_width_with_overflow(float icons_size, const std::vector<std::string>& hidden) const
+{
+    float size = 2.0f * m_layout.border;
+    for (const GLToolbarItem* item : m_items) {
+        if (item->is_separator()) {
+            if (item->is_visible())
+                size += m_layout.separator_size;
+        } else if (item->is_wanted() && std::find(hidden.begin(), hidden.end(), item->get_name()) == hidden.end()) {
+            size += icons_size;
+            if (item->is_action_with_text())
+                size += item->get_extra_size_ratio() * icons_size;
+            if (item->is_action_with_text_image())
+                size += m_layout.text_size;
         }
     }
+    if (m_items.size() > 1)
+        size += ((float)m_items.size() - 1.0f) * m_layout.gap_size;
+    return size * m_layout.scale;
+}
 
-    return ret;
+bool GLToolbar::is_item_wanted(const std::string& name) const
+{
+    for (const GLToolbarItem* item : m_items)
+        if (item->get_name() == name)
+            return item->is_wanted();
+    return false;
 }
 
 bool GLToolbar::update_items_enabled_state()
