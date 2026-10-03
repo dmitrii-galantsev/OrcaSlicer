@@ -583,6 +583,23 @@ private:
     Mouse m_mouse;
     // Orca: Gesture pans have their own lifecycle and stable world-space anchor.
     std::optional<Vec3d> m_gesture_pan_anchor;
+    // wxGTK turns the first finger of a touch into a synthesized left button. Once a second
+    // finger makes it a pinch, that button must stop rotating, selecting or dragging until it lifts.
+    struct TouchGesture
+    {
+        bool left_down{ false };
+        bool swallow_left{ false };
+        bool active{ false };
+        bool zooming{ false };
+        bool rotating{ false };
+        bool twist_engaged{ false };
+        double zoom_start{ 1.0 };
+        double twist_last{ 0.0 };
+        Vec2d last_center{ Vec2d::Zero() };
+        std::optional<Vec3d> pan_anchor;
+    };
+    TouchGesture m_touch;
+    bool m_touch_events_enabled{ false };
     GLGizmosManager m_gizmos;
     //BBS: GUI refactor: GLToolbar
     mutable GLToolbar m_main_toolbar;
@@ -1185,6 +1202,7 @@ public:
     void on_fps_overlay_timer(wxTimerEvent& evt);
     void on_mouse(wxMouseEvent& evt);
     void on_gesture(wxGestureEvent& evt);
+    void on_long_press(wxLongPressEvent& evt);
     void on_paint(wxPaintEvent& evt);
     void on_set_focus(wxFocusEvent& evt);
     void force_set_focus();
@@ -1500,6 +1518,9 @@ private:
     std::optional<Vec3d> get_camera_orbit_target(ECameraNavigationType navigation_type) const;
     Vec3d get_camera_pan_anchor(Camera& camera, ECameraNavigationType navigation_type,
         const Vec2d& screen_position) const;
+    void on_touch_gesture(wxGestureEvent& evt);
+    void end_touch_press(const Vec2d& fallback_position);
+    void zoom_camera_at(const Vec2d& screen_position, double zoom);
 
     void _start_timer() { m_timer.Start(100, wxTIMER_CONTINUOUS); }
     void _stop_timer() { m_timer.Stop(); }

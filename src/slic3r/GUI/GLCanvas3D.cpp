@@ -3421,7 +3421,21 @@ void GLCanvas3D::bind_event_handlers()
         m_canvas->Bind(wxEVT_GESTURE_PAN, &GLCanvas3D::on_gesture, this);
         m_canvas->Bind(wxEVT_GESTURE_ZOOM, &GLCanvas3D::on_gesture, this);
         m_canvas->Bind(wxEVT_GESTURE_ROTATE, &GLCanvas3D::on_gesture, this);
-        m_canvas->EnableTouchEvents(wxTOUCH_ZOOM_GESTURE | wxTOUCH_ROTATE_GESTURE);
+#ifdef __WXGTK__
+        m_canvas->Bind(wxEVT_LONG_PRESS, &GLCanvas3D::on_long_press, this);
+#endif
+        // wxGTK attaches a fresh set of GtkGestures on every call without dropping the old
+        // ones, and the canvases are rebound on every tab switch.
+        if (!m_touch_events_enabled) {
+#ifdef __WXGTK__
+            // No wxTOUCH_PAN_GESTURES: GTK's pan gesture tracks one finger or a held mouse
+            // button, so it would fire on every rotate. Two-finger pan comes from the pinch centre.
+            m_canvas->EnableTouchEvents(wxTOUCH_ZOOM_GESTURE | wxTOUCH_ROTATE_GESTURE | wxTOUCH_PRESS_GESTURES);
+#else
+            m_canvas->EnableTouchEvents(wxTOUCH_ZOOM_GESTURE | wxTOUCH_ROTATE_GESTURE);
+#endif
+            m_touch_events_enabled = true;
+        }
 #if __WXOSX__
         initGestures(m_canvas->GetHandle(), m_canvas); // for UIPanGestureRecognizer allowedScrollTypesMask
 #endif
@@ -3458,6 +3472,9 @@ void GLCanvas3D::unbind_event_handlers()
         m_canvas->Unbind(wxEVT_GESTURE_PAN, &GLCanvas3D::on_gesture, this);
         m_canvas->Unbind(wxEVT_GESTURE_ZOOM, &GLCanvas3D::on_gesture, this);
         m_canvas->Unbind(wxEVT_GESTURE_ROTATE, &GLCanvas3D::on_gesture, this);
+#ifdef __WXGTK__
+        m_canvas->Unbind(wxEVT_LONG_PRESS, &GLCanvas3D::on_long_press, this);
+#endif
 #if __WXOSX__
         initGestures(m_canvas->GetHandle(), nullptr);
 #endif
@@ -4212,6 +4229,11 @@ void GLCanvas3D::on_gesture(wxGestureEvent &evt)
     if (!m_initialized || !_set_current())
         return;
 
+    if (evt.GetEventType() != wxEVT_GESTURE_PAN && (m_touch.active || (evt.IsGestureStart() && m_touch.left_down))) {
+        on_touch_gesture(evt);
+        return;
+    }
+
     auto & camera = wxGetApp().plater()->get_camera();
     if (evt.GetEventType() == wxEVT_GESTURE_PAN) {
         // Orca: Gesture coordinates must use framebuffer pixels, and one stable world-space
@@ -4253,10 +4275,152 @@ void GLCanvas3D::on_gesture(wxGestureEvent &evt)
     m_dirty = true;
 }
 
+void GLCanvas3D::on_touch_gesture(wxGestureEvent& evt)
+{
+    const bool is_zoom = evt.GetEventType() == wxEVT_GESTURE_ZOOM;
+    bool& running = is_zoom ? m_touch.zooming : m_touch.rotating;
+    Vec2d center(evt.GetPosition().x, evt.GetPosition().y);
+    apply_retina_scale(center);
+    Camera& camera = wxGetApp().plater()->get_camera();
+
+    if (evt.IsGestureStart()) {
+        if (!m_touch.zooming && !m_touch.rotating) {
+            end_touch_press(center);
+            m_touch.active = true;
+            m_touch.last_center = center;
+            m_touch.pan_anchor.reset();
+            m_touch.zoom_start = camera.get_zoom();
+            m_touch.twist_engaged = false;
+        }
+        running = true;
+    } else if (running && is_zoom) {
+        if (!m_touch.pan_anchor.has_value())
+            m_touch.pan_anchor = get_camera_pan_anchor(camera, ECameraNavigationType::Gesture, m_touch.last_center);
+        pan_camera(camera, center - m_touch.last_center, *m_touch.pan_anchor);
+        m_touch.last_center = center;
+        zoom_camera_at(center, m_touch.zoom_start * static_cast<wxZoomGestureEvent&>(evt).GetZoomFactor());
+    } else if (running) {
+        // GTK reports the twist as [0, 2*pi) since the start, so a small counter-clockwise
+        // twist arrives as almost 2*pi.
+        const double angle = std::remainder(static_cast<wxRotateGestureEvent&>(evt).GetRotationAngle(), 2. * PI);
+        // Every pinch twists a little; only a deliberate twist turns the view.
+        constexpr double twist_dead_zone = 20. * PI / 180.;
+        if (!m_touch.twist_engaged && std::abs(angle) >= twist_dead_zone) {
+            m_touch.twist_engaged = true;
+            m_touch.twist_last = angle;
+        }
+        if (m_touch.twist_engaged) {
+            const double delta = std::remainder(angle - m_touch.twist_last, 2. * PI);
+            m_touch.twist_last = angle;
+            const bool rotate_limit = current_printer_technology() != ptSLA;
+            const std::optional<Vec3d> rotate_target = get_camera_orbit_target(ECameraNavigationType::Gesture);
+            if (rotate_target.has_value())
+                camera.rotate_on_sphere_with_target(-delta, 0, rotate_limit, *rotate_target);
+            else
+                camera.rotate_on_sphere(-delta, 0, rotate_limit);
+            camera.auto_type(Camera::EType::Perspective);
+        }
+    }
+
+    if (evt.IsGestureEnd()) {
+        running = false;
+        if (!m_touch.zooming && !m_touch.rotating) {
+            m_touch.active = false;
+            m_touch.pan_anchor.reset();
+        }
+    }
+    m_dirty = true;
+}
+
+// Finishes whatever the first finger's synthesized press started (gizmo drag, object move,
+// ImGui press) without the click side effects of a release, and ignores that finger until it lifts.
+void GLCanvas3D::end_touch_press(const Vec2d& fallback_position)
+{
+    if (m_touch.swallow_left)
+        return;
+    m_touch.swallow_left = true;
+
+    Vec2d position = m_mouse.position;
+    if (position.x() < 0. || position.y() < 0. || position.x() == DBL_MAX)
+        position = fallback_position;
+#if ENABLE_RETINA_GL
+    position /= static_cast<double>(m_retina_helper->get_scale_factor());
+#endif
+    wxMouseEvent up(wxEVT_LEFT_UP);
+    up.SetEventObject(m_canvas);
+    up.SetPosition(wxPoint(std::lround(position.x()), std::lround(position.y())));
+    m_mouse.ignore_left_up = true;
+    on_mouse(up);
+}
+
+void GLCanvas3D::zoom_camera_at(const Vec2d& screen_position, double zoom)
+{
+    Camera& camera = wxGetApp().plater()->get_camera();
+    const Size cnv_size = get_canvas_size();
+    float z{ 0.f };
+    const Vec3d displacement = _mouse_to_3d({ screen_position.x(), screen_position.y() }, &z) -
+        _mouse_to_3d({ cnv_size.get_width() * 0.5, cnv_size.get_height() * 0.5 }, &z);
+    const double old_zoom = camera.get_zoom();
+    camera.translate(displacement);
+    camera.set_zoom(zoom);
+    camera.translate(-displacement * (old_zoom / camera.get_zoom()));
+    m_dirty = true;
+}
+
+void GLCanvas3D::on_long_press(wxLongPressEvent& evt)
+{
+    // GTK also reports a held left mouse button as a long press; only a finger opens the menu.
+    if (!m_initialized || !m_touch.left_down || m_touch.swallow_left || m_touch.active)
+        return;
+    if (m_gizmos.get_current_type() != GLGizmosManager::Undefined || m_gizmos.is_dragging() ||
+        m_rectangle_selection.is_dragging() || m_layers_editing.state == LayersEditing::Editing)
+        return;
+    if (!_set_current())
+        return;
+
+    Vec2d position(evt.GetPosition().x, evt.GetPosition().y);
+    apply_retina_scale(position);
+    end_touch_press(position);
+    for (const wxEventType type : { wxEVT_RIGHT_DOWN, wxEVT_RIGHT_UP }) {
+        wxMouseEvent click(type);
+        click.SetEventObject(m_canvas);
+        click.SetPosition(evt.GetPosition());
+        click.SetRightDown(type == wxEVT_RIGHT_DOWN);
+        on_mouse(click);
+    }
+}
+
 void GLCanvas3D::on_mouse(wxMouseEvent& evt)
 {
     if (!m_initialized || !_set_current())
         return;
+
+    if (evt.IsSynthesized()) {
+        if (evt.LeftDown() || evt.LeftDClick()) {
+            m_touch = TouchGesture();
+            m_touch.left_down = true;
+            // wxGTK synthesizes the press without a motion first, so the hovered volume and
+            // ImGui item would still be the ones under the previous touch.
+            Vec2d position(evt.GetX(), evt.GetY());
+            apply_retina_scale(position);
+            if (position != m_mouse.position) {
+                wxMouseEvent move(wxEVT_MOTION);
+                move.SetEventObject(evt.GetEventObject());
+                move.SetPosition(evt.GetPosition());
+                on_mouse(move);
+                m_mouse.position = position;
+                render();
+            }
+        } else if (evt.LeftUp()) {
+            m_touch.left_down = false;
+            if (m_touch.swallow_left) {
+                m_touch.swallow_left = false;
+                return;
+            }
+        } else if (m_touch.swallow_left)
+            return;
+    } else if (evt.ButtonDown())
+        m_touch.left_down = false;
 
     // BBS: single snapshot
     Plater::SingleSnapshot single(wxGetApp().plater());
