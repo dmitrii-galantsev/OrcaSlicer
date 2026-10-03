@@ -2299,8 +2299,8 @@ void GLCanvas3D::_render_frame(bool scene_dirty, bool only_init)
             int dpi = get_dpi_for_window(wxGetApp().GetTopWindow());
             scale_factor *= (float) dpi / (float) DPI_DEFAULT;
 #endif // WIN32
-            right_margin = SLIDER_RIGHT_MARGIN * scale_factor * GCODE_VIEWER_SLIDER_SCALE;
-            bottom_margin = SLIDER_BOTTOM_MARGIN * scale_factor * GCODE_VIEWER_SLIDER_SCALE;
+            right_margin = SLIDER_RIGHT_MARGIN * scale_factor * gcode_viewer_slider_scale();
+            bottom_margin = SLIDER_BOTTOM_MARGIN * scale_factor * gcode_viewer_slider_scale();
         }
         wxGetApp().plater()->get_notification_manager()->render_notifications(*this, get_overlay_window_width(), bottom_margin, right_margin);
         wxGetApp().plater()->get_dailytips()->render();
@@ -9264,7 +9264,7 @@ void GLCanvas3D::_render_gcode(int canvas_width, int canvas_height)
 
 void GLCanvas3D::_render_gcode_overlay(int canvas_width, int canvas_height)
 {
-    m_gcode_viewer.render_overlay(canvas_width, canvas_height, SLIDER_RIGHT_MARGIN * GCODE_VIEWER_SLIDER_SCALE);
+    m_gcode_viewer.render_overlay(canvas_width, canvas_height, SLIDER_RIGHT_MARGIN * gcode_viewer_slider_scale());
     IMSlider *layers_slider = m_gcode_viewer.get_layers_slider();
     IMSlider *moves_slider  = m_gcode_viewer.get_moves_slider();
 
@@ -9329,8 +9329,8 @@ void GLCanvas3D::_check_and_update_toolbar_icon_scale()
         sc *= (float) dpi / (float) DPI_DEFAULT;
 #endif // WIN32
 
-        m_layers_slider->set_scale(sc * GCODE_VIEWER_SLIDER_SCALE);
-        m_moves_slider->set_scale(sc * GCODE_VIEWER_SLIDER_SCALE);
+        m_layers_slider->set_scale(sc * gcode_viewer_slider_scale());
+        m_moves_slider->set_scale(sc * gcode_viewer_slider_scale());
         m_gcode_viewer.set_scale(sc);
 
         auto *m_notification = wxGetApp().plater()->get_notification_manager();

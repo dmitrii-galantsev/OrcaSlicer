@@ -45,6 +45,8 @@ class PartPlateList;
 class OpenGLManager;
 
 static const float GCODE_VIEWER_SLIDER_SCALE = 0.6f;
+// GCODE_VIEWER_SLIDER_SCALE, or full size when touch input is on.
+float gcode_viewer_slider_scale();
 static const float SLIDER_DEFAULT_RIGHT_MARGIN  = 10.0f;
 static const float SLIDER_DEFAULT_BOTTOM_MARGIN = 10.0f;
 // ORCA: match right margin to the vertical slider window width to prevent overlap.

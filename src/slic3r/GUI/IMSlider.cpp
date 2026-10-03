@@ -60,6 +60,13 @@ static const ImU32 GROOVE_COLOR_DARK      = IM_COL32(45, 45, 49, 255);
 static const ImU32 GROOVE_COLOR_LIGHT     = IM_COL32(206, 206, 206, 255);
 static const ImU32 BRAND_COLOR            = IM_COL32(0, 150, 136, 255);
 
+// Thumb radius at scale 1. A finger needs a thumb about 36 px across.
+static float handle_radius_px()
+{
+    const AppConfig* cfg = wxGetApp().app_config;
+    return cfg != nullptr && cfg->get_bool("touch_input") ? 18.0f : 12.0f;
+}
+
 static int m_tick_value = -1;
 static ImVec4 m_tick_rect;
 
@@ -527,7 +534,7 @@ bool IMSlider::horizontal_slider(const char* str_id, int* value, int v_min, int 
     const float  handle_dummy_width  = 10.0f * m_scale;
     const float  text_right_dummy    = 70.0f * scale * m_scale;
 
-    const float  handle_radius       = 12.0f * m_scale;
+    const float  handle_radius       = handle_radius_px() * m_scale;
     const float  handle_border       = 2.0f * m_scale;
     const float  text_start_offset   = 8.0f * m_scale;
     const ImVec2 text_padding        = ImVec2(5.0f, 2.0f) * m_scale;
@@ -918,7 +925,7 @@ bool IMSlider::vertical_slider(const char* str_id, int* higher_value, int* lower
 
     const float  text_dummy_height   = 60.0f * scale * m_scale;
 
-    const float  handle_radius       = 12.0f * m_scale;
+    const float  handle_radius       = handle_radius_px() * m_scale;
     const float  handle_border       = 2.0f * m_scale;
     const float  line_width          = 1.0f * m_scale;
     const float  line_length         = 12.0f * m_scale;
@@ -952,7 +959,7 @@ bool IMSlider::vertical_slider(const char* str_id, int* higher_value, int* lower
     // ORCA: tune label box width to fit the slider window without overlapping the groove.
     const float label_width_margin = 10.0f * m_scale;
     const float max_label_width = std::max(0.0f,
-        groove.Min.x - draw_region.Min.x - label_width_margin * 2.0f - text_padding.x * 2.0f);
+        groove.Min.x - draw_region.Min.x - label_width_margin * 2.0f - text_padding.x * 2.0f - (handle_radius - 12.0f * m_scale));
 
     // Processing interacting
     // set scrollable region

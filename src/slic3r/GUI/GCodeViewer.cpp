@@ -1872,10 +1872,16 @@ void GCodeViewer::render_overlay(int canvas_width, int canvas_height, int right_
     render_slider(canvas_width, canvas_height);
 }
 
+float gcode_viewer_slider_scale()
+{
+    const AppConfig* cfg = wxGetApp().app_config;
+    return cfg != nullptr && cfg->get_bool("touch_input") ? 1.0f : GCODE_VIEWER_SLIDER_SCALE;
+}
+
 int GCodeViewer::sequential_view_height(int canvas_height) const
 {
     //BBS fixed bottom_margin for space to render horiz slider
-    const int bottom_margin = SLIDER_BOTTOM_MARGIN * GCODE_VIEWER_SLIDER_SCALE;
+    const int bottom_margin = SLIDER_BOTTOM_MARGIN * gcode_viewer_slider_scale();
     // BBS fixed buttom margin. m_moves_slider.pos_y
     return canvas_height - bottom_margin * m_scale;
 }
