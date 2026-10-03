@@ -344,6 +344,12 @@ bool ExtrusionLoop::has_overhang_point(const Point &point) const
     return false;
 }
 
+bool ExtrusionLoop::has_overhang_paths() const
+{
+    return std::any_of(this->paths.begin(), this->paths.end(),
+                       [](const ExtrusionPath &path) { return is_bridge(path.role()) || path.overhang_degree >= 1; });
+}
+
 void ExtrusionLoop::polygons_covered_by_width(Polygons &out, const float scaled_epsilon) const
 {
     for (const ExtrusionPath &path : this->paths)

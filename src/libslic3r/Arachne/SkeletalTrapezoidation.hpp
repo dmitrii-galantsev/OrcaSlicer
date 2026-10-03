@@ -69,6 +69,7 @@ class SkeletalTrapezoidation
     coord_t transition_filter_dist; //!< Filter transition mids (i.e. anchors) closer together than this
     coord_t allowed_filter_deviation; //!< The allowed line width deviation induced by filtering
     coord_t beading_propagation_transition_dist; //!< When there are different beadings propagated from below and from above, use this transitioning distance
+    std::vector<bool> circle_compensated_polys; //!< Per input polygon: walls around it get the circle compensation flag
     //!< Filter areas marked as 'central' smaller than this
     inline coord_t central_filter_dist() { return scaled<coord_t>(0.02); }
     //!< Generic arithmatic inaccuracy. Only used to determine whether a transition really needs to insert an extra edge.
@@ -111,7 +112,8 @@ public:
     , coord_t discretization_step_size
     , coord_t transition_filter_dist
     , coord_t allowed_filter_deviation
-    , coord_t beading_propagation_transition_dist);
+    , coord_t beading_propagation_transition_dist
+    , const std::vector<bool> &circle_compensated_polys = {});
 
     /*!
      * A skeletal graph through the polygons that we need to fill with beads.
@@ -183,7 +185,7 @@ protected:
      * Transfer an edge from the VD to the HE and perform discretization of parabolic edges (and vertex-vertex edges)
      * \p prev_edge serves as input and output. May be null as input.
      */
-    void transferEdge(const Point &from, const Point &to, const VD::edge_type &vd_edge, edge_t *&prev_edge, const Point &start_source_point, const Point &end_source_point, const std::vector<Segment> &segments);
+    void transferEdge(const Point &from, const Point &to, const VD::edge_type &vd_edge, edge_t *&prev_edge, const Point &start_source_point, const Point &end_source_point, const std::vector<Segment> &segments, bool circle_compensation = false);
 
     /*!
      * Discretize a Voronoi edge that represents the medial axis of a vertex-

@@ -204,6 +204,9 @@ struct ExtrusionLine
      * */
     static int64_t calculateExtrusionAreaDeviationError(ExtrusionJunction A, ExtrusionJunction B, ExtrusionJunction C);
 
+    // More than threshold of the length runs between circle compensation junctions.
+    bool is_circle_compensated(double threshold = 0.8) const;
+
     bool is_contour() const;
 
     double area() const;

@@ -1,5 +1,6 @@
 #include "Layer.hpp"
 #include "ClipperUtils.hpp"
+#include "CircleCompensation.hpp"
 #include "Print.hpp"
 #include "Fill/Fill.hpp"
 #include "ShortestPath.hpp"
@@ -32,6 +33,19 @@ LayerRegion* Layer::add_region(const PrintRegion *print_region)
 {
     m_regions.emplace_back(new LayerRegion(this, print_region));
     return m_regions.back();
+}
+
+void Layer::apply_circle_compensation()
+{
+    const PrintObject &object       = *this->object();
+    const double       manual_offset = object.config().circle_compensation_manual_offset.value;
+    for (LayerRegion *layerm : m_regions) {
+        const PrintRegionConfig &region_config = layerm->region().config();
+        const size_t filament_idx = size_t(std::max(1, region_config.outer_wall_filament_id.value) - 1);
+        const CircleCompensationParams params = CircleCompensationParams::from_config(object.print()->config(), filament_idx);
+        for (Surface &surface : layerm->slices.surfaces)
+            Slic3r::apply_circle_compensation(surface, params, manual_offset, region_config.hole_to_polyhole.value);
+    }
 }
 
 // merge all regions' slices to get islands
@@ -72,11 +86,33 @@ static inline bool layer_needs_raw_backup(const Layer *layer)
     return true;
 }
 
+static void backup_circle_compensation(LayerRegion &layerm)
+{
+    layerm.raw_counter_circle_compensation.clear();
+    layerm.raw_holes_circle_compensation.clear();
+    for (const Surface &surface : layerm.slices.surfaces) {
+        layerm.raw_counter_circle_compensation.push_back(surface.counter_circle_compensation);
+        layerm.raw_holes_circle_compensation.push_back(surface.holes_circle_compensation);
+    }
+}
+
+static void restore_circle_compensation(LayerRegion &layerm)
+{
+    if (layerm.raw_counter_circle_compensation.size() != layerm.slices.surfaces.size())
+        return;
+    for (size_t i = 0; i < layerm.slices.surfaces.size(); ++i) {
+        layerm.slices.surfaces[i].counter_circle_compensation = layerm.raw_counter_circle_compensation[i];
+        layerm.slices.surfaces[i].holes_circle_compensation   = layerm.raw_holes_circle_compensation[i];
+    }
+}
+
 void Layer::backup_untyped_slices()
 {
     if (layer_needs_raw_backup(this)) {
-        for (LayerRegion *layerm : m_regions)
+        for (LayerRegion *layerm : m_regions) {
             layerm->raw_slices = to_expolygons(layerm->slices.surfaces);
+            backup_circle_compensation(*layerm);
+        }
     } else {
         assert(m_regions.size() == 1);
         m_regions.front()->raw_slices.clear();
@@ -86,8 +122,10 @@ void Layer::backup_untyped_slices()
 void Layer::restore_untyped_slices()
 {
     if (layer_needs_raw_backup(this)) {
-        for (LayerRegion *layerm : m_regions)
+        for (LayerRegion *layerm : m_regions) {
             layerm->slices.set(layerm->raw_slices, stInternal);
+            restore_circle_compensation(*layerm);
+        }
     } else {
         assert(m_regions.size() == 1);
         m_regions.front()->slices.set(this->lslices, stInternal);

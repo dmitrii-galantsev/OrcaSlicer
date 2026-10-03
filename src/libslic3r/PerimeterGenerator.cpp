@@ -42,11 +42,13 @@ public:
     bool is_smaller_width_perimeter;
     // Depth in the hierarchy. External perimeter has depth = 0. An external perimeter could be both a contour and a hole.
     unsigned short                      depth;
+    // Wall of a circle resized by the auto circle contour-hole compensation.
+    bool                                circle_compensation;
     // Children contour, may be both CCW and CW oriented (outer contours or holes).
     std::vector<PerimeterGeneratorLoop> children;
 
-    PerimeterGeneratorLoop(const Polygon &polygon, unsigned short depth, bool is_contour, bool is_small_width_perimeter = false) :
-        polygon(polygon), is_contour(is_contour), is_smaller_width_perimeter(is_small_width_perimeter), depth(depth) {}
+    PerimeterGeneratorLoop(const Polygon &polygon, unsigned short depth, bool is_contour, bool is_small_width_perimeter = false, bool circle_compensation = false) :
+        polygon(polygon), is_contour(is_contour), is_smaller_width_perimeter(is_small_width_perimeter), depth(depth), circle_compensation(circle_compensation) {}
     // External perimeter. It may be CCW or CW oriented (outer contour or hole contour).
     bool is_external() const { return this->depth == 0; }
     // An island, which may have holes, but it does not have another internal island.
@@ -225,7 +227,9 @@ static ExtrusionEntityCollection traverse_loops(const PerimeterGenerator &perime
             paths.emplace_back(std::move(path));
         }
 
-        coll.append(ExtrusionLoop(std::move(paths), loop_role));
+        ExtrusionLoop extrusion_loop(std::move(paths), loop_role);
+        extrusion_loop.circle_compensation = loop.circle_compensation;
+        coll.append(std::move(extrusion_loop));
     }
 
     // Append thin walls to the nearest-neighbor search (only for first iteration)
@@ -400,6 +404,7 @@ static ExtrusionEntityCollection traverse_extrusions(const PerimeterGenerator& p
         ExtrusionRole role = is_external ? erExternalPerimeter : erPerimeter;
 
         const bool  is_contour = !extrusion->is_closed || pg_extrusion.is_contour;
+        const bool  circle_compensation = extrusion->is_closed && extrusion->is_circle_compensated();
         apply_fuzzy_skin(extrusion, perimeter_generator, is_contour, extrusion->is_closed);
 
         ExtrusionPaths paths;
@@ -543,6 +548,7 @@ static ExtrusionEntityCollection traverse_extrusions(const PerimeterGenerator& p
             if (extrusion->is_closed) {
                 ExtrusionLoop extrusion_loop(std::move(paths), pg_extrusion.is_contour ? elrDefault : elrHole);
                 extrusion_loop.inset_idx = extrusion->inset_idx;
+                extrusion_loop.circle_compensation = circle_compensation;
                 if ((perimeter_generator.config->wall_direction == WallDirection::CounterClockwise) ==
                     (pg_extrusion.is_contour || pg_extrusions.size() == 2))
                     extrusion_loop.make_counter_clockwise();
@@ -1475,6 +1481,19 @@ void PerimeterGenerator::process_classic()
             loop_number = 0;
 
         ExPolygons last        = union_ex(surface.expolygon.simplify_p(surface_simplify_resolution));
+        const bool counter_circle_compensation = surface.counter_circle_compensation && last.size() == 1;
+        // Inner walls of a compensated hole share its centroid; match within 1 um as BambuStudio does.
+        Points compensated_hole_centers;
+        for (int hole_idx : surface.holes_circle_compensation)
+            if (hole_idx >= 0 && size_t(hole_idx) < surface.expolygon.holes.size())
+                compensated_hole_centers.emplace_back(surface.expolygon.holes[hole_idx].centroid());
+        auto is_compensated_hole = [&compensated_hole_centers](const Polygon &hole) {
+            if (compensated_hole_centers.empty())
+                return false;
+            const Point c = hole.centroid();
+            return std::any_of(compensated_hole_centers.begin(), compensated_hole_centers.end(),
+                               [&c](const Point &center) { return (center - c).cast<double>().norm() < 1000.; });
+        };
         ExPolygons gaps;
         ExPolygons top_fills;
         ExPolygons fill_clip;
@@ -1597,23 +1616,23 @@ void PerimeterGenerator::process_classic()
                         // outer contour may overlap with itself.
                         //FIXME evaluate the overlaps, annotate each point with an overlap depth,
                         // compensate for the depth of intersection.
-                        contours[i].emplace_back(expolygon.contour, i, true);
+                        contours[i].emplace_back(expolygon.contour, i, true, false, counter_circle_compensation);
 
                         if (!expolygon.holes.empty()) {
                             holes[i].reserve(holes[i].size() + expolygon.holes.size());
                             for (const Polygon& hole : expolygon.holes)
-                                holes[i].emplace_back(hole, i, false);
+                                holes[i].emplace_back(hole, i, false, false, is_compensated_hole(hole));
                         }
                     }
 
                     //BBS: save perimeter loop which use smaller width
                     if (i == 0) {
                         for (const ExPolygon& expolygon : offsets_with_smaller_width) {
-                            contours[i].emplace_back(PerimeterGeneratorLoop(expolygon.contour, i, true, true));
+                            contours[i].emplace_back(PerimeterGeneratorLoop(expolygon.contour, i, true, true, counter_circle_compensation));
                             if (!expolygon.holes.empty()) {
                                 holes[i].reserve(holes[i].size() + expolygon.holes.size());
                                 for (const Polygon& hole : expolygon.holes)
-                                    holes[i].emplace_back(PerimeterGeneratorLoop(hole, i, false, true));
+                                    holes[i].emplace_back(PerimeterGeneratorLoop(hole, i, false, true, is_compensated_hole(hole)));
                             }
                         }
                     }
@@ -2517,8 +2536,15 @@ void PerimeterGenerator::process_arachne()
         Arachne::WallToolPathsParams input_params_tmp = input_params;
         
         Polygons   last_p = to_polygons(last);
+        std::vector<std::pair<Point, bool>> compensated_circles;
+        if (surface.counter_circle_compensation)
+            compensated_circles.emplace_back(surface.expolygon.contour.centroid(), false);
+        for (int hole_idx : surface.holes_circle_compensation)
+            if (hole_idx >= 0 && size_t(hole_idx) < surface.expolygon.holes.size())
+                compensated_circles.emplace_back(surface.expolygon.holes[hole_idx].centroid(), true);
         Arachne::WallToolPaths wallToolPaths(last_p, bead_width_0, perimeter_spacing, coord_t(loop_number + 1),
                                                wall_0_inset, layer_height, input_params_tmp);
+        wallToolPaths.set_compensated_circles(compensated_circles);
         std::vector<Arachne::VariableWidthLines>   perimeters = wallToolPaths.getToolPaths();
         ExPolygons  infill_contour = union_ex(wallToolPaths.getInnerContour());
 
@@ -2596,6 +2622,7 @@ void PerimeterGenerator::process_arachne()
                 // There is no top surface ExPolygon, so we call Arachne again with parameters
                 // like when the single perimeter feature is disabled.
                 Arachne::WallToolPaths no_single_perimeter_tool_paths(last_p, bead_width_0, perimeter_spacing, coord_t(inner_loop_number + 2), wall_0_inset, layer_height, input_params_tmp);
+                no_single_perimeter_tool_paths.set_compensated_circles(compensated_circles);
                 perimeters     = no_single_perimeter_tool_paths.getToolPaths();
                 infill_contour = union_ex(no_single_perimeter_tool_paths.getInnerContour());
             }

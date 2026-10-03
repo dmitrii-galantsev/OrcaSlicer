@@ -110,7 +110,7 @@ SkeletalTrapezoidation::node_t &SkeletalTrapezoidation::makeNode(const VD::verte
     }
 }
 
-void SkeletalTrapezoidation::transferEdge(const Point &from, const Point &to, const VD::edge_type &vd_edge, edge_t *&prev_edge, const Point &start_source_point, const Point &end_source_point, const std::vector<Segment> &segments) {
+void SkeletalTrapezoidation::transferEdge(const Point &from, const Point &to, const VD::edge_type &vd_edge, edge_t *&prev_edge, const Point &start_source_point, const Point &end_source_point, const std::vector<Segment> &segments, bool circle_compensation) {
     auto he_edge_it = vd_edge_to_he_edge.find(vd_edge.twin());
     if (he_edge_it != vd_edge_to_he_edge.end())
     { // Twin segment(s) have already been made
@@ -134,7 +134,8 @@ void SkeletalTrapezoidation::transferEdge(const Point &from, const Point &to, co
             edge->twin = twin;
             twin->twin = edge;
             edge->from->incident_edge = edge;
-            
+            edge->data.setCircleCompensation(circle_compensation);
+
             if (prev_edge)
             {
                 edge->prev = prev_edge;
@@ -197,7 +198,8 @@ void SkeletalTrapezoidation::transferEdge(const Point &from, const Point &to, co
             edge->from = v0;
             edge->to = v1;
             edge->from->incident_edge = edge;
-            
+            edge->data.setCircleCompensation(circle_compensation);
+
             if (prev_edge)
             {
                 edge->prev = prev_edge;
@@ -332,12 +334,14 @@ Points SkeletalTrapezoidation::discretize(const VD::edge_type& vd_edge, const st
 SkeletalTrapezoidation::SkeletalTrapezoidation(const Polygons& polys, const BeadingStrategy& beading_strategy,
                                                double transitioning_angle, coord_t discretization_step_size,
                                                coord_t transition_filter_dist, coord_t allowed_filter_deviation,
-                                               coord_t beading_propagation_transition_dist
+                                               coord_t beading_propagation_transition_dist,
+                                               const std::vector<bool> &circle_compensated_polys
     ): transitioning_angle(transitioning_angle),
     discretization_step_size(discretization_step_size),
     transition_filter_dist(transition_filter_dist),
     allowed_filter_deviation(allowed_filter_deviation),
     beading_propagation_transition_dist(beading_propagation_transition_dist),
+    circle_compensated_polys(circle_compensated_polys),
     beading_strategy(beading_strategy)
 {
     constructFromPolygons(polys);
@@ -394,6 +398,7 @@ void SkeletalTrapezoidation::constructFromPolygons(const Polygons& polys)
         const VD::edge_type *starting_voronoi_edge = nullptr;
         const VD::edge_type *ending_voronoi_edge   = nullptr;
         // Compute and store result in above variables
+        size_t source_poly_idx = 0;
 
         if (cell.contains_point()) {
             Geometry::PointCellRange<Point> cell_range = Geometry::VoronoiUtils::compute_point_cell_range(cell, segments.cbegin(), segments.cend());
@@ -404,6 +409,8 @@ void SkeletalTrapezoidation::constructFromPolygons(const Polygons& polys)
 
             if (!cell_range.is_valid())
                 continue;
+            if (!circle_compensated_polys.empty())
+                source_poly_idx = Geometry::VoronoiUtils::get_source_point_index(cell, segments.cbegin(), segments.cend()).poly_idx;
         } else {
             assert(cell.contains_segment());
             Geometry::SegmentCellRange<Point> cell_range = Geometry::VoronoiUtils::compute_segment_cell_range(cell, segments.cbegin(), segments.cend());
@@ -412,7 +419,10 @@ void SkeletalTrapezoidation::constructFromPolygons(const Polygons& polys)
             end_source_point      = cell_range.source_segment_end_point;
             starting_voronoi_edge = cell_range.edge_begin;
             ending_voronoi_edge   = cell_range.edge_end;
+            if (!circle_compensated_polys.empty())
+                source_poly_idx = Geometry::VoronoiUtils::get_source_segment(cell, segments.cbegin(), segments.cend()).poly_idx;
         }
+        const bool circle_compensation = source_poly_idx < circle_compensated_polys.size() && circle_compensated_polys[source_poly_idx];
 
         if (!starting_voronoi_edge || !ending_voronoi_edge) {
             assert(false && "Each cell should start / end in a polygon vertex");
@@ -422,7 +432,7 @@ void SkeletalTrapezoidation::constructFromPolygons(const Polygons& polys)
         // Copy start to end edge to graph
         assert(Geometry::VoronoiUtils::is_in_range<coord_t>(*starting_voronoi_edge));
         edge_t *prev_edge = nullptr;
-        transferEdge(start_source_point, Geometry::VoronoiUtils::to_point(starting_voronoi_edge->vertex1()).cast<coord_t>(), *starting_voronoi_edge, prev_edge, start_source_point, end_source_point, segments);
+        transferEdge(start_source_point, Geometry::VoronoiUtils::to_point(starting_voronoi_edge->vertex1()).cast<coord_t>(), *starting_voronoi_edge, prev_edge, start_source_point, end_source_point, segments, circle_compensation);
         node_t *starting_node                    = vd_node_to_he_node[starting_voronoi_edge->vertex0()];
         starting_node->data.distance_to_boundary = 0;
 
@@ -433,11 +443,11 @@ void SkeletalTrapezoidation::constructFromPolygons(const Polygons& polys)
 
             Point v1 = Geometry::VoronoiUtils::to_point(vd_edge->vertex0()).cast<coord_t>();
             Point v2 = Geometry::VoronoiUtils::to_point(vd_edge->vertex1()).cast<coord_t>();
-            transferEdge(v1, v2, *vd_edge, prev_edge, start_source_point, end_source_point, segments);
+            transferEdge(v1, v2, *vd_edge, prev_edge, start_source_point, end_source_point, segments, circle_compensation);
             graph.makeRib(prev_edge, start_source_point, end_source_point);
         }
 
-        transferEdge(Geometry::VoronoiUtils::to_point(ending_voronoi_edge->vertex0()).cast<coord_t>(), end_source_point, *ending_voronoi_edge, prev_edge, start_source_point, end_source_point, segments);
+        transferEdge(Geometry::VoronoiUtils::to_point(ending_voronoi_edge->vertex0()).cast<coord_t>(), end_source_point, *ending_voronoi_edge, prev_edge, start_source_point, end_source_point, segments, circle_compensation);
         prev_edge->to->data.distance_to_boundary = 0;
     }
 
@@ -1802,7 +1812,7 @@ void SkeletalTrapezoidation::generateJunctions(ptr_vector_t<BeadingPropagation>&
             { // Snap to start node if it is really close, in order to be able to see 3-way intersection later on more robustly
                 junction = a;
             }
-            ret.emplace_back(junction, beading->bead_widths[junction_idx], junction_idx);
+            ret.emplace_back(junction, beading->bead_widths[junction_idx], junction_idx, edge->data.getCircleCompensation());
         }
     }
 }

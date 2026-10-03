@@ -94,6 +94,8 @@ set(lisbslic3r_sources
     calib.hpp
     Circle.cpp
     Circle.hpp
+    CircleCompensation.cpp
+    CircleCompensation.hpp
     ClipperUtils.cpp
     ClipperUtils.hpp
     ClipperZUtils.cpp

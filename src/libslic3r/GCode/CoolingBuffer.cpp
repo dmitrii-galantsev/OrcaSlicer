@@ -362,6 +362,8 @@ std::vector<PerExtruderAdjustments> CoolingBuffer::parse_layer_gcode(const std::
     // Orca: Whether we had our first extrusion in this layer.
     // Time of any other movements before the first extrusion will be excluded from the layer time.
     bool layer_had_extrusion = false;
+    // Inside "; Slow Down Start/End": walls of compensated circles keep their speed.
+    bool circle_compensation = false;
 
     for (; *line_start != 0; line_start = line_end)
     {
@@ -433,7 +435,7 @@ std::vector<PerExtruderAdjustments> CoolingBuffer::parse_layer_gcode(const std::
             
             // ORCA: Dont slowdown external perimeters for layer time works by not marking the external perimeter as adjustable, 
             // hence the slowdown algorithm ignores it.
-            if (boost::contains(sline, ";_EXTRUDE_SET_SPEED") && ! wipe && adjust_external) {
+            if (boost::contains(sline, ";_EXTRUDE_SET_SPEED") && ! wipe && adjust_external && ! circle_compensation) {
                 line.type |= CoolingLine::TYPE_ADJUSTABLE;
                 active_speed_modifier = adjustment->lines.size();
             }
@@ -493,6 +495,10 @@ std::vector<PerExtruderAdjustments> CoolingBuffer::parse_layer_gcode(const std::
                 }
             }
             current_pos = std::move(new_pos);
+        } else if (boost::starts_with(sline, "; Slow Down Start")) {
+            circle_compensation = true;
+        } else if (boost::starts_with(sline, "; Slow Down End")) {
+            circle_compensation = false;
         } else if (boost::starts_with(sline, ";_EXTRUDE_END")) {
             line.type = CoolingLine::TYPE_EXTRUDE_END;
             active_speed_modifier = size_t(-1);

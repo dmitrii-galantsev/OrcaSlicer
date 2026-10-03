@@ -3113,6 +3113,53 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionPercents{ 100 });
 
+    // Coefficients of BambuStudio's auto circle contour-hole compensation. For a circle of diameter D printed with
+    // this filament the radial offset is coef_1 * speed + coef_2 * D + coef_3, clamped to [limit_min, limit_max].
+    def = this->add("circle_compensation_speed", coFloats);
+    def->label = L("Circle compensation speed");
+    def->tooltip = L("Speed of the walls of compensated circles smaller than the diameter limit, when auto circle "
+                     "contour-hole compensation is on. It is also the speed term of the compensation formula.");
+    def->sidetext = L("mm/s");
+    def->min = 0;
+    def->mode = comExpert;
+    def->set_default_value(new ConfigOptionFloats{200});
+
+    auto add_circle_coef = [this](const char *key, const char *label, const char *tooltip, const char *sidetext, double value) {
+        ConfigOptionDef *def = this->add(key, coFloats);
+        def->label    = label;
+        def->tooltip  = tooltip;
+        def->sidetext = sidetext;
+        def->mode     = comExpert;
+        def->set_default_value(new ConfigOptionFloats{value});
+    };
+    add_circle_coef("counter_coef_1", L("Contour speed coefficient"),
+                    L("Speed coefficient of the radial offset of round outer contours, multiplied by the circle compensation speed. "
+                      "The offset is speed coefficient × speed + diameter coefficient × diameter + constant, clamped to the contour limits; "
+                      "positive values make the contour bigger."), "", 0.);
+    add_circle_coef("counter_coef_2", L("Contour diameter coefficient"),
+                    L("Diameter coefficient of the radial offset of round outer contours, multiplied by the contour diameter in mm."), "", 0.025);
+    add_circle_coef("counter_coef_3", L("Contour constant"),
+                    L("Constant term of the radial offset of round outer contours."), L("mm"), -0.11);
+    add_circle_coef("hole_coef_1", L("Hole speed coefficient"),
+                    L("Speed coefficient of the radial offset of round holes, multiplied by the circle compensation speed. "
+                      "The offset is speed coefficient × speed + diameter coefficient × diameter + constant, clamped to the hole limits; "
+                      "positive values make the hole bigger."), "", 0.);
+    add_circle_coef("hole_coef_2", L("Hole diameter coefficient"),
+                    L("Diameter coefficient of the radial offset of round holes, multiplied by the hole diameter in mm."), "", -0.025);
+    add_circle_coef("hole_coef_3", L("Hole constant"),
+                    L("Constant term of the radial offset of round holes."), L("mm"), 0.28);
+    add_circle_coef("counter_limit_min", L("Contour offset min"),
+                    L("Lower limit of the radial offset of round outer contours."), L("mm"), -0.04);
+    add_circle_coef("counter_limit_max", L("Contour offset max"),
+                    L("Upper limit of the radial offset of round outer contours."), L("mm"), 0.05);
+    add_circle_coef("hole_limit_min", L("Hole offset min"),
+                    L("Lower limit of the radial offset of round holes."), L("mm"), 0.08);
+    add_circle_coef("hole_limit_max", L("Hole offset max"),
+                    L("Upper limit of the radial offset of round holes."), L("mm"), 0.25);
+    add_circle_coef("diameter_limit", L("Circle speed diameter limit"),
+                    L("Compensated circles smaller than this diameter have their walls printed at the circle compensation speed. "
+                      "Larger circles are still resized."), L("mm"), 50.);
+
     def           = this->add("filament_adhesiveness_category", coInts);
     def->label    = L("Adhesiveness Category");
     def->tooltip  = L("Filament category.");
@@ -7933,11 +7980,36 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloat(0));
 
+    def = this->add("enable_circle_compensation", coBool);
+    def->label = L("Auto circle contour-hole compensation");
+    def->category = L("Quality");
+    def->tooltip = L("Detect circular holes and circular outer contours and resize each one by an amount that depends on its "
+                     "diameter and on the filament's circle compensation coefficients (Filament settings), to improve the "
+                     "fit of shafts and holes. Circles smaller than the filament's diameter limit are also printed at the "
+                     "filament's circle compensation speed. Bambu Lab filament profiles carry calibrated coefficients; other "
+                     "filaments use generic ones.\n"
+                     "This replaces X-Y hole and contour compensation, which are reset to 0 and disabled while it is on.\n"
+                     "Holes in parts that also use \"Convert holes to polyholes\" are left to the polyhole conversion and "
+                     "are not resized; their outer contours still are.");
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionBool(false));
+
+    def = this->add("circle_compensation_manual_offset", coFloat);
+    def->label = L("Circle compensation offset");
+    def->category = L("Quality");
+    def->tooltip = L("Adjusts the fit of compensated circles on top of the automatic compensation. Positive values give a "
+                     "looser fit: holes grow and round contours shrink by this amount in diameter. Negative values give a "
+                     "tighter fit.");
+    def->sidetext = L("mm");	// millimeters, CIS languages need translation
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(0));
+
     def = this->add("hole_to_polyhole", coBool);
     def->label = L("Convert holes to polyholes");
     def->category = L("Quality");
     def->tooltip = L("Search for almost-circular holes that span more than one layer and convert the geometry to polyholes."
                      " Use the nozzle size and the (biggest) diameter to compute the polyhole."
+                     "\nAuto circle contour-hole compensation does not resize the holes of parts that use this option."
                      "\nSee http://hydraraptor.blogspot.com/2011/02/polyholes.html");
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionBool(false));

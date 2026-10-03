@@ -7373,6 +7373,7 @@ std::string GCode::extrude_loop(const ExtrusionLoop&                       loop_
     ExtrusionPaths paths;
     loop.clip_end(clip_length, &paths);
     if (paths.empty()) return "";
+    const bool circle_compensation = loop.circle_compensation && !loop.has_overhang_paths();
 
     // SoftFever: check loop lenght for small perimeter. 
     double small_peri_speed = -1;
@@ -7486,7 +7487,7 @@ std::string GCode::extrude_loop(const ExtrusionLoop&                       loop_
     
     if (!enable_seam_slope) {
         for (const ExtrusionPath& path : paths) {
-            gcode += this->_extrude(path, description, speed_for_path(path));
+            gcode += this->_extrude(path, description, speed_for_path(path), circle_compensation);
             // Orca: Adaptive PA - dont adapt PA after the first multipath extrusion is completed
             // as we have already set the PA value to the average flow over the totality of the path
             // in the first extrude move
@@ -7523,7 +7524,7 @@ std::string GCode::extrude_loop(const ExtrusionLoop&                       loop_
 
         // Then extrude it
         for (const ExtrusionPath* path : new_loop.get_all_paths()) {
-            gcode += this->_extrude(*path, description, speed_for_path(*path));
+            gcode += this->_extrude(*path, description, speed_for_path(*path), circle_compensation);
             // Orca: Adaptive PA - dont adapt PA after the first pultipath extrusion is completed
             // as we have already set the PA value to the average flow over the totality of the path
             // in the first extrude move
@@ -7988,7 +7989,7 @@ static float overhang_fan_overlap_threshold(int overhang_fan_threshold)
     }
 }
 
-std::string GCode::_extrude(const ExtrusionPath &path, std::string description, double speed)
+std::string GCode::_extrude(const ExtrusionPath &path, std::string description, double speed, bool circle_compensation)
 {
     std::string gcode;
 
@@ -8179,12 +8180,12 @@ std::string GCode::_extrude(const ExtrusionPath &path, std::string description, 
     // set speed
     if (speed == -1) {
         if (path.role() == erPerimeter) {
-            speed = NOZZLE_CONFIG(inner_wall_speed);
+            speed = circle_compensation ? m_config.circle_compensation_speed.get_at(m_writer.filament()->id()) : NOZZLE_CONFIG(inner_wall_speed);
             if (sloped) {
                 speed = std::min(speed, m_config.scarf_joint_speed.get_abs_value(speed));
             }
         } else if (path.role() == erExternalPerimeter) {
-            speed = NOZZLE_CONFIG(outer_wall_speed);
+            speed = circle_compensation ? m_config.circle_compensation_speed.get_at(m_writer.filament()->id()) : NOZZLE_CONFIG(outer_wall_speed);
             if (sloped) {
                 speed = std::min(speed, m_config.scarf_joint_speed.get_abs_value(speed));
             }
@@ -8471,6 +8472,10 @@ std::string GCode::_extrude(const ExtrusionPath &path, std::string description, 
     bool last_was_wipe_tower = (m_last_processor_extrusion_role == erWipeTower);
     char buf[64];
     assert(is_decimal_separator_point());
+
+    // The cooling buffer must not slow these moves down: the circle compensation was calibrated at this speed.
+    if (circle_compensation)
+        gcode += "; Slow Down Start\n";
 
     if (path.role() != m_last_processor_extrusion_role) {
         m_last_processor_extrusion_role = path.role();
@@ -8948,6 +8953,8 @@ std::string GCode::_extrude(const ExtrusionPath &path, std::string description, 
     if (m_enable_cooling_markers) {
             gcode += ";_EXTRUDE_END\n";
     }
+    if (circle_compensation)
+        gcode += "; Slow Down End\n";
 
     if (path.role() != ExtrusionRole::erGapFill) {
       m_last_notgapfill_extrusion_role = path.role();

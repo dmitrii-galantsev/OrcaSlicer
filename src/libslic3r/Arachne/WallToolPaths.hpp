@@ -52,6 +52,13 @@ public:
     WallToolPaths(const Polygons& outline, coord_t bead_width_0, coord_t bead_width_x, size_t inset_count, coord_t wall_0_inset, coordf_t layer_height, const WallToolPathsParams &params);
 
     /*!
+     * Flag the walls of the outline circles resized by the auto circle contour-hole compensation (see
+     * ExtrusionJunction::circle_compensation). Each circle is given by its centroid and whether it is a hole.
+     * Call before generate().
+     */
+    void set_compensated_circles(std::vector<std::pair<Point, bool>> circles) { compensated_circles = std::move(circles); }
+
+    /*!
      * Generates the Toolpaths
      * \return A reference to the newly create  ToolPaths
      */
@@ -141,6 +148,7 @@ private:
     std::vector<VariableWidthLines> toolpaths; //<! The generated toolpaths
     Polygons inner_contour;  //<! The inner contour of the generated toolpaths
     const WallToolPathsParams m_params;
+    std::vector<std::pair<Point, bool>> compensated_circles;
 };
 
 } // namespace Slic3r::Arachne

@@ -37,7 +37,13 @@ struct ExtrusionJunction
 	 */
     size_t perimeter_index;
 
-    ExtrusionJunction(const Point p, const coord_t w, const coord_t perimeter_index) : p(p), w(w), perimeter_index(perimeter_index) {}
+	/*!
+	 * Whether this junction comes from an outline circle resized by the auto circle contour-hole compensation.
+	 */
+    bool circle_compensation;
+
+    ExtrusionJunction(const Point p, const coord_t w, const coord_t perimeter_index, bool circle_compensation = false)
+        : p(p), w(w), perimeter_index(perimeter_index), circle_compensation(circle_compensation) {}
 
     bool operator==(const ExtrusionJunction &other) const {
         return p == other.p && w == other.w && perimeter_index == other.perimeter_index;

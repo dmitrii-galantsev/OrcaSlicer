@@ -61,6 +61,9 @@ public:
     bool make_clockwise();
     bool is_valid() const { return this->points.size() >= 3; }
     void douglas_peucker(double tolerance);
+    // True if every vertex lies within max_deviation (max - min) of the centroid distance and the variance of those
+    // distances is at most max_variance. center and diameter are set only on success. Needs at least 8 vertices.
+    bool is_approx_circle(double max_deviation, double max_variance, Point &center, double &diameter) const;
 
     // Does an unoriented polygon contain a point?
     bool contains(const Point &point) const { return Slic3r::contains(*this, point, true); }

@@ -180,7 +180,7 @@ void ExtrusionLine::simplify(const int64_t smallest_line_segment_squared, const 
                 else
                 {
                     // New point seems like a valid one.
-                    const ExtrusionJunction new_to_add = ExtrusionJunction(intersection_point, current.w, current.perimeter_index);
+                    const ExtrusionJunction new_to_add = ExtrusionJunction(intersection_point, current.w, current.perimeter_index, current.circle_compensation);
                     // If there was a previous point added, remove it.
                     if(!new_junctions.empty())
                     {
@@ -253,6 +253,18 @@ int64_t ExtrusionLine::calculateExtrusionAreaDeviationError(ExtrusionJunction A,
         // If the width difference is very small, then select the width of the segment that is longer
         return ab_length > bc_length ? int64_t(width_diff) * bc_length : int64_t(width_diff) * ab_length;
     }
+}
+
+bool ExtrusionLine::is_circle_compensated(const double threshold) const
+{
+    double total_length  = 0.;
+    double marked_length = 0.;
+    for (size_t idx = 1; idx < junctions.size(); ++idx) {
+        const double length = (junctions[idx].p - junctions[idx - 1].p).cast<double>().norm();
+        total_length += length;
+        marked_length += length * (int(junctions[idx].circle_compensation) + int(junctions[idx - 1].circle_compensation)) / 2.;
+    }
+    return total_length > 0. && marked_length / total_length > threshold;
 }
 
 bool ExtrusionLine::is_contour() const

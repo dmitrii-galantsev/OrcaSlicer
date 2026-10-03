@@ -110,7 +110,11 @@ public:
         return extrusion_junctions.lock();
     }
 
+    void setCircleCompensation(bool enabled) { circle_compensation = enabled; }
+    bool getCircleCompensation() const { return circle_compensation; }
+
 private:
+    bool    circle_compensation { false }; //! the edge belongs to the Voronoi cell of a compensated outline circle
     Central is_central; //! whether the edge is significant; whether the source segments have a sharp angle; -1 is unknown
 
     std::weak_ptr<std::list<TransitionMiddle>> transitions;

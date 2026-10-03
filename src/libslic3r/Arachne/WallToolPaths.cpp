@@ -529,6 +529,20 @@ const std::vector<VariableWidthLines> &WallToolPaths::generate()
         );
     const coord_t transition_filter_dist   = scaled<coord_t>(100.f);
     const coord_t allowed_filter_deviation = wall_transition_filter_deviation;
+
+    // The outline was simplified and re-unioned above, so the circles are found again by centroid and orientation.
+    std::vector<bool> circle_compensated_polys;
+    if (! compensated_circles.empty()) {
+        circle_compensated_polys.assign(prepared_outline.size(), false);
+        for (size_t i = 0; i < prepared_outline.size(); ++i) {
+            const Point c    = prepared_outline[i].centroid();
+            const bool  hole = prepared_outline[i].is_clockwise();
+            circle_compensated_polys[i] = std::any_of(compensated_circles.begin(), compensated_circles.end(), [&](const std::pair<Point, bool> &circle) {
+                return circle.second == hole && (circle.first - c).cast<double>().norm() < scaled<double>(0.01);
+            });
+        }
+    }
+
     SkeletalTrapezoidation wall_maker
     (
         prepared_outline,
@@ -537,7 +551,8 @@ const std::vector<VariableWidthLines> &WallToolPaths::generate()
         discretization_step_size,
         transition_filter_dist,
         allowed_filter_deviation,
-        wall_transition_length
+        wall_transition_length,
+        circle_compensated_polys
     );
     wall_maker.generateToolpaths(toolpaths);
 

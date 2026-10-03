@@ -332,8 +332,10 @@ void SkeletalTrapezoidationGraph::makeRib(edge_t *&prev_edge, const Point &start
     
     edges.emplace_front(SkeletalTrapezoidationEdge(SkeletalTrapezoidationEdge::EdgeType::EXTRA_VD));
     edge_t* forth_edge = &edges.front();
+    forth_edge->data.setCircleCompensation(prev_edge->data.getCircleCompensation());
     edges.emplace_front(SkeletalTrapezoidationEdge(SkeletalTrapezoidationEdge::EdgeType::EXTRA_VD));
     edge_t* back_edge = &edges.front();
+    back_edge->data.setCircleCompensation(prev_edge->data.getCircleCompensation());
     
     prev_edge->next = forth_edge;
     forth_edge->prev = prev_edge;
@@ -376,6 +378,11 @@ std::pair<SkeletalTrapezoidationGraph::edge_t*, SkeletalTrapezoidationGraph::edg
     edge_t* outward_edge = &edges.back();
     edges.emplace_back(SkeletalTrapezoidationEdge(SkeletalTrapezoidationEdge::EdgeType::TRANSITION_END));
     edge_t* inward_edge = &edges.back();
+
+    const bool circle_compensation = first->data.getCircleCompensation();
+    second->data.setCircleCompensation(circle_compensation);
+    outward_edge->data.setCircleCompensation(circle_compensation);
+    inward_edge->data.setCircleCompensation(circle_compensation);
 
     if (edge_before)
     {
