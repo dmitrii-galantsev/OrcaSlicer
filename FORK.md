@@ -34,6 +34,20 @@ On lsttdev4 directly: `./build_flatpak.sh --ccache -j $(nproc)`. A warm rebuild 
 a cold one about 21; packing the bundle is 3-4 of those minutes. `--dev` needs one finished bundle build
 in this checkout first, because flatpak-builder keys its module cache on the generated manifest's path.
 
+## Testing
+
+- **Headless, on lsttdev4:** Xvfb at 1280x800 with openbox, the app started as
+  `dbus-run-session -- flatpak run --unshare=network --env=SteamDeck=1 com.orcaslicer.OrcaSlicer --datadir <copy>`.
+  The private bus matters: the host desktop portal is broken there, and without it every WebKit page stays white.
+  `--env=SteamDeck=1` turns touch mode on; `--unshare=network` keeps a copied config from reaching the printer
+  or the cloud. Capture dialogs with `xwd -id <window>`; root captures show secondary windows black.
+- **On the Deck:** `/dev/uinput` is writable by `deck`, so a virtual touchscreen can tap, swipe, pinch and twist
+  for real (`~/.cache/opencode-scratch/s2-touch/touch.py` on the Deck). Run the build under test as a second
+  instance with its own `--datadir` next to the user's, and show the test overlay
+  (`~/.cache/opencode-scratch/deck-overlay/overlay.py`) while doing it.
+- Unit tests for the touch helpers, align/distribute and circle compensation are in `tests/slic3rutils` and
+  `tests/libslic3r`: `ctest -R "TouchKeypad|TouchSteps|AlignDistribute|CircleCompensation"`.
+
 ## When a build fails
 
 | symptom | cause | fix |
