@@ -297,6 +297,7 @@ void TouchKeypad::build_number_panel()
 {
     m_number_panel = new wxPanel(this);
     m_number_panel->SetBackgroundColour(GetBackgroundColour());
+    m_number_panel->SetCanFocus(true);
     const int gap = FromDIP(8);
     auto* sizer = new wxBoxSizer(wxVERTICAL);
 
@@ -348,6 +349,7 @@ void TouchKeypad::build_text_panel()
 {
     m_text_panel = new wxPanel(this);
     m_text_panel->SetBackgroundColour(GetBackgroundColour());
+    m_text_panel->SetCanFocus(true);
     const int gap = FromDIP(6);
     const int key_width = 72;
     auto* sizer = new wxBoxSizer(wxVERTICAL);
@@ -435,6 +437,9 @@ void TouchKeypad::set_number_mode(bool number)
     m_number_mode = number;
     m_number_panel->Show(number);
     m_text_panel->Show(!number);
+    // No key takes focus, so without a focused panel GTK delivers no key events and Escape and
+    // Enter never reach on_char_hook().
+    (number ? m_number_panel : m_text_panel)->SetFocus();
     update_display();
     place_on_screen(this, GetParent());
 }
