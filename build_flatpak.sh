@@ -38,7 +38,7 @@ show_help() {
     echo "  -j, --jobs JOBS        Number of parallel build jobs for flatpak-builder and modules [default: $JOBS]"
     echo "  -c, --cleanup          Clean build directory before building"
     echo "  -f, --force-clean      Force clean build (disables caching)"
-    echo "  --ccache               Enable ccache for faster rebuilds (requires ccache in SDK)"
+    echo "  --ccache               Cache compiles in CACHE_DIR/ccache (clang too; shared with scripts/flatpak/dev_loop.sh)"
     echo "  --disable-rofiles-fuse Disable rofiles-fuse (workaround for FUSE issues)"
     echo "  --with-debuginfo       Include debug info (slower builds, needed for Flathub)"
     echo "  --cache-dir DIR        Flatpak builder cache directory [default: $CACHE_DIR]"
@@ -338,25 +338,7 @@ fi
 if [[ "$ENABLE_CCACHE" == true ]]; then
     BUILDER_ARGS+=(--ccache)
     echo -e "${GREEN}Using ccache for compiler caching${NC}"
-
-    # flatpak-builder --ccache bind-mounts $CACHE_DIR/ccache to /run/ccache
-    # inside the sandbox and sets CCACHE_DIR=/run/ccache, so a ccache.conf
-    # written here is read by the in-sandbox ccache. The default max_size is
-    # only 5GiB — too small to survive multiple OrcaSlicer rebuilds (~2-4GB of
-    # objects each), which causes eviction and needless cache misses. Bump it.
-    # This ccache is fully isolated from the host ~/.ccache used by cmake builds.
-    #
-    # Only max_size is tuned. Do NOT add sloppiness flags such as system_headers
-    # or include_file_ctime/mtime here: they let ccache reuse objects when a
-    # changed header should have invalidated them, which produced stale object
-    # files with old function signatures -> undefined-symbol link failures after
-    # a header/signature change. compiler_check=content is left at ccache's safe
-    # default (mtime); the sandbox toolchain is pinned by the SDK anyway.
-    mkdir -p "$CACHE_DIR/ccache"
-    cat > "$CACHE_DIR/ccache/ccache.conf" <<'CCACHE_CONF'
-max_size = 25.0G
-CCACHE_CONF
-    echo -e "${GREEN}Configured sandbox ccache (25G) at $CACHE_DIR/ccache${NC}"
+    ./scripts/flatpak/setup_ccache.sh "$CACHE_DIR/ccache"
 fi
 
 # Disable rofiles-fuse if requested (workaround for FUSE issues)
@@ -365,25 +347,10 @@ if [[ "$DISABLE_ROFILES_FUSE" == true ]]; then
     echo -e "${YELLOW}rofiles-fuse disabled${NC}"
 fi
 
-# Build from a generated manifest so we can inject the commit hash (and
-# optionally the no-debuginfo tweak) without touching the checked-in manifest.
-SRC_MANIFEST="scripts/flatpak/com.orcaslicer.OrcaSlicer.yml"
 MANIFEST="scripts/flatpak/com.orcaslicer.OrcaSlicer.generated.yml"
-cp "$SRC_MANIFEST" "$MANIFEST"
-
-# Inject the commit hash only into the OrcaSlicer module's cmake configure step.
-# Prefixing the env var on that one command (rather than the global
-# build-options) keeps the wxWidgets/deps module caches valid across commits —
-# only the OrcaSlicer module rebuilds when the hash changes.
-if [[ -n "$GIT_COMMIT_HASH" ]]; then
-    sed -i "s#cmake \. -B build_flatpak#git_commit_hash=\"$GIT_COMMIT_HASH\" cmake . -B build_flatpak#" "$MANIFEST"
-    echo -e "${GREEN}Embedding commit hash $GIT_COMMIT_HASH into build info${NC}"
-fi
-
-if [[ "$NO_DEBUGINFO" == true ]]; then
-    sed -i '/^build-options:/a\  no-debuginfo: true\n  strip: true' "$MANIFEST"
-    echo -e "${YELLOW}Debug info disabled (using temp manifest)${NC}"
-fi
+GEN_ARGS=(--hash "$GIT_COMMIT_HASH")
+[[ "$NO_DEBUGINFO" == true ]] || GEN_ARGS+=(--with-debuginfo)
+./scripts/flatpak/generate_manifest.sh "${GEN_ARGS[@]}" "$MANIFEST"
 
 if ! flatpak-builder \
     "${BUILDER_ARGS[@]}" \
