@@ -23,10 +23,16 @@ dir=$1
 # precompiled header without them, and libslic3r and libslic3r_gui build almost
 # every TU that way. The PCH is still hashed, so a changed header still misses,
 # and src/ uses no __DATE__/__TIME__.
+#
+# hash_dir = false lets dev_loop.sh's Ninja tree and a bundle's Makefile tree
+# share objects: they compile the same command from different directories, and
+# ccache otherwise hashes that directory into every -g compile. It only decides
+# the compile directory recorded in debug info, which bundles strip.
 mkdir -p "$dir/bin"
 cat > "$dir/ccache.conf" <<'CCACHE_CONF'
 max_size = 25.0G
 sloppiness = pch_defines,time_macros
+hash_dir = false
 CCACHE_CONF
 
 # flatpak-builder links only cc, c++, gcc and g++ into /run/ccache/bin, but the

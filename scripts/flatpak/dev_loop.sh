@@ -124,7 +124,10 @@ need_setup() {
 configure() {
     local manifest=$repo/scripts/flatpak/com.orcaslicer.OrcaSlicer.yml cmake_cmd
     # Reuse the manifest's configure command so flags never drift from the
-    # bundle; only the install prefix and the generator differ.
+    # bundle. The install prefix reaches one generated header. Ninja instead of
+    # the manifest's Makefiles cuts a one-file rebuild from ~30 s to ~10 s; it
+    # compiles from another directory, which setup_ccache.sh's hash_dir = false
+    # keeps out of the ccache key.
     cmake_cmd=$(awk '
         /^  - name: OrcaSlicer[[:space:]]*$/ { m = 1; next }
         m && /^      - \|[[:space:]]*$/ { c = 1; next }
