@@ -210,6 +210,7 @@
 #include "PartPlate.hpp"
 #include "Camera.hpp"
 #include "Mouse3DController.hpp"
+#include "TouchKeypad.hpp"
 #include "Tab.hpp"
 #include "Jobs/OrientJob.hpp"
 #include "Jobs/ArrangeJob.hpp"
@@ -3558,11 +3559,7 @@ Sidebar::Sidebar(Plater *parent)
     text_ctrl->SetFont(Label::Body_13);
     text_ctrl->SetSize(wxSize(-1, FromDIP(16))); // Centers text vertically
 
-    text_ctrl->Bind(wxEVT_SET_FOCUS, [this](wxFocusEvent& e) {
-        if (p->dia->IsShown()) {
-            e.Skip();
-            return;
-        }
+    auto show_object_search = [this]() {
         p->m_search_bar->SetBorderColor(wxColour("#009688"));
         wxPoint pos = this->p->m_search_bar->ClientToScreen(wxPoint(0, 0));
 #ifndef __WXGTK__
@@ -3572,7 +3569,22 @@ Sidebar::Sidebar(Plater *parent)
 #endif
         p->dia->SetPosition(pos);
         p->dia->Popup();
+    };
+    text_ctrl->Bind(wxEVT_SET_FOCUS, [this, show_object_search](wxFocusEvent& e) {
         e.Skip(); // required to show caret
+        if (p->dia->IsShown() || touch_input_enabled())
+            return;
+        show_object_search();
+    });
+    // In touch mode a tap fills the box from the keypad first, since the keypad cannot work over the
+    // popup, and the popup then opens already searching for that text.
+    text_ctrl->Bind(wxEVT_TEXT, [this, text_ctrl, show_object_search](wxCommandEvent& e) {
+        e.Skip();
+        const wxString text = text_ctrl->GetValue();
+        if (!touch_input_enabled() || text.IsEmpty() || p->dia->IsShown())
+            return;
+        show_object_search();
+        p->dia->set_search_text(text);
     });
 
     auto search_sizer = new wxBoxSizer(wxHORIZONTAL);

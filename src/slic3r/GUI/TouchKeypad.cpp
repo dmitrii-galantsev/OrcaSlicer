@@ -12,6 +12,7 @@
 #include <wx/display.h>
 #include <wx/grid.h>
 #include <wx/panel.h>
+#include <wx/popupwin.h>
 #include <wx/sizer.h>
 #include <wx/spinctrl.h>
 #include <wx/stattext.h>
@@ -149,10 +150,20 @@ bool has_step_buttons(wxWindow* text)
 
 constexpr long LONG_PRESS_MS = 500;
 
+// A transient popup holds a pointer grab that swallows the modal keypad's taps and dismisses itself
+// when the main window deactivates, so the popup's owner has to ask for its text (see Search.cpp).
+bool in_transient_popup(wxWindow* window)
+{
+    for (wxWindow* w = window; w != nullptr; w = w->GetParent())
+        if (dynamic_cast<wxPopupTransientWindow*>(w) != nullptr)
+            return true;
+    return false;
+}
+
 bool accepts_touch_keypad(wxWindow* target)
 {
     // GTK's own spin buttons fill most of a native spin control.
-    if (!target->IsEnabled() || !target->IsShownOnScreen() || is_cell_editor(target) || is_spin(target))
+    if (!target->IsEnabled() || !target->IsShownOnScreen() || is_cell_editor(target) || is_spin(target) || in_transient_popup(target))
         return false;
     if (auto* text = dynamic_cast<wxTextCtrl*>(target); text != nullptr && text->IsMultiLine())
         return false;
@@ -562,6 +573,18 @@ void size_touch_step_button(Button* button, int side)
     button->SetCornerRadius(button->FromDIP(4));
     button->SetMinSize(wxSize(side, side));
     button->SetSize(wxSize(side, side));
+}
+
+std::optional<wxString> ask_touch_text(wxWindow* parent, const wxString& initial)
+{
+    if (s_keypad_open)
+        return std::nullopt;
+    s_keypad_open = true;
+    struct Reset { ~Reset() { s_keypad_open = false; } } reset;
+    TouchKeypad pad(parent != nullptr ? wxGetTopLevelParent(parent) : nullptr, initial, false, false);
+    if (pad.ShowModal() != wxID_OK)
+        return std::nullopt;
+    return pad.GetValue();
 }
 
 void edit_with_touch_keypad(wxWindow* target)

@@ -115,6 +115,7 @@ public:
     void set_printer_technology(PrinterTechnology pt) { printer_technology = pt; }
 
     void show_dialog(Preset::Type type, wxWindow *parent, TextInput *input, wxWindow *ssearch_btn);
+    void open_dialog(Preset::Type type, wxWindow *parent, TextInput *input, wxWindow *ssearch_btn, const wxString &text);
     void dlg_sys_color_changed();
     void dlg_msw_rescale();
 };
@@ -193,6 +194,7 @@ public:
     void Dismiss() override;
     void Die();
     void msw_rescale();
+    void set_search_text(const wxString &text) { search_line2->SetValue(text); }
 
 };
 
@@ -238,6 +240,7 @@ public:
     void OnDismiss() override;
     void Dismiss() override;
     void Die();
+    void set_search_text(const wxString& text) { search_line2->SetValue(text); }
 
     void OnInputText(wxCommandEvent& event);
     void OnLeftUpInTextCtrl(wxEvent& event);

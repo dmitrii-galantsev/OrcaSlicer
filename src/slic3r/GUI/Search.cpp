@@ -46,6 +46,7 @@
 #include "GUI_App.hpp"
 #include "Plater.hpp"
 #include "Tab.hpp"
+#include "TouchKeypad.hpp"
 
 #define FTS_FUZZY_MATCH_IMPLEMENTATION
 #include "fts_fuzzy_match.h"
@@ -275,6 +276,27 @@ const Option &OptionsSearcher::get_option(size_t pos_in_filter) const
 void OptionsSearcher::show_dialog(Preset::Type type, wxWindow *parent, TextInput *input, wxWindow* ssearch_btn)
 {
     if (parent == nullptr || input == nullptr) return;
+    if (GUI::touch_input_enabled()) {
+        // The keypad cannot work over the popup (it grabs the pointer), so the text comes first.
+        wxWeakRef<wxWindow> parent_ref(parent), input_ref(input), button_ref(ssearch_btn);
+        wxTheApp->CallAfter([this, type, parent_ref, input_ref, button_ref] {
+            if (!parent_ref || !input_ref)
+                return;
+            const auto text = GUI::ask_touch_text(parent_ref.get(), from_u8(search_line));
+            if (!text) {
+                wxCommandEvent event(wxCUSTOMEVT_EXIT_SEARCH);
+                wxPostEvent(input_ref.get(), event);
+                return;
+            }
+            open_dialog(type, parent_ref.get(), static_cast<TextInput*>(input_ref.get()), button_ref.get(), *text);
+        });
+        return;
+    }
+    open_dialog(type, parent, input, ssearch_btn, wxEmptyString);
+}
+
+void OptionsSearcher::open_dialog(Preset::Type type, wxWindow *parent, TextInput *input, wxWindow *ssearch_btn, const wxString &text)
+{
     auto    search_dialog = new SearchDialog(this, type, parent, input, ssearch_btn);
     wxPoint pos = input->GetParent()->ClientToScreen(wxPoint(0, 0));
 #ifndef __WXGTK__
@@ -284,6 +306,8 @@ void OptionsSearcher::show_dialog(Preset::Type type, wxWindow *parent, TextInput
 #endif
     search_dialog->SetPosition(pos);
     search_dialog->Popup();
+    if (!text.IsEmpty())
+        search_dialog->set_search_text(text);
 }
 
 void OptionsSearcher::dlg_sys_color_changed()
@@ -488,6 +512,23 @@ SearchDialog::SearchDialog(OptionsSearcher *searcher, Preset::Type type, wxWindo
     search_line->Bind(wxEVT_TEXT, &SearchDialog::OnInputText, this);
     search_line->Bind(wxEVT_LEFT_UP, &SearchDialog::OnLeftUpInTextCtrl, this);
     search_line2 = search_line->GetTextCtrl();
+#ifdef __WXGTK__
+    // In touch mode a tap here closes the popup and presses the search button again, which asks for
+    // the text with the keypad (prefilled with the current query) before reopening the popup.
+    search_line2->Bind(wxEVT_LEFT_UP, [this](wxMouseEvent &e) {
+        e.Skip();
+        if (!GUI::touch_input_enabled())
+            return;
+        Die();
+        CallAfter([button = wxWeakRef<wxWindow>(m_search_item_tag)] {
+            if (!button)
+                return;
+            wxCommandEvent event(wxEVT_BUTTON, button->GetId());
+            event.SetEventObject(button.get());
+            button->HandleWindowEvent(event);
+        });
+    });
+#endif
 
     // scroll window
     m_scrolledWindow = new ScrolledWindow(m_client_panel, wxID_ANY, wxDefaultPosition, wxSize(POPUP_WIDTH * em - (em + em /2), POPUP_HEIGHT * em), wxVSCROLL, 6, 6);
@@ -741,6 +782,21 @@ SearchObjectDialog::SearchObjectDialog(GUI::ObjectList* object_list, wxWindow* p
     search_line->Bind(wxEVT_TEXT, &SearchObjectDialog::OnInputText, this);
     search_line->Bind(wxEVT_LEFT_UP, &SearchObjectDialog::OnLeftUpInTextCtrl, this);
     search_line2 = search_line->GetTextCtrl();
+#ifdef __WXGTK__
+    // In touch mode a tap here closes the popup and asks for the text with the keypad; setting it in
+    // the sidebar box (search_line by then) reopens the popup through the box's text handler.
+    search_line2->Bind(wxEVT_LEFT_UP, [this](wxMouseEvent &e) {
+        e.Skip();
+        if (!GUI::touch_input_enabled())
+            return;
+        const wxString text = search_line2->GetValue();
+        Die();
+        CallAfter([this, text] {
+            if (const auto result = GUI::ask_touch_text(m_object_list, text); result && !result->IsEmpty())
+                search_line->GetTextCtrl()->SetValue(*result);
+        });
+    });
+#endif
 
 
     // scroll window
