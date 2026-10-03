@@ -85,19 +85,24 @@ private:
     double  m_repeat_delta { 0. };
 };
 
-// Opens the keypad for ctrl and, on OK, commits the result the same way pressing Enter would.
-void edit_with_touch_keypad(wxTextCtrl* ctrl);
+bool touch_input_enabled();
 
-// Installed on the application: a tap on any editable single-line wxTextCtrl opens the keypad
-// while the "touch_input" app config option is on.
+// target is a single-line wxTextEntry window (wxTextCtrl, wxSearchCtrl, ...), a wxSpinCtrl or a
+// wxSpinCtrlDouble. On OK the result is committed the way the control commits a typed value:
+// Enter for text entries, wxEVT_SPINCTRL / wxEVT_SPINCTRLDOUBLE for spin controls.
+void edit_with_touch_keypad(wxWindow* target);
+
+// Installed on the application: while the "touch_input" app config option is on, a tap on an
+// editable single-line text entry, a spin control, or the frame of Orca's TextInput, SpinInput,
+// TempInput and editable ComboBox opens the keypad.
 class TouchInputFilter : public wxEventFilter
 {
 public:
     int FilterEvent(wxEvent& event) override;
 
 private:
-    wxWeakRef<wxTextCtrl> m_pressed;
-    wxPoint               m_pressed_at;
+    wxWeakRef<wxWindow> m_pressed;
+    wxPoint             m_pressed_at;
 };
 
 }} // namespace Slic3r::GUI

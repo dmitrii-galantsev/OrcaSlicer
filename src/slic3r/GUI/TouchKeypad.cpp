@@ -7,11 +7,13 @@
 #include <locale>
 #include <sstream>
 
+#include <wx/combo.h>
 #include <wx/dataview.h>
 #include <wx/display.h>
 #include <wx/grid.h>
 #include <wx/panel.h>
 #include <wx/sizer.h>
+#include <wx/spinctrl.h>
 #include <wx/stattext.h>
 #include <wx/textctrl.h>
 #include <wx/valnum.h>
@@ -22,7 +24,11 @@
 #include "I18N.hpp"
 #include "libslic3r/AppConfig.hpp"
 #include "Widgets/Button.hpp"
+#include "Widgets/ComboBox.hpp"
 #include "Widgets/Label.hpp"
+#include "Widgets/SpinInput.hpp"
+#include "Widgets/TempInput.hpp"
+#include "Widgets/TextInput.hpp"
 
 namespace Slic3r { namespace GUI {
 
@@ -108,9 +114,9 @@ const wxString MINUS     = wxString(L"\u2212");
 const wxString BACKSPACE = wxString(L"\u232B");
 const wxString SHIFT     = wxString(L"\u21E7");
 
-bool has_numeric_validator(wxTextCtrl* ctrl)
+bool has_numeric_validator(wxWindow* window)
 {
-    wxValidator* validator = ctrl->GetValidator();
+    wxValidator* validator = window->GetValidator();
     if (dynamic_cast<wxNumValidatorBase*>(validator) != nullptr)
         return true;
     auto* text_validator = dynamic_cast<wxTextValidator*>(validator);
@@ -127,14 +133,77 @@ bool is_cell_editor(wxWindow* window)
     return false;
 }
 
-bool accepts_touch_keypad(wxTextCtrl* ctrl)
+bool is_spin(wxWindow* window)
 {
-    return ctrl->IsEnabled() && ctrl->IsEditable() && ctrl->IsShownOnScreen() && !ctrl->IsMultiLine() && !is_cell_editor(ctrl);
+    return dynamic_cast<wxSpinCtrl*>(window) != nullptr || dynamic_cast<wxSpinCtrlDouble*>(window) != nullptr;
 }
 
-bool touch_input_enabled()
+bool accepts_touch_keypad(wxWindow* target)
 {
-    return wxTheApp != nullptr && wxGetApp().app_config != nullptr && wxGetApp().app_config->get_bool("touch_input");
+    if (!target->IsEnabled() || !target->IsShownOnScreen() || is_cell_editor(target))
+        return false;
+    if (is_spin(target))
+        return true;
+    if (auto* text = dynamic_cast<wxTextCtrl*>(target); text != nullptr && text->IsMultiLine())
+        return false;
+    auto* entry = dynamic_cast<wxTextEntry*>(target);
+    return entry != nullptr && entry->IsEditable();
+}
+
+// Orca's composite inputs draw their frame, icon and "mm"/"%" side text on a container around the
+// wxTextCtrl, so a tap there must be routed to the inner control.
+wxWindow* touch_target(wxWindow* window, const wxPoint& pos)
+{
+    if (auto* combo = dynamic_cast<::ComboBox*>(window)) {
+        wxTextCtrl* text = combo->GetTextCtrl();
+        // Right of the text is the drop-down arrow, which keeps opening the list.
+        return text != nullptr && text->IsShown() && pos.x <= text->GetRect().GetRight() ? text : nullptr;
+    }
+    if (auto* input = dynamic_cast<::TextInput*>(window))
+        return input->GetTextCtrl();
+    if (auto* input = dynamic_cast<::SpinInput*>(window))
+        return input->GetTextCtrl();
+    if (auto* input = dynamic_cast<::TempInput*>(window))
+        return input->GetTextCtrl();
+    if (is_spin(window)) {
+        // GTK draws the -/+ buttons inside the spin control, each about as wide as it is tall. The
+        // press may come from the buttons' own GdkWindow, so use the pointer, not the event position.
+        const wxSize  size = window->GetClientSize();
+        const wxPoint at   = window->ScreenToClient(wxGetMousePosition());
+        return at.x < std::max(size.x - 2 * size.y, size.x / 3) ? window : nullptr;
+    }
+    if (dynamic_cast<wxTextEntry*>(window) != nullptr && dynamic_cast<wxItemContainer*>(window) == nullptr &&
+        dynamic_cast<wxComboCtrl*>(window) == nullptr)
+        return window;
+    return nullptr;
+}
+
+void commit_spin(wxWindow* target, const wxString& text)
+{
+    const auto number = parse_touch_number(into_u8(text));
+    if (!number)
+        return;
+    if (auto* spin = dynamic_cast<wxSpinCtrl*>(target)) {
+        const long value = std::clamp(std::lround(number->value), long(spin->GetMin()), long(spin->GetMax()));
+        if (value == spin->GetValue())
+            return;
+        spin->SetValue(int(value));
+        wxSpinEvent evt(wxEVT_SPINCTRL, spin->GetId());
+        evt.SetEventObject(spin);
+        evt.SetPosition(spin->GetValue());
+        evt.SetString(spin->GetTextValue());
+        spin->HandleWindowEvent(evt);
+    } else if (auto* spin = dynamic_cast<wxSpinCtrlDouble*>(target)) {
+        const double value = std::clamp(number->value, spin->GetMin(), spin->GetMax());
+        if (value == spin->GetValue())
+            return;
+        spin->SetValue(value);
+        wxSpinDoubleEvent evt(wxEVT_SPINCTRLDOUBLE, spin->GetId());
+        evt.SetEventObject(spin);
+        evt.SetValue(spin->GetValue());
+        evt.SetString(spin->GetTextValue());
+        spin->HandleWindowEvent(evt);
+    }
 }
 
 void place_on_screen(wxDialog* dlg, wxWindow* parent)
@@ -463,33 +532,52 @@ void TouchKeypad::on_char_hook(wxKeyEvent& evt)
     }
 }
 
-void edit_with_touch_keypad(wxTextCtrl* ctrl)
+bool touch_input_enabled()
 {
-    if (s_keypad_open || ctrl == nullptr)
+    return wxTheApp != nullptr && wxGetApp().app_config != nullptr && wxGetApp().app_config->get_bool("touch_input");
+}
+
+void edit_with_touch_keypad(wxWindow* target)
+{
+    if (s_keypad_open || target == nullptr)
         return;
-    wxWeakRef<wxTextCtrl> ref(ctrl);
-    wxString value;
+    const bool spin  = is_spin(target);
+    auto*      entry = dynamic_cast<wxTextEntry*>(target);
+    if (!spin && entry == nullptr)
+        return;
+
+    wxWeakRef<wxWindow> ref(target);
+    wxString            value;
     {
         s_keypad_open = true;
         struct Reset { ~Reset() { s_keypad_open = false; } } reset;
-        TouchKeypad pad(wxGetTopLevelParent(ctrl), ctrl->GetValue(), ctrl->HasFlag(wxTE_PASSWORD), has_numeric_validator(ctrl));
+        const wxString initial = spin ? dynamic_cast<wxSpinCtrlBase*>(target)->GetTextValue() : entry->GetValue();
+        TouchKeypad pad(wxGetTopLevelParent(target), initial, !spin && target->HasFlag(wxTE_PASSWORD), spin || has_numeric_validator(target));
         if (pad.ShowModal() != wxID_OK || !ref)
             return;
         value = pad.GetValue();
     }
 
+    target->SetFocus();
+    if (spin) {
+        commit_spin(target, value);
+        return;
+    }
+
     // Same sequence as typing the text and pressing Enter: SetValue() emits wxEVT_TEXT, and the
-    // wxEVT_TEXT_ENTER is built exactly as wxTextCtrl::OnChar() builds it for a real Enter key.
-    // Focus goes back first so the controls that commit on focus loss still see it leave later.
-    ctrl->SetFocus();
-    if (ctrl->GetValue() != value)
-        ctrl->SetValue(value);
-    ctrl->SetInsertionPointEnd();
-    if (ref && ctrl->HasFlag(wxTE_PROCESS_ENTER)) {
-        wxCommandEvent enter(wxEVT_TEXT_ENTER, ctrl->GetId());
-        enter.SetEventObject(ctrl);
-        enter.SetString(ctrl->GetValue());
-        ctrl->HandleWindowEvent(enter);
+    // wxEVT_TEXT_ENTER is built exactly as wxTextCtrl::OnChar() and wxSearchCtrl::OnChar() build it
+    // for a real Enter key. Focus goes back first so the controls that commit on focus loss still
+    // see it leave later.
+    if (entry->GetValue() != value)
+        entry->SetValue(value);
+    if (!ref)
+        return;
+    entry->SetInsertionPointEnd();
+    if (target->HasFlag(wxTE_PROCESS_ENTER)) {
+        wxCommandEvent enter(wxEVT_TEXT_ENTER, target->GetId());
+        enter.SetEventObject(target);
+        enter.SetString(entry->GetValue());
+        target->HandleWindowEvent(enter);
     }
 }
 
@@ -499,29 +587,33 @@ int TouchInputFilter::FilterEvent(wxEvent& event)
     if (type != wxEVT_LEFT_DOWN && type != wxEVT_LEFT_UP)
         return Event_Skip;
 
-    auto* ctrl = dynamic_cast<wxTextCtrl*>(event.GetEventObject());
-    if (ctrl == nullptr || s_keypad_open || !touch_input_enabled()) {
+    auto*         window = dynamic_cast<wxWindow*>(event.GetEventObject());
+    const wxPoint pos    = static_cast<wxMouseEvent&>(event).GetPosition();
+    wxWindow*     target = nullptr;
+    if (window != nullptr && !s_keypad_open && touch_input_enabled())
+        target = touch_target(window, pos);
+    if (target == nullptr || !accepts_touch_keypad(target)) {
         if (type == wxEVT_LEFT_UP)
             m_pressed = nullptr;
         return Event_Skip;
     }
 
-    const wxPoint pos = static_cast<wxMouseEvent&>(event).GetPosition();
     if (type == wxEVT_LEFT_DOWN) {
-        m_pressed    = ctrl;
+        m_pressed    = window;
         m_pressed_at = pos;
-        return Event_Skip;
+        // ComboBox opens its list on any press; over its text part the press belongs to the pad.
+        return dynamic_cast<::ComboBox*>(window) != nullptr ? Event_Processed : Event_Skip;
     }
 
     // A touch-scroll or a text selection drag also ends in a release over a field; only a tap counts.
-    const int  slop = ctrl->FromDIP(16);
-    const bool tap  = m_pressed.get() == ctrl && std::abs(pos.x - m_pressed_at.x) <= slop && std::abs(pos.y - m_pressed_at.y) <= slop;
+    const int  slop = window->FromDIP(16);
+    const bool tap  = m_pressed.get() == window && std::abs(pos.x - m_pressed_at.x) <= slop && std::abs(pos.y - m_pressed_at.y) <= slop;
     m_pressed = nullptr;
-    if (!tap || !accepts_touch_keypad(ctrl))
+    if (!tap)
         return Event_Skip;
 
     // Let GTK finish the release (focus, cursor) before a nested modal loop starts.
-    wxWeakRef<wxTextCtrl> ref(ctrl);
+    wxWeakRef<wxWindow> ref(target);
     wxTheApp->CallAfter([ref]() {
         if (ref && accepts_touch_keypad(ref.get()))
             edit_with_touch_keypad(ref.get());
