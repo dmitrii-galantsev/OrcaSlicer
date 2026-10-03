@@ -10,7 +10,9 @@ lsttdev4 and runs on the laptop and on a Steam Deck.
   steppers on numeric settings, spin boxes and the move/rotate/scale, painting, cut and jump-to-layer
   values; an on-screen keyboard for text fields, search boxes and renames (a long press on a number opens
   it too); finger-sized toolbar, sliders, object list rows and plate icons; pinch zoom, two-finger pan,
-  twist and long-press menu in the 3D view; an Erase toggle in the painting gizmos.
+  twist and long-press menu in the 3D view; an Erase toggle in the painting gizmos; a sticky
+  multi-select button (bottom-left of the 3D view) standing in for Ctrl/Shift; the keyboard also opens for
+  inputs inside web pages (flushing volumes, setup wizard, printer web UIs).
 - **Align / Distribute** for selected objects or parts, in the right-click menu (ported from BambuStudio).
 - **Circle contour-hole compensation** (`enable_circle_compensation`, ported from BambuStudio 2.0), using
   the coefficients the BBL filament profiles already carry.
