@@ -37,6 +37,7 @@
 #include "libslic3r/Color.hpp"
 #include "Widgets/StaticLine.hpp"
 #include "Widgets/DialogButtons.hpp"
+#include "Widgets/WebView.hpp"
 #include "libslic3r/Config.hpp"
 #include "Widgets/Label.hpp"
 #include "MainFrame.hpp"
@@ -587,6 +588,8 @@ WipingDialog::WipingDialog(wxWindow* parent, const int max_flush_volume) :
     }
         e.Skip();
     });
+
+    WebView::EnableTouchKeypad(m_webview);
 }
 
 

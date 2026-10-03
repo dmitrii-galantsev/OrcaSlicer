@@ -575,13 +575,13 @@ void size_touch_step_button(Button* button, int side)
     button->SetSize(wxSize(side, side));
 }
 
-std::optional<wxString> ask_touch_text(wxWindow* parent, const wxString& initial)
+std::optional<wxString> ask_touch_text(wxWindow* parent, const wxString& initial, bool numeric_hint, bool password)
 {
     if (s_keypad_open)
         return std::nullopt;
     s_keypad_open = true;
     struct Reset { ~Reset() { s_keypad_open = false; } } reset;
-    TouchKeypad pad(parent != nullptr ? wxGetTopLevelParent(parent) : nullptr, initial, false, false);
+    TouchKeypad pad(parent != nullptr ? wxGetTopLevelParent(parent) : nullptr, initial, password, numeric_hint);
     if (pad.ShowModal() != wxID_OK)
         return std::nullopt;
     return pad.GetValue();

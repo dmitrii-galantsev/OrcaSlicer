@@ -1,7 +1,10 @@
 #include "WebView.hpp"
 #include "slic3r/GUI/Widgets/StateColor.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
+#include "slic3r/GUI/TouchKeypad.hpp"
 #include "slic3r/Utils/MacDarkMode.hpp"
+
+#include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <boost/log/trivial.hpp>
@@ -254,6 +257,7 @@ static std::vector<wxWebView*> g_webviews;
 // Webviews waiting for their script handler while another one is added; adding it yields, so a
 // view can be destroyed while it waits.
 static std::vector<wxWeakRef<wxWebView>> g_delay_webviews;
+static std::vector<wxWeakRef<wxWebView>> g_delay_touch_keypads;
 
 class WebViewRef : public wxObjectRefData
 {
@@ -362,10 +366,14 @@ wxWebView* WebView::CreateWebView(wxWindow * parent, wxString const & url)
                         if (wv)
                             addScriptMessageHandler(wv.get());
                 }
+                WebView::EnableDelayedTouchKeypads();
             }
 #ifndef __WIN32__
         });
 #endif
+        // Deferred so the owner's message handler, bound right after CreateWebView returns, is
+        // already in place: the handler bound last sees a message first.
+        webView->CallAfter([webView] { WebView::EnableTouchKeypad(webView); });
         webView->EnableContextMenu(true);
     } else {
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ": failed. Use fake web view.";
@@ -381,6 +389,129 @@ void WebView::MarkScriptMessageHandlerAdded(wxWebView * webView)
     if (WebViewRef *ref = webview_ref(webView))
         ref->m_script_handler_added = true;
 }
+
+static const char TOUCH_KEYPAD_HANDLER[] = "orcaTouchInput";
+
+// Sets the value through the prototype setter so pages whose framework wraps the value property
+// still see the change, and blurs the input so pages that commit on focus loss commit too.
+static const char TOUCH_KEYPAD_SCRIPT[] = R"JS(
+(function () {
+    if (window.__orcaTouchKeypad)
+        return;
+    var textTypes = ['text', 'search', 'email', 'url', 'tel', 'password', 'number'];
+    var target = null;
+    var serial = 0;
+    function editable(el) {
+        if (!el || el.disabled || el.readOnly)
+            return false;
+        if (el.tagName === 'TEXTAREA')
+            return true;
+        return el.tagName === 'INPUT' && textTypes.indexOf(el.type) >= 0;
+    }
+    function post(message) {
+        var handler = window.orcaTouchInput ||
+            (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.orcaTouchInput);
+        if (handler)
+            handler.postMessage(JSON.stringify(message));
+    }
+    document.addEventListener('click', function (event) {
+        var el = event.composedPath ? event.composedPath()[0] : event.target;
+        if (!event.isTrusted || !editable(el))
+            return;
+        target = el;
+        serial += 1;
+        var mode = (el.getAttribute('inputmode') || '').toLowerCase();
+        post({
+            orca_touch_keypad: serial,
+            value: el.value,
+            numeric: el.type === 'number' || mode === 'numeric' || mode === 'decimal',
+            password: el.type === 'password'
+        });
+    }, true);
+    window.__orcaTouchKeypad = {
+        set: function (id, value) {
+            var el = target;
+            if (id !== serial || !el || !el.isConnected)
+                return;
+            target = null;
+            var proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+            Object.getOwnPropertyDescriptor(proto, 'value').set.call(el, value);
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+            if (el.getRootNode().activeElement === el)
+                el.blur();
+        }
+    };
+})();
+)JS";
+
+static void open_touch_keypad(wxWeakRef<wxWebView> webView, long long serial, const wxString& initial, bool numeric, bool password)
+{
+    if (!webView)
+        return;
+    const auto value = Slic3r::GUI::ask_touch_text(webView.get(), initial, numeric, password);
+    if (!value || !webView)
+        return;
+    const std::string literal = nlohmann::json(value->utf8_string()).dump(-1, ' ', true);
+    WebView::RunScript(webView.get(), wxString::Format("window.__orcaTouchKeypad && window.__orcaTouchKeypad.set(%lld, %s);",
+                                                       serial, wxString::FromUTF8(literal)));
+}
+
+void WebView::EnableDelayedTouchKeypads()
+{
+    while (!g_delay_touch_keypads.empty() && !Slic3r::GUI::wxGetApp().is_adding_script_handler()) {
+        auto views = std::move(g_delay_touch_keypads);
+        for (const wxWeakRef<wxWebView>& wv : views)
+            if (wv)
+                EnableTouchKeypad(wv.get());
+    }
+}
+
+void WebView::EnableTouchKeypad(wxWebView *webView)
+{
+    if (webView == nullptr || dynamic_cast<FakeWebView *>(webView) != nullptr || !Slic3r::GUI::touch_input_enabled())
+        return;
+    // AddScriptMessageHandler runs a nested main loop on GTK, so this can be reached while another
+    // add is in progress; re-posting with CallAfter would spin inside that loop forever.
+    if (Slic3r::GUI::wxGetApp().is_adding_script_handler()) {
+        g_delay_touch_keypads.push_back(webView);
+        return;
+    }
+    Slic3r::GUI::wxGetApp().set_adding_script_handler(true);
+    const bool added = webView->AddScriptMessageHandler(TOUCH_KEYPAD_HANDLER);
+    Slic3r::GUI::wxGetApp().set_adding_script_handler(false);
+    EnableDelayedTouchKeypads();
+    if (!added) {
+        BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << ": could not add the touch keypad script message handler";
+        return;
+    }
+
+    webView->Bind(wxEVT_WEBVIEW_LOADED, [webView](wxWebViewEvent &evt) {
+        WebView::RunScript(webView, TOUCH_KEYPAD_SCRIPT);
+        evt.Skip();
+    });
+    // The GTK backend does not report which handler a message came to, so the payload tells.
+    webView->Bind(wxEVT_WEBVIEW_SCRIPT_MESSAGE_RECEIVED, [webView](wxWebViewEvent &evt) {
+        const nlohmann::json j = nlohmann::json::parse(evt.GetString().utf8_string(), nullptr, false);
+        if (!j.is_object() || !j.contains("orca_touch_keypad") || !j["orca_touch_keypad"].is_number_integer()) {
+            evt.Skip();
+            return;
+        }
+        auto flag = [&j](const char *key) {
+            const auto it = j.find(key);
+            return it != j.end() && it->is_boolean() && it->get<bool>();
+        };
+        const auto      value    = j.find("value");
+        const long long serial   = j["orca_touch_keypad"].get<long long>();
+        const wxString  initial  = value != j.end() && value->is_string() ? wxString::FromUTF8(value->get<std::string>()) : wxString();
+        const bool      numeric  = flag("numeric");
+        const bool      password = flag("password");
+        wxWeakRef<wxWebView> ref(webView);
+        webView->CallAfter([ref, serial, initial, numeric, password] { open_touch_keypad(ref, serial, initial, numeric, password); });
+    });
+    WebView::RunScript(webView, TOUCH_KEYPAD_SCRIPT);
+}
+
 #if wxUSE_WEBVIEW_EDGE
 bool WebView::CheckWebViewRuntime()
 {

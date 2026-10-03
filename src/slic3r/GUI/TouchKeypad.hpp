@@ -88,8 +88,9 @@ private:
 
 bool touch_input_enabled();
 
-// The keypad in text mode for a caller that applies the text itself; nullopt on Cancel.
-std::optional<wxString> ask_touch_text(wxWindow* parent, const wxString& initial);
+// The keypad for a caller that applies the text itself; nullopt on Cancel. It starts in number
+// mode when initial is a number, or when it is empty and numeric_hint is set.
+std::optional<wxString> ask_touch_text(wxWindow* parent, const wxString& initial, bool numeric_hint = false, bool password = false);
 
 // Base of the inputs that carry their own − / + buttons in touch mode; a tap on them does not
 // open the keypad, a long press does.
