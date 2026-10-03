@@ -483,7 +483,7 @@ WipingDialog::WipingDialog(wxWindow* parent, const int max_flush_volume) :
         wxWebViewBackendDefault,
         wxNO_BORDER);
 
-    m_webview->AddScriptMessageHandler("wipingDialog");
+    WebView::AddScriptMessageHandler(m_webview, "wipingDialog");
     main_sizer->Add(m_webview, 1, wxEXPAND);
 
     fs::path filepath = fs::path(resources_dir()) / "web/flush/WipingDialog.html";
@@ -589,7 +589,7 @@ WipingDialog::WipingDialog(wxWindow* parent, const int max_flush_volume) :
         e.Skip();
     });
 
-    WebView::EnableTouchKeypad(m_webview);
+    WebView::EnableTouchKeypad(m_webview, "wipingDialog");
 }
 
 

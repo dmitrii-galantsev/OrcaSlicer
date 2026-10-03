@@ -63,6 +63,18 @@ webkit_web_view_run_javascript_finish                (WebKitWebView             
 						      GError                    **error);
 WEBKIT_API void
 webkit_javascript_result_unref              (WebKitJavascriptResult *js_result);
+struct WebKitUserContentManager;
+struct JSCValue;
+WEBKIT_API WebKitUserContentManager *
+webkit_web_view_get_user_content_manager    (WebKitWebView *web_view);
+WEBKIT_API gboolean
+webkit_user_content_manager_register_script_message_handler (WebKitUserContentManager *manager,
+                                                             const gchar              *name);
+WEBKIT_API JSCValue *
+webkit_javascript_result_get_js_value       (WebKitJavascriptResult *js_result);
+gboolean jsc_value_is_object (JSCValue *value);
+char *   jsc_value_to_json   (JSCValue *value, guint indent);
+char *   jsc_value_to_string (JSCValue *value);
 }
 #endif
 
@@ -257,7 +269,6 @@ static std::vector<wxWebView*> g_webviews;
 // Webviews waiting for their script handler while another one is added; adding it yields, so a
 // view can be destroyed while it waits.
 static std::vector<wxWeakRef<wxWebView>> g_delay_webviews;
-static std::vector<wxWeakRef<wxWebView>> g_delay_touch_keypads;
 
 class WebViewRef : public wxObjectRefData
 {
@@ -346,7 +357,7 @@ wxWebView* WebView::CreateWebView(wxWindow * parent, wxString const & url)
                 return;
             BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ": begin to add script message handler for wx.";
             Slic3r::GUI::wxGetApp().set_adding_script_handler(true);
-            if (!webView->AddScriptMessageHandler("wx"))
+            if (!WebView::AddScriptMessageHandler(webView, "wx"))
                 wxLogError("Could not add script message handler");
             else if (ref)
                 ref->m_script_handler_added = true;
@@ -366,14 +377,13 @@ wxWebView* WebView::CreateWebView(wxWindow * parent, wxString const & url)
                         if (wv)
                             addScriptMessageHandler(wv.get());
                 }
-                WebView::EnableDelayedTouchKeypads();
             }
 #ifndef __WIN32__
         });
 #endif
         // Deferred so the owner's message handler, bound right after CreateWebView returns, is
         // already in place: the handler bound last sees a message first.
-        webView->CallAfter([webView] { WebView::EnableTouchKeypad(webView); });
+        webView->CallAfter([webView] { WebView::EnableTouchKeypad(webView, "wx"); });
         webView->EnableContextMenu(true);
     } else {
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ": failed. Use fake web view.";
@@ -390,12 +400,54 @@ void WebView::MarkScriptMessageHandlerAdded(wxWebView * webView)
         ref->m_script_handler_added = true;
 }
 
-static const char TOUCH_KEYPAD_HANDLER[] = "orcaTouchInput";
+#ifdef __linux__
+// Same event as wxWebViewWebKit sends for a script message.
+static void on_script_message(WebKitUserContentManager *, WebKitJavascriptResult *result, wxWebView *webView)
+{
+    JSCValue *value = webkit_javascript_result_get_js_value(result);
+    char     *text  = jsc_value_is_object(value) ? jsc_value_to_json(value, 0) : jsc_value_to_string(value);
+    wxWebViewEvent event(wxEVT_WEBVIEW_SCRIPT_MESSAGE_RECEIVED, webView->GetId(), webView->GetCurrentURL(), "");
+    if (text != nullptr) {
+        event.SetString(wxString::FromUTF8(text));
+        g_free(text);
+    }
+    webView->HandleWindowEvent(event);
+}
+#endif
+
+bool WebView::AddScriptMessageHandler(wxWebView *webView, const wxString &name)
+{
+#ifdef __linux__
+    // wxWebViewWebKit::AddScriptMessageHandler() ends with a synchronous RunScript(), a nested main
+    // loop that waits for the web process to answer. A view that never loads a page (the prebuilt
+    // printer view) never answers, and a dialog's fresh web process can take minutes to.
+    auto *wkWebView = static_cast<WebKitWebView *>(webView->GetNativeBackend());
+    if (wkWebView == nullptr)
+        return webView->AddScriptMessageHandler(name);
+    WebKitUserContentManager *ucm = webkit_web_view_get_user_content_manager(wkWebView);
+    // Re-adding after RemoveScriptMessageHandler() must not deliver every message twice.
+    guint  signal_id = 0;
+    GQuark detail    = 0;
+    const wxString signal = "script-message-received::" + name;
+    if (g_signal_parse_name(signal.utf8_str(), G_OBJECT_TYPE(ucm), &signal_id, &detail, TRUE) &&
+        g_signal_handler_find(ucm, GSignalMatchType(G_SIGNAL_MATCH_ID | G_SIGNAL_MATCH_DETAIL | G_SIGNAL_MATCH_FUNC | G_SIGNAL_MATCH_DATA),
+                              signal_id, detail, nullptr, (gpointer) on_script_message, webView) == 0)
+        g_signal_connect(ucm, signal.utf8_str(), G_CALLBACK(on_script_message), webView);
+    if (!webkit_user_content_manager_register_script_message_handler(ucm, name.utf8_str()))
+        return false;
+    const wxString alias = wxString::Format("window.%s = window.webkit.messageHandlers.%s;", name, name);
+    webView->AddUserScript(alias);
+    RunScript(webView, alias);
+    return true;
+#else
+    return webView->AddScriptMessageHandler(name);
+#endif
+}
 
 // Sets the value through the prototype setter so pages whose framework wraps the value property
 // still see the change, and blurs the input so pages that commit on focus loss commit too.
 static const char TOUCH_KEYPAD_SCRIPT[] = R"JS(
-(function () {
+(function (handlerName) {
     if (window.__orcaTouchKeypad)
         return;
     var textTypes = ['text', 'search', 'email', 'url', 'tel', 'password', 'number'];
@@ -409,8 +461,8 @@ static const char TOUCH_KEYPAD_SCRIPT[] = R"JS(
         return el.tagName === 'INPUT' && textTypes.indexOf(el.type) >= 0;
     }
     function post(message) {
-        var handler = window.orcaTouchInput ||
-            (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.orcaTouchInput);
+        var handler = window[handlerName] ||
+            (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers[handlerName]);
         if (handler)
             handler.postMessage(JSON.stringify(message));
     }
@@ -442,7 +494,7 @@ static const char TOUCH_KEYPAD_SCRIPT[] = R"JS(
                 el.blur();
         }
     };
-})();
+})(%s);
 )JS";
 
 static void open_touch_keypad(wxWeakRef<wxWebView> webView, long long serial, const wxString& initial, bool numeric, bool password)
@@ -457,40 +509,18 @@ static void open_touch_keypad(wxWeakRef<wxWebView> webView, long long serial, co
                                                        serial, wxString::FromUTF8(literal)));
 }
 
-void WebView::EnableDelayedTouchKeypads()
-{
-    while (!g_delay_touch_keypads.empty() && !Slic3r::GUI::wxGetApp().is_adding_script_handler()) {
-        auto views = std::move(g_delay_touch_keypads);
-        for (const wxWeakRef<wxWebView>& wv : views)
-            if (wv)
-                EnableTouchKeypad(wv.get());
-    }
-}
-
-void WebView::EnableTouchKeypad(wxWebView *webView)
+void WebView::EnableTouchKeypad(wxWebView *webView, const wxString &handler)
 {
     if (webView == nullptr || dynamic_cast<FakeWebView *>(webView) != nullptr || !Slic3r::GUI::touch_input_enabled())
         return;
-    // AddScriptMessageHandler runs a nested main loop on GTK, so this can be reached while another
-    // add is in progress; re-posting with CallAfter would spin inside that loop forever.
-    if (Slic3r::GUI::wxGetApp().is_adding_script_handler()) {
-        g_delay_touch_keypads.push_back(webView);
-        return;
-    }
-    Slic3r::GUI::wxGetApp().set_adding_script_handler(true);
-    const bool added = webView->AddScriptMessageHandler(TOUCH_KEYPAD_HANDLER);
-    Slic3r::GUI::wxGetApp().set_adding_script_handler(false);
-    EnableDelayedTouchKeypads();
-    if (!added) {
-        BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << ": could not add the touch keypad script message handler";
-        return;
-    }
-
-    webView->Bind(wxEVT_WEBVIEW_LOADED, [webView](wxWebViewEvent &evt) {
-        WebView::RunScript(webView, TOUCH_KEYPAD_SCRIPT);
+    const std::string name   = nlohmann::json(handler.utf8_string()).dump(-1, ' ', true);
+    const wxString    script = wxString::Format(TOUCH_KEYPAD_SCRIPT, wxString::FromUTF8(name));
+    webView->Bind(wxEVT_WEBVIEW_LOADED, [webView, script](wxWebViewEvent &evt) {
+        WebView::RunScript(webView, script);
         evt.Skip();
     });
-    // The GTK backend does not report which handler a message came to, so the payload tells.
+    // The page posts through the owner's handler, so the payload tells a keypad request from the
+    // owner's own messages. Bound after the owner's handler, this one sees each message first.
     webView->Bind(wxEVT_WEBVIEW_SCRIPT_MESSAGE_RECEIVED, [webView](wxWebViewEvent &evt) {
         const nlohmann::json j = nlohmann::json::parse(evt.GetString().utf8_string(), nullptr, false);
         if (!j.is_object() || !j.contains("orca_touch_keypad") || !j["orca_touch_keypad"].is_number_integer()) {
@@ -509,7 +539,7 @@ void WebView::EnableTouchKeypad(wxWebView *webView)
         wxWeakRef<wxWebView> ref(webView);
         webView->CallAfter([ref, serial, initial, numeric, password] { open_touch_keypad(ref, serial, initial, numeric, password); });
     });
-    WebView::RunScript(webView, TOUCH_KEYPAD_SCRIPT);
+    WebView::RunScript(webView, script);
 }
 
 #if wxUSE_WEBVIEW_EDGE
