@@ -297,7 +297,6 @@ void TouchKeypad::build_number_panel()
 {
     m_number_panel = new wxPanel(this);
     m_number_panel->SetBackgroundColour(GetBackgroundColour());
-    m_number_panel->SetCanFocus(true);
     const int gap = FromDIP(8);
     auto* sizer = new wxBoxSizer(wxVERTICAL);
 
@@ -343,13 +342,16 @@ void TouchKeypad::build_number_panel()
     sizer->Add(actions, 0, wxEXPAND);
 
     m_number_panel->SetSizer(sizer);
+    // The keys never take focus, so the panel must, or GTK has nowhere to deliver key events and
+    // Escape, Enter and typed digits never reach on_char_hook(). Only after the keys: each Button
+    // still accepts focus while it is added, and wxPanel::AddChild() then turns focus off for the panel.
+    m_number_panel->SetCanFocus(true);
 }
 
 void TouchKeypad::build_text_panel()
 {
     m_text_panel = new wxPanel(this);
     m_text_panel->SetBackgroundColour(GetBackgroundColour());
-    m_text_panel->SetCanFocus(true);
     const int gap = FromDIP(6);
     const int key_width = 72;
     auto* sizer = new wxBoxSizer(wxVERTICAL);
@@ -408,6 +410,7 @@ void TouchKeypad::build_text_panel()
     sizer->Add(bottom, 0, wxALIGN_CENTER_HORIZONTAL | wxTOP, gap);
 
     m_text_panel->SetSizer(sizer);
+    m_text_panel->SetCanFocus(true);
 }
 
 void TouchKeypad::set_number_mode(bool number)
@@ -437,8 +440,6 @@ void TouchKeypad::set_number_mode(bool number)
     m_number_mode = number;
     m_number_panel->Show(number);
     m_text_panel->Show(!number);
-    // No key takes focus, so without a focused panel GTK delivers no key events and Escape and
-    // Enter never reach on_char_hook().
     (number ? m_number_panel : m_text_panel)->SetFocus();
     update_display();
     place_on_screen(this, GetParent());
