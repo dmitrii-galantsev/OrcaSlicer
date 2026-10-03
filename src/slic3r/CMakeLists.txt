@@ -561,6 +561,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/TickCode.hpp
     GUI/TouchKeypad.cpp
     GUI/TouchKeypad.hpp
+    GUI/TouchSteps.cpp
+    GUI/TouchSteps.hpp
     GUI/TroubleshootDialog.cpp
     GUI/TroubleshootDialog.hpp
     GUI/UnsavedChangesDialog.cpp

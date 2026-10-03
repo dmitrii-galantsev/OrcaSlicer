@@ -16,6 +16,7 @@
 #include <wx/spinctrl.h>
 #include <wx/stattext.h>
 #include <wx/textctrl.h>
+#include <wx/time.h>
 #include <wx/valnum.h>
 #include <wx/valtext.h>
 
@@ -138,12 +139,21 @@ bool is_spin(wxWindow* window)
     return dynamic_cast<wxSpinCtrl*>(window) != nullptr || dynamic_cast<wxSpinCtrlDouble*>(window) != nullptr;
 }
 
+// The text of an input with its own − / + buttons. A tap there leaves the number to the buttons;
+// only a long press opens the keypad, for values the buttons cannot reach (mm <-> %, N/A).
+bool has_step_buttons(wxWindow* text)
+{
+    wxWindow* parent = text->GetParent();
+    return parent != nullptr && (dynamic_cast<TouchStepped*>(parent) != nullptr || dynamic_cast<::SpinInput*>(parent) != nullptr);
+}
+
+constexpr long LONG_PRESS_MS = 500;
+
 bool accepts_touch_keypad(wxWindow* target)
 {
-    if (!target->IsEnabled() || !target->IsShownOnScreen() || is_cell_editor(target))
+    // GTK's own spin buttons fill most of a native spin control.
+    if (!target->IsEnabled() || !target->IsShownOnScreen() || is_cell_editor(target) || is_spin(target))
         return false;
-    if (is_spin(target))
-        return true;
     if (auto* text = dynamic_cast<wxTextCtrl*>(target); text != nullptr && text->IsMultiLine())
         return false;
     auto* entry = dynamic_cast<wxTextEntry*>(target);
@@ -165,13 +175,6 @@ wxWindow* touch_target(wxWindow* window, const wxPoint& pos)
         return input->GetTextCtrl();
     if (auto* input = dynamic_cast<::TempInput*>(window))
         return input->GetTextCtrl();
-    if (is_spin(window)) {
-        // GTK draws the -/+ buttons inside the spin control, each about as wide as it is tall. The
-        // press may come from the buttons' own GdkWindow, so use the pointer, not the event position.
-        const wxSize  size = window->GetClientSize();
-        const wxPoint at   = window->ScreenToClient(wxGetMousePosition());
-        return at.x < std::max(size.x - 2 * size.y, size.x / 3) ? window : nullptr;
-    }
     if (dynamic_cast<wxTextEntry*>(window) != nullptr && dynamic_cast<wxItemContainer*>(window) == nullptr &&
         dynamic_cast<wxComboCtrl*>(window) == nullptr)
         return window;
@@ -537,6 +540,30 @@ bool touch_input_enabled()
     return wxTheApp != nullptr && wxGetApp().app_config != nullptr && wxGetApp().app_config->get_bool("touch_input");
 }
 
+int touch_stepper_height(const wxWindow* window) { return window->FromDIP(36); }
+
+int touch_stepper_gap(const wxWindow* window) { return window->FromDIP(2); }
+
+int touch_stepper_min_text_width(const wxWindow* window) { return window->FromDIP(44); }
+
+Button* create_touch_step_button(wxWindow* parent, bool increase)
+{
+    auto* button = new Button(parent, increase ? wxString("+") : MINUS);
+    button->SetStyle(ButtonStyle::Regular, ButtonType::Compact);
+    button->SetCanFocus(false);
+    size_touch_step_button(button, touch_stepper_height(parent) - 2 * touch_stepper_gap(parent));
+    return button;
+}
+
+void size_touch_step_button(Button* button, int side)
+{
+    button->SetFont(Label::Head_16);
+    button->SetPaddingSize(wxSize(0, 0));
+    button->SetCornerRadius(button->FromDIP(4));
+    button->SetMinSize(wxSize(side, side));
+    button->SetSize(wxSize(side, side));
+}
+
 void edit_with_touch_keypad(wxWindow* target)
 {
     if (s_keypad_open || target == nullptr)
@@ -601,6 +628,7 @@ int TouchInputFilter::FilterEvent(wxEvent& event)
     if (type == wxEVT_LEFT_DOWN) {
         m_pressed    = window;
         m_pressed_at = pos;
+        m_pressed_ms = wxGetLocalTimeMillis();
         // ComboBox opens its list on any press; over its text part the press belongs to the pad.
         return dynamic_cast<::ComboBox*>(window) != nullptr ? Event_Processed : Event_Skip;
     }
@@ -609,7 +637,7 @@ int TouchInputFilter::FilterEvent(wxEvent& event)
     const int  slop = window->FromDIP(16);
     const bool tap  = m_pressed.get() == window && std::abs(pos.x - m_pressed_at.x) <= slop && std::abs(pos.y - m_pressed_at.y) <= slop;
     m_pressed = nullptr;
-    if (!tap)
+    if (!tap || (has_step_buttons(target) && wxGetLocalTimeMillis() - m_pressed_ms < LONG_PRESS_MS))
         return Event_Skip;
 
     // Let GTK finish the release (focus, cursor) before a nested modal loop starts.

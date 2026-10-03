@@ -34,6 +34,8 @@ class SpinInput : public wxNavigationEnabled<StaticBox>
     int max;
     int delta;
     int step;
+    // Touch mode: finger-sized − / + buttons right of the unit text instead of the small arrows.
+    bool touch { false };
 
     static const int SpinInputWidth = 200;
     static const int SpinInputHeight = 50;
@@ -100,6 +102,7 @@ private:
     void render(wxDC& dc);
 
     void messureSize();
+    void messureTouchSize();
 
     Button *createButton(bool inc);
 

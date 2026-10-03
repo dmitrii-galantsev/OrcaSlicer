@@ -2,8 +2,10 @@
 #include "Label.hpp"
 #include "Button.hpp"
 #include "TextCtrl.h"
+#include "../TouchKeypad.hpp"
 
 #include "slic3r/GUI/Widgets/StaticBox.hpp"
+#include <algorithm>
 #include <utility>
 #include "slic3r/GUI/Widgets/StateHandler.hpp"
 #include <wx/dcclient.h>
@@ -71,6 +73,7 @@ void SpinInput::Create(wxWindow *parent,
                      int min, int max, int initial, int step)
 {
     StaticBox::Create(parent, wxID_ANY, pos, size);
+    touch = Slic3r::GUI::touch_input_enabled();
     SetFont(Label::Body_12);
     wxWindow::SetLabel(label);
     state_handler.attach({&label_color, &text_color});
@@ -206,15 +209,17 @@ void SpinInput::render(wxDC& dc)
     StaticBox::render(dc);
     int    states = state_handler.states();
     wxSize size = GetSize();
-    // draw seperator of buttons
     wxPoint pt = button_inc->GetPosition();
-    pt.y = size.y / 2;
-    dc.SetPen(wxPen(border_color.defaultColor()));
-    dc.DrawLine(pt, pt + wxSize{button_inc->GetSize().x - 2, 0});
+    if (!touch) {
+        // draw seperator of buttons
+        pt.y = size.y / 2;
+        dc.SetPen(wxPen(border_color.defaultColor()));
+        dc.DrawLine(pt, pt + wxSize{button_inc->GetSize().x - 2, 0});
+    }
     // draw label
     auto label = GetLabel();
     if (!label.IsEmpty()) {
-        pt.x = size.x - labelSize.x - 5;
+        pt.x = (touch ? button_dec->GetPosition().x : size.x) - labelSize.x - 5;
         pt.y = (size.y - labelSize.y) / 2;
         dc.SetFont(GetFont());
         dc.SetTextForeground(label_color.colorForStates(states));
@@ -224,6 +229,10 @@ void SpinInput::render(wxDC& dc)
 
 void SpinInput::messureSize()
 {
+    if (touch) {
+        messureTouchSize();
+        return;
+    }
     wxSize size = GetSize();
     wxSize textSize = text_ctrl->GetSize();
     int h = textSize.y + 8;
@@ -247,10 +256,41 @@ void SpinInput::messureSize()
     button_dec->SetPosition({3, size.y / 2 + 1});
 }
 
+// [text][unit][−][+], with the buttons as squares inside the frame. Narrow callers get the text
+// area widened rather than squeezed out.
+void SpinInput::messureTouchSize()
+{
+    wxClientDC dc(this);
+    labelSize = dc.GetMultiLineTextExtent(GetLabel());
+
+    const int gap      = Slic3r::GUI::touch_stepper_gap(this);
+    wxSize    size     = GetSize();
+    wxSize    textSize = text_ctrl->GetSize();
+    size.y             = std::max({size.y, textSize.y + 8, Slic3r::GUI::touch_stepper_height(this)});
+    const int side     = size.y - 2 * gap;
+    const int buttons  = 2 * (side + gap);
+    size.x             = std::max(size.x, 6 + Slic3r::GUI::touch_stepper_min_text_width(this) + labelSize.x + 10 + buttons);
+    StaticBox::SetSize(size);
+    SetMinSize(size);
+
+    textSize.x = size.x - 6 - labelSize.x - 10 - buttons;
+    text_ctrl->SetSize(textSize);
+    text_ctrl->SetPosition({6, (size.y - textSize.y) / 2});
+    Slic3r::GUI::size_touch_step_button(button_dec, side);
+    Slic3r::GUI::size_touch_step_button(button_inc, side);
+    button_inc->SetPosition({size.x - gap - side, gap});
+    button_dec->SetPosition({size.x - 2 * (gap + side), gap});
+}
+
 Button *SpinInput::createButton(bool inc)
 {
-    auto btn = new Button(this, "", inc ? "spin_inc" : "spin_dec", wxBORDER_NONE, 6);
-    btn->SetCornerRadius(0);
+    Button* btn;
+    if (touch) {
+        btn = Slic3r::GUI::create_touch_step_button(this, inc);
+    } else {
+        btn = new Button(this, "", inc ? "spin_inc" : "spin_dec", wxBORDER_NONE, 6);
+        btn->SetCornerRadius(0);
+    }
     btn->DisableFocusFromKeyboard();
     btn->Bind(wxEVT_LEFT_DOWN, [=](auto &e) {
         delta = inc ? 1 : -1;

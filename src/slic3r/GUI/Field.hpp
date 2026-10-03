@@ -36,6 +36,10 @@
 #include "Widgets/SpinInput.hpp"
 #include "Widgets/TextInput.hpp"
 #include "Widgets/ComboBox.hpp"
+#include "TouchKeypad.hpp"
+
+#include <wx/timer.h>
+#include <wx/weakref.h>
 
 #ifdef __WXMSW__
 #define wxMSW true
@@ -317,6 +321,33 @@ inline bool is_window_field(const t_field& obj) { return !is_bad_field(obj) && o
 /// Covenience function to determine whether this field is a valid sizer field.
 inline bool is_sizer_field(const t_field& obj) { return !is_bad_field(obj) && obj->getSizer() != nullptr; }
 
+// A TextInput with finger-sized − and + buttons inside its frame, right of the unit text. A press
+// steps once and holding repeats; on_commit runs once the button is let go.
+class TouchStepInput : public ::TextInput, public TouchStepped
+{
+public:
+    TouchStepInput(wxWindow* parent, const wxSize& size, long style);
+
+    std::function<void(int direction)> on_step;
+    std::function<void()>              on_commit;
+
+    bool Enable(bool enable = true) override;
+
+protected:
+    void DoSetSize(int x, int y, int width, int height, int sizeFlags = wxSIZE_AUTO) override;
+
+private:
+    void press(::Button* button, int direction);
+    void release();
+    void layout_buttons();
+    int  buttons_width() const;
+
+    ::Button* m_dec { nullptr };
+    ::Button* m_inc { nullptr };
+    wxTimer   m_repeat;
+    int       m_direction { 0 };
+};
+
 class TextCtrl : public Field {
     using Field::Field;
 #ifdef __WXGTK__
@@ -324,10 +355,13 @@ class TextCtrl : public Field {
     void    change_field_value(wxEvent& event);
 #endif //__WXGTK__
 
+    wxWeakRef<TouchStepInput> m_stepper;
+    void touch_step(int direction);
+
 public:
 	TextCtrl(const ConfigOptionDef& opt, const t_config_option_key& id) : Field(opt,  id) {}
 	TextCtrl(wxWindow* parent, const ConfigOptionDef& opt, const t_config_option_key& id) : Field(parent, opt, id) {}
-	~TextCtrl() {}
+	~TextCtrl();
 
     void BUILD() override;
     bool value_was_changed();

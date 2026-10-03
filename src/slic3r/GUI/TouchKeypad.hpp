@@ -7,6 +7,7 @@
 
 #include <wx/dialog.h>
 #include <wx/eventfilter.h>
+#include <wx/longlong.h>
 #include <wx/textctrl.h>
 #include <wx/timer.h>
 #include <wx/weakref.h>
@@ -87,14 +88,31 @@ private:
 
 bool touch_input_enabled();
 
+// Base of the inputs that carry their own − / + buttons in touch mode; a tap on them does not
+// open the keypad, a long press does.
+class TouchStepped
+{
+public:
+    virtual ~TouchStepped() = default;
+};
+
+// Height of an input with touch − / + buttons; the buttons are squares inside its frame.
+int     touch_stepper_height(const wxWindow* window);
+int     touch_stepper_gap(const wxWindow* window);
+// Narrowest text area left beside the buttons.
+int     touch_stepper_min_text_width(const wxWindow* window);
+Button* create_touch_step_button(wxWindow* parent, bool increase);
+void    size_touch_step_button(Button* button, int side);
+
 // target is a single-line wxTextEntry window (wxTextCtrl, wxSearchCtrl, ...), a wxSpinCtrl or a
 // wxSpinCtrlDouble. On OK the result is committed the way the control commits a typed value:
 // Enter for text entries, wxEVT_SPINCTRL / wxEVT_SPINCTRLDOUBLE for spin controls.
 void edit_with_touch_keypad(wxWindow* target);
 
 // Installed on the application: while the "touch_input" app config option is on, a tap on an
-// editable single-line text entry, a spin control, or the frame of Orca's TextInput, SpinInput,
-// TempInput and editable ComboBox opens the keypad.
+// editable single-line text entry, or the frame of Orca's TextInput, TempInput and editable
+// ComboBox opens the keypad. Inputs with − / + buttons (TouchStepped, SpinInput) need a long
+// press; native spin controls never open it.
 class TouchInputFilter : public wxEventFilter
 {
 public:
@@ -103,6 +121,7 @@ public:
 private:
     wxWeakRef<wxWindow> m_pressed;
     wxPoint             m_pressed_at;
+    wxLongLong          m_pressed_ms;
 };
 
 }} // namespace Slic3r::GUI

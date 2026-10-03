@@ -7,6 +7,9 @@
 #include "Plater.hpp"
 #include "MainFrame.hpp"
 #include "format.hpp"
+#include "TouchSteps.hpp"
+#include "Widgets/Button.hpp"
+#include "Widgets/Label.hpp"
 
 #include "libslic3r/PrintConfig.hpp"
 
@@ -937,6 +940,161 @@ bool is_defined_input_value(wxWindow* win, const ConfigOptionType& type)
     return true;
 }
 
+TouchStepInput::TouchStepInput(wxWindow* parent, const wxSize& size, long style)
+    : TextInput(parent, "", "", "", wxDefaultPosition, size, style)
+    , m_repeat(this)
+{
+    m_dec = create_touch_step_button(this, false);
+    m_inc = create_touch_step_button(this, true);
+    for (::Button* button : {m_dec, m_inc}) {
+        const int direction = button == m_inc ? 1 : -1;
+        auto on_press = [this, button, direction](wxMouseEvent& e) {
+            e.Skip();
+            press(button, direction);
+        };
+        // A second quick tap arrives as a double click, not as a press.
+        button->Bind(wxEVT_LEFT_DOWN, on_press);
+        button->Bind(wxEVT_LEFT_DCLICK, on_press);
+        // The press already did the work; the page must not see a stray button click.
+        button->Bind(wxEVT_BUTTON, [](wxCommandEvent&) {});
+        button->Bind(wxEVT_LEFT_UP, [this, button](wxMouseEvent& e) {
+            e.Skip();
+            if (button->HasCapture())
+                button->ReleaseMouse();
+            release();
+        });
+        button->Bind(wxEVT_MOUSE_CAPTURE_LOST, [this](wxMouseCaptureLostEvent& e) {
+            e.Skip();
+            release();
+        });
+    }
+    Bind(wxEVT_TIMER, [this](wxTimerEvent&) {
+        if (m_direction != 0 && on_step)
+            on_step(m_direction);
+        if (m_repeat.IsOneShot())
+            m_repeat.Start(80);
+    }, m_repeat.GetId());
+
+    SetMinSize(wxSize(GetMinSize().x, touch_stepper_height(this)));
+    SetSize(GetSize());
+}
+
+bool TouchStepInput::Enable(bool enable)
+{
+    const bool changed = TextInput::Enable(enable);
+    if (m_dec != nullptr) {
+        m_dec->Enable(enable);
+        m_inc->Enable(enable);
+    }
+    return changed;
+}
+
+int TouchStepInput::buttons_width() const
+{
+    const int gap = touch_stepper_gap(this);
+    return 2 * (touch_stepper_height(this) - gap);
+}
+
+void TouchStepInput::DoSetSize(int x, int y, int width, int height, int sizeFlags)
+{
+    if (m_dec != nullptr && !(sizeFlags & wxSIZE_USE_EXISTING)) {
+        if (height != wxDefaultCoord)
+            height = std::max(height, touch_stepper_height(this));
+        if (width != wxDefaultCoord) {
+            // TextInput gives its text control the width less 15 px and the unit text.
+            wxClientDC dc(this);
+            dc.SetFont(Label::Body_12);
+            const int label = GetLabel().IsEmpty() ? 0 : dc.GetTextExtent(GetLabel()).x;
+            width = std::max(width, 15 + label + buttons_width() + touch_stepper_min_text_width(this));
+        }
+    }
+    TextInput::DoSetSize(x, y, width, height, sizeFlags);
+    if (!(sizeFlags & wxSIZE_USE_EXISTING))
+        layout_buttons();
+}
+
+void TouchStepInput::layout_buttons()
+{
+    if (m_dec == nullptr)
+        return;
+    const wxSize size = GetSize();
+    const int    gap  = touch_stepper_gap(this);
+    const int    side = std::max(size.y - 2 * gap, 1);
+    size_touch_step_button(m_dec, side);
+    size_touch_step_button(m_inc, side);
+    m_inc->SetPosition(wxPoint(size.x - gap - side, gap));
+    m_dec->SetPosition(wxPoint(size.x - 2 * (gap + side), gap));
+
+    wxTextCtrl* text      = GetTextCtrl();
+    wxSize      text_size = text->GetSize();
+    text_size.x           = std::max(text_size.x - 2 * (gap + side), 1);
+    text->SetSize(text_size);
+}
+
+void TouchStepInput::press(::Button* button, int direction)
+{
+    if (m_direction != 0)
+        return;
+    if (!button->HasCapture())
+        button->CaptureMouse();
+    m_direction = direction;
+    if (on_step)
+        on_step(direction);
+    m_repeat.StartOnce(400);
+}
+
+void TouchStepInput::release()
+{
+    m_repeat.Stop();
+    if (m_direction == 0)
+        return;
+    m_direction = 0;
+    // Committing can rebuild the settings page and destroy this control, so not from inside the
+    // button's own mouse handler.
+    CallAfter([this]() {
+        if (on_commit)
+            on_commit();
+    });
+}
+
+static bool uses_touch_stepper(const ConfigOptionDef& opt)
+{
+    if (opt.multiline || opt.readonly || opt.gui_type != ConfigOptionDef::GUIType::undefined || !touch_input_enabled())
+        return false;
+    switch (opt.type) {
+    case coFloat:
+    case coFloats:
+    case coPercent:
+    case coPercents:
+    case coFloatOrPercent:
+    case coFloatsOrPercents: return true;
+    default: return false;
+    }
+}
+
+TextCtrl::~TextCtrl()
+{
+    if (m_stepper) {
+        m_stepper->on_step   = nullptr;
+        m_stepper->on_commit = nullptr;
+    }
+}
+
+void TextCtrl::touch_step(int direction)
+{
+    wxTextCtrl* ctrl   = text_ctrl();
+    auto        number = parse_touch_number(into_u8(ctrl->GetValue()));
+    // N/A in a nullable field steps from the value it had before.
+    if (!number && m_last_meaningful_value.type() == typeid(wxString))
+        number = parse_touch_number(into_u8(boost::any_cast<wxString>(m_last_meaningful_value)));
+    const double      value   = number ? number->value : 0.;
+    const std::string suffix  = number ? number->suffix : std::string();
+    const bool        percent = !suffix.empty() && suffix.back() == '%';
+    const double      step    = touch_step_for_option(m_opt, m_opt_id, value, percent);
+    const double      next    = touch_step_value(value, step, direction, m_opt.min, m_opt.max);
+    ctrl->SetValue(from_u8(format_touch_number(next, 0, touch_step_decimals(step)) + suffix));
+}
+
 void TextCtrl::BUILD() {
     auto size = wxSize(def_width_wider() * m_em_unit, wxDefaultCoord);
     if (m_opt.height >= 0) size.SetHeight(m_opt.height*m_em_unit);
@@ -1002,9 +1160,17 @@ void TextCtrl::BUILD() {
     // const long style = m_opt.multiline ? wxTE_MULTILINE : wxTE_PROCESS_ENTER/*0*/;
     static Builder<wxTextCtrl> builder1;
     static Builder<::TextInput> builder2;
+    if (uses_touch_stepper(m_opt)) {
+        m_stepper            = new TouchStepInput(m_parent, size, wxTE_PROCESS_ENTER);
+        m_stepper->on_step   = [this](int direction) { touch_step(direction); };
+        m_stepper->on_commit = [this]() {
+            EnterPressed enter(this);
+            propagate_value();
+        };
+    }
     auto temp = m_opt.multiline
         ? (wxWindow*)builder1.build(m_parent, wxID_ANY, "", wxDefaultPosition, size, wxTE_MULTILINE)
-        : builder2.build(m_parent, "", "", "", wxDefaultPosition, size, wxTE_PROCESS_ENTER);
+        : m_stepper ? m_stepper.get() : builder2.build(m_parent, "", "", "", wxDefaultPosition, size, wxTE_PROCESS_ENTER);
     temp->SetLabel(_L(m_opt.sidetext));
 	auto text_ctrl = m_opt.multiline ? (wxTextCtrl *)temp : ((TextInput *) temp)->GetTextCtrl();
     text_ctrl->SetValue(text_value);
@@ -1388,6 +1554,8 @@ void SpinCtrl::BUILD() {
     temp->GetTextCtrl()->SetLabel(text_value);
     temp->SetRange(min_val, max_val);
     temp->SetValue(default_value);
+    if (touch_input_enabled())
+        temp->SetStep(int(touch_step_for_option(m_opt, m_opt_id, default_value, false)));
     m_combine_side_text = true;
 #ifdef __WXGTK3__
 	wxSize best_sz = temp->GetBestSize();
