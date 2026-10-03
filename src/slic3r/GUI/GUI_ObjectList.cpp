@@ -136,6 +136,15 @@ static int filaments_count()
     return wxGetApp().filaments_cnt();
 }
 
+// Rows sized for a finger in touch mode; the filament colour badge (2*em) still fits either way.
+static int object_list_row_height(const int em, const int dip_2)
+{
+    const AppConfig* cfg = wxGetApp().app_config;
+    if (cfg != nullptr && cfg->get_bool("touch_input"))
+        return std::lround(3.6 * em);
+    return 2 * em + dip_2;
+}
+
 static void take_snapshot(const std::string& snapshot_name)
 {
     Plater* plater = wxGetApp().plater();
@@ -538,7 +547,7 @@ void ObjectList::create_objects_ctrl()
     // and merge into adjacent rows); on Windows/Linux the generic control normally
     // derives the height from the renderers, but we set it here too so all
     // platforms match.
-    SetRowHeight(2 * em + FromDIP(2));
+    SetRowHeight(object_list_row_height(em, FromDIP(2)));
 }
 
 void ObjectList::get_selected_item_indexes(int& obj_idx, int& vol_idx, const wxDataViewItem& input_item/* = wxDataViewItem(nullptr)*/)
@@ -6561,7 +6570,7 @@ void ObjectList::msw_rescale()
     // Keep the explicit row height (see create_objects_ctrl) in sync with the
     // rescaled em so the filament colour badge keeps fitting after a DPI or theme
     // change.
-    SetRowHeight(2 * em + FromDIP(2));
+    SetRowHeight(object_list_row_height(em, FromDIP(2)));
 
     // rescale/update existing items with bitmaps
     m_objects_model->Rescale();
