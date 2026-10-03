@@ -36,6 +36,7 @@
 #include "slic3r/GUI/ObjectDataViewModel.hpp"
 #include <cstddef>
 #include "slic3r/GUI/ExtraRenderers.hpp"
+#include "slic3r/GUI/TouchKeypad.hpp"
 #include <cassert>
 #include <algorithm>
 #include "libslic3r/TriangleMesh.hpp"
@@ -6663,6 +6664,11 @@ void GUI::ObjectList::OnStartEditing(wxDataViewEvent &event)
                 m_objects_model->SetName(from_u8(plate->get_plate_name()), GetSelection());
             }
         }
+        if (touch_input_enabled() && (m_objects_model->GetItemType(item) & (itVolume | itObject | itPlate))) {
+            // The in-place editor would end editing as soon as the modal keypad takes focus.
+            event.Veto();
+            CallAfter([this, item] { rename_with_touch_keypad(item); });
+        }
     }
 }
 
@@ -6740,6 +6746,44 @@ void ObjectList::OnEditingStarted(wxDataViewEvent &event)
     SetCustomRendererPtr(dynamic_cast<wxDataViewCustomRenderer*>(renderer));
 #endif
 #endif //__WXMSW__
+}
+
+// Applies the name through the model the way the in-place editor does, so ItemValueChanged() renames
+// the object, part or plate.
+void ObjectList::rename_with_touch_keypad(wxDataViewItem item)
+{
+    if (GetSelection() != item)
+        return;
+    auto restore_plate_name = [this, item] {
+        int plate_idx = -1;
+        if ((m_objects_model->GetItemType(item, plate_idx) & itPlate) && plate_idx >= 0)
+            m_objects_model->SetCurSelectedPlateFullName(plate_idx, wxGetApp().plater()->get_partplate_list().get_plate(plate_idx)->get_plate_name());
+    };
+
+    wxVariant old_value;
+    m_objects_model->GetValue(old_value, item, colName);
+    DataViewBitmapText data;
+    data << old_value;
+    TouchKeypad pad(wxGetTopLevelParent(this), data.GetText(), false, false);
+    const bool     ok   = pad.ShowModal() == wxID_OK && GetSelection() == item;
+    const wxString name = pad.GetValue();
+    if (!ok || (m_objects_model->GetParent(item).IsOk() && name.IsEmpty())) {
+        if (GetSelection() == item)
+            restore_plate_name();
+        return;
+    }
+    if (Plater::has_illegal_filename_characters(name)) {
+        restore_plate_name();
+        Plater::show_illegal_characters_warning(this);
+        return;
+    }
+
+    data.SetText(name);
+    wxVariant new_value;
+    new_value << data;
+    m_objects_model->ChangeValue(new_value, item, colName);
+    if (Plater* plater = wxGetApp().plater())
+        plater->set_current_canvas_as_dirty();
 }
 
 void ObjectList::OnEditingDone(wxDataViewEvent &event)

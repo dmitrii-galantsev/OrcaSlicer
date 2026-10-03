@@ -523,6 +523,7 @@ private:
     // Workaround for entering the column editing mode on Windows. Simulate keyboard enter when another column of the active line is selected.
     void OnStartEditing(wxDataViewEvent &event);
 	void OnEditingStarted(wxDataViewEvent &event);
+    void rename_with_touch_keypad(wxDataViewItem item);
     void OnEditingDone(wxDataViewEvent &event);
 
     // apply the instance transform to all volumes and reset instance transform except the offset
