@@ -524,6 +524,7 @@ private:
     void OnStartEditing(wxDataViewEvent &event);
 	void OnEditingStarted(wxDataViewEvent &event);
     void rename_with_touch_keypad(wxDataViewItem item);
+    bool toggle_touch_multi_selection(const wxPoint& pos, bool toggle);
     void OnEditingDone(wxDataViewEvent &event);
 
     // apply the instance transform to all volumes and reset instance transform except the offset

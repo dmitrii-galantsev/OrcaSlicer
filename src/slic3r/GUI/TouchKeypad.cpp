@@ -556,6 +556,12 @@ bool touch_input_enabled()
     return wxTheApp != nullptr && wxGetApp().app_config != nullptr && wxGetApp().app_config->get_bool("touch_input");
 }
 
+static bool s_touch_multi_select = false;
+
+bool touch_multi_select_active() { return s_touch_multi_select && touch_input_enabled(); }
+
+void set_touch_multi_select(bool on) { s_touch_multi_select = on; }
+
 int touch_stepper_height(const wxWindow* window) { return window->FromDIP(36); }
 
 int touch_stepper_gap(const wxWindow* window) { return window->FromDIP(2); }

@@ -400,7 +400,12 @@ bool GLGizmosManager::init_icon_textures()
              { IC_CANVAS_SECTION, "canvas_section" }, { IC_CANVAS_SECTION_HOVER, "canvas_section_hover" },
              { IC_CANVAS_SECTION_DARK, "canvas_section_dark" }, { IC_CANVAS_SECTION_DARK_HOVER, "canvas_section_dark_hover" },
              { IC_CANVAS_SECTION_ACTIVE, "canvas_section_active" }, { IC_CANVAS_SECTION_ACTIVE_HOVER, "canvas_section_active_hover" },
-             { IC_CANVAS_SECTION_ACTIVE_DARK, "canvas_section_active_dark" }, { IC_CANVAS_SECTION_ACTIVE_DARK_HOVER, "canvas_section_active_dark_hover" } }) {
+             { IC_CANVAS_SECTION_ACTIVE_DARK, "canvas_section_active_dark" }, { IC_CANVAS_SECTION_ACTIVE_DARK_HOVER, "canvas_section_active_dark_hover" },
+             { IC_CANVAS_MULTI_SELECT, "canvas_multi_select" }, { IC_CANVAS_MULTI_SELECT_HOVER, "canvas_multi_select_hover" },
+             { IC_CANVAS_MULTI_SELECT_DARK, "canvas_multi_select_dark" }, { IC_CANVAS_MULTI_SELECT_DARK_HOVER, "canvas_multi_select_dark_hover" },
+             { IC_CANVAS_MULTI_SELECT_ACTIVE, "canvas_multi_select_active" }, { IC_CANVAS_MULTI_SELECT_ACTIVE_HOVER, "canvas_multi_select_active_hover" },
+             { IC_CANVAS_MULTI_SELECT_ACTIVE_DARK, "canvas_multi_select_active_dark" },
+             { IC_CANVAS_MULTI_SELECT_ACTIVE_DARK_HOVER, "canvas_multi_select_active_dark_hover" } }) {
         if (!IMTexture::load_from_svg_file(Slic3r::resources_dir() + "/images/" + name + ".svg", 72, 72, texture_id))
             return false;
         icon_list.insert(std::make_pair((int) icon, texture_id));

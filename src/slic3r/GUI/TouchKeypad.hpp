@@ -88,6 +88,12 @@ private:
 
 bool touch_input_enabled();
 
+// The on-screen stand-in for Ctrl and Shift while selecting, sticky for the session: a tap on an
+// object in the 3D view or a row in the object list adds or removes it, and a drag from empty
+// space in the 3D view draws a selection rectangle that adds to the selection. Only in touch mode.
+bool touch_multi_select_active();
+void set_touch_multi_select(bool on);
+
 // The keypad for a caller that applies the text itself; nullopt on Cancel. It starts in number
 // mode when initial is a number, or when it is empty and numeric_hint is set.
 std::optional<wxString> ask_touch_text(wxWindow* parent, const wxString& initial, bool numeric_hint = false, bool password = false);

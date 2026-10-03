@@ -331,6 +331,17 @@ ObjectList::ObjectList(wxWindow* parent) :
     });
 #endif //__WXMSW__
 
+    // The native list toggles a row only with Ctrl held; the touch multi-select toggle stands in for it.
+    // GTK sends a double click after the second press, which has already toggled the row back.
+    auto touch_multi_select = [this](bool toggle) {
+        return [this, toggle](wxMouseEvent& event) {
+            if (!touch_multi_select_active() || !toggle_touch_multi_selection(get_mouse_position_in_control(), toggle))
+                event.Skip();
+        };
+    };
+    GetMainWindow()->Bind(wxEVT_LEFT_DOWN, touch_multi_select(true));
+    GetMainWindow()->Bind(wxEVT_LEFT_DCLICK, touch_multi_select(false));
+
     Bind(wxEVT_DATAVIEW_ITEM_CONTEXT_MENU,  &ObjectList::OnContextMenu,     this);
 
     // BBS
@@ -6761,6 +6772,29 @@ void ObjectList::OnEditingStarted(wxDataViewEvent &event)
     SetCustomRendererPtr(dynamic_cast<wxDataViewCustomRenderer*>(renderer));
 #endif
 #endif //__WXMSW__
+}
+
+bool ObjectList::toggle_touch_multi_selection(const wxPoint& pos, bool toggle)
+{
+    wxDataViewItem    item;
+    wxDataViewColumn* col = nullptr;
+    HitTest(pos, item, col);
+    if (!item || col == nullptr || col->GetModelColumn() != colName ||
+        !(m_objects_model->GetItemType(item) & (itObject | itVolume | itInstance)))
+        return false;
+    // Left of the name cell is the expander, which should still fold the row.
+    if (pos.x < GetItemRect(item, col).GetLeft())
+        return false;
+    if (!toggle)
+        return true;
+
+    if (IsSelected(item))
+        Unselect(item);
+    else
+        Select(item);
+    m_last_selected_item = item;
+    selection_changed();
+    return true;
 }
 
 // Applies the name through the model the way the in-place editor does, so ItemValueChanged() renames

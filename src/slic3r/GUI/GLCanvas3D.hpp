@@ -600,6 +600,12 @@ private:
     };
     TouchGesture m_touch;
     bool m_touch_events_enabled{ false };
+    // What the touch multi-select toggle does with the current left press: Ctrl on an unselected
+    // object, Shift from empty space. A selected object leaves the selection only when the finger
+    // lifts without a drag or a long press, so the selection can still be moved or given a menu.
+    enum class TouchMultiSelectPress { None, Add, Remove, Rectangle };
+    TouchMultiSelectPress m_touch_multi_select_press{ TouchMultiSelectPress::None };
+    int                   m_touch_multi_select_volume{ -1 };
     GLGizmosManager m_gizmos;
     //BBS: GUI refactor: GLToolbar
     mutable GLToolbar m_main_toolbar;

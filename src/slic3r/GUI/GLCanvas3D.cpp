@@ -38,6 +38,7 @@
 #include "slic3r/GUI/Gizmos/GLGizmoBase.hpp"
 #include <wx/window.h>
 #include "slic3r/GUI/GLTexture.hpp"
+#include "slic3r/GUI/TouchKeypad.hpp"
 #include <ratio>
 #include <wx/string.h>
 #include "slic3r/GUI/GLToolbar.hpp"
@@ -4422,6 +4423,9 @@ void GLCanvas3D::on_mouse(wxMouseEvent& evt)
     } else if (evt.ButtonDown())
         m_touch.left_down = false;
 
+    if (evt.LeftDown() || evt.LeftDClick())
+        m_touch_multi_select_press = TouchMultiSelectPress::None;
+
     // BBS: single snapshot
     Plater::SingleSnapshot single(wxGetApp().plater());
 
@@ -4643,6 +4647,35 @@ void GLCanvas3D::on_mouse(wxMouseEvent& evt)
     button_mappings[MouseButton::Left] = static_cast<MouseAction>(std::atoi(wxGetApp().app_config->get("left_mouse_drag_action").c_str()));
     button_mappings[MouseButton::Middle] = static_cast<MouseAction>(std::atoi(wxGetApp().app_config->get("middle_mouse_drag_action").c_str()));
     button_mappings[MouseButton::Right] = static_cast<MouseAction>(std::atoi(wxGetApp().app_config->get("right_mouse_drag_action").c_str()));
+
+    if (evt.LeftDown() && m_canvas_type == ECanvasType::CanvasView3D && !any_gizmo_active && !mouse_in_layer_editing &&
+        !evt.AltDown() && touch_multi_select_active()) {
+        if (!m_hover_volume_idxs.empty()) {
+            m_touch_multi_select_volume = get_first_hover_volume_idx();
+            m_touch_multi_select_press  = m_selection.contains_volume(m_touch_multi_select_volume) ? TouchMultiSelectPress::Remove :
+                                                                                                     TouchMultiSelectPress::Add;
+        } else if (m_hover_plate_idxs.empty())
+            m_touch_multi_select_press = TouchMultiSelectPress::Rectangle;
+    }
+    if (evt.LeftDown() || evt.LeftUp() || (evt.Dragging() && evt.LeftIsDown())) {
+        if (m_touch_multi_select_press == TouchMultiSelectPress::Add)
+            evt.SetControlDown(true);
+        else if (m_touch_multi_select_press == TouchMultiSelectPress::Rectangle)
+            evt.SetShiftDown(true);
+    }
+    if (evt.LeftUp() && m_touch_multi_select_press == TouchMultiSelectPress::Remove) {
+        m_touch_multi_select_press = TouchMultiSelectPress::None;
+        if (!m_mouse.dragging && !m_mouse.ignore_left_up && m_selection.contains_volume(m_touch_multi_select_volume)) {
+            m_selection.remove(m_touch_multi_select_volume);
+            if (m_selection.is_empty())
+                m_gizmos.reset_all_states();
+            else
+                m_gizmos.refresh_on_off_state();
+            m_gizmos.update_data();
+            post_event(SimpleEvent(EVT_GLCANVAS_OBJECT_SELECT));
+            m_dirty = true;
+        }
+    }
 
     if (m_mouse.drag.move_requires_threshold && m_mouse.is_move_start_threshold_position_2D_defined() && m_mouse.is_move_threshold_met(pos)) {
         m_mouse.drag.move_requires_threshold = false;
@@ -10299,6 +10332,24 @@ void GLCanvas3D::_render_canvas_toolbar()
     imgui.begin(_L("Canvas Toolbar"), ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoMove |
                                            ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollWithMouse);//
 
+    if (m_canvas_type == ECanvasType::CanvasView3D && touch_input_enabled()) {
+        using Icon = GLGizmosManager::MENU_ICON_NAME;
+        const bool  multi     = touch_multi_select_active();
+        ImTextureID ms_normal = m_gizmos.get_icon_texture_id(multi ?
+            (m_is_dark ? Icon::IC_CANVAS_MULTI_SELECT_ACTIVE_DARK : Icon::IC_CANVAS_MULTI_SELECT_ACTIVE) :
+            (m_is_dark ? Icon::IC_CANVAS_MULTI_SELECT_DARK        : Icon::IC_CANVAS_MULTI_SELECT));
+        ImTextureID ms_hover  = m_gizmos.get_icon_texture_id(multi ?
+            (m_is_dark ? Icon::IC_CANVAS_MULTI_SELECT_ACTIVE_DARK_HOVER : Icon::IC_CANVAS_MULTI_SELECT_ACTIVE_HOVER) :
+            (m_is_dark ? Icon::IC_CANVAS_MULTI_SELECT_DARK_HOVER        : Icon::IC_CANVAS_MULTI_SELECT_HOVER));
+        if (ImGui::ImageButton3(ms_normal, ms_hover, btn_size)) {
+            set_touch_multi_select(!multi);
+            m_dirty = true;
+        } else if (ImGui::IsItemHovered())
+            imgui.tooltip(_L("Multi-select: a tap adds or removes an object, a drag from empty space selects an area"),
+                          ImGui::GetFontSize() * 20.0f);
+        ImGui::Dummy({ 0, spacing.y});
+    }
+
     // Section view, on top so its panel opens above the toolbar.
     const bool  section_view = is_section_view_active();
     ImTextureID s_normal_id  = m_gizmos.get_icon_texture_id(section_view ?
@@ -11885,7 +11936,8 @@ bool GLCanvas3D::_is_any_volume_outside() const
 
 void GLCanvas3D::_update_selection_from_hover()
 {
-    bool ctrl_pressed = wxGetKeyState(WXK_CONTROL);
+    // A touch rectangle adds, and a stray tap beside an object must not drop a selection built tap by tap.
+    bool ctrl_pressed = wxGetKeyState(WXK_CONTROL) || m_touch_multi_select_press == TouchMultiSelectPress::Rectangle;
 
     if (m_hover_volume_idxs.empty()) {
         if (!ctrl_pressed && (m_rectangle_selection.get_state() == GLSelectionRectangle::Select))
