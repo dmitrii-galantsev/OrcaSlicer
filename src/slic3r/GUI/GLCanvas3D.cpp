@@ -4654,8 +4654,16 @@ void GLCanvas3D::on_mouse(wxMouseEvent& evt)
             m_touch_multi_select_volume = get_first_hover_volume_idx();
             m_touch_multi_select_press  = m_selection.contains_volume(m_touch_multi_select_volume) ? TouchMultiSelectPress::Remove :
                                                                                                      TouchMultiSelectPress::Add;
-        } else if (m_hover_plate_idxs.empty())
-            m_touch_multi_select_press = TouchMultiSelectPress::Rectangle;
+        } else {
+            // The bed of the current plate is a raycast hit too (action 0 of its hover id), not just the
+            // space around it; only its icons and the other plates keep their tap action.
+            const int  plate_hover = m_hover_plate_idxs.empty() ? -1 : m_hover_plate_idxs.front();
+            const bool on_own_bed  = plate_hover >= 0 && plate_hover % PartPlate::GRABBER_COUNT == 0 &&
+                                    plate_hover / int(PartPlate::GRABBER_COUNT) ==
+                                        wxGetApp().plater()->get_partplate_list().get_curr_plate_index();
+            if (plate_hover < 0 || on_own_bed)
+                m_touch_multi_select_press = TouchMultiSelectPress::Rectangle;
+        }
     }
     if (evt.LeftDown() || evt.LeftUp() || (evt.Dragging() && evt.LeftIsDown())) {
         if (m_touch_multi_select_press == TouchMultiSelectPress::Add)
