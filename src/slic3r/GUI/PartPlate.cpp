@@ -127,6 +127,14 @@ static const int PARTPLATE_TEXT_OFFSET_X2 = 1;
 static const int PARTPLATE_TEXT_OFFSET_Y = 1;
 static const int PARTPLATE_PLATENAME_OFFSET_Y  = 10;
 
+// Size of the icons beside the plate, in 1/200 of the bed depth. In touch mode they grow as much as
+// the column of seven icons allows without running into the plate number below it.
+static float partplate_icon_size()
+{
+    const Slic3r::AppConfig* cfg = Slic3r::GUI::wxGetApp().app_config;
+    return cfg != nullptr && cfg->get_bool("touch_input") ? 21.0f : float(PARTPLATE_ICON_SIZE);
+}
+
 const float WIPE_TOWER_DEFAULT_X_POS = 165.;
 const float WIPE_TOWER_DEFAULT_Y_POS = 250.;  // Max y
 
@@ -742,7 +750,7 @@ void PartPlate::calc_vertex_for_icons(int index, PickingModel &model)
     auto  bed_ext  = get_extents(m_shape);
     Vec2d p        = bed_ext[2];
     auto  factor   = bed_ext.size()(1) / 200.0;
-    float size     = PARTPLATE_ICON_SIZE     * factor;
+    float size     = partplate_icon_size()   * factor;
     float gap_left = PARTPLATE_ICON_GAP_LEFT * factor;
     float gap_y    = PARTPLATE_ICON_GAP_Y    * factor;
     float gap_top  = PARTPLATE_ICON_GAP_TOP  * factor;
