@@ -37,6 +37,9 @@
 #include <cstddef>
 #include "slic3r/GUI/ExtraRenderers.hpp"
 #include "slic3r/GUI/TouchKeypad.hpp"
+#ifdef __WXGTK__
+#include <gtk/gtk.h>
+#endif
 #include <cassert>
 #include <algorithm>
 #include "libslic3r/TriangleMesh.hpp"
@@ -224,9 +227,11 @@ ObjectList::ObjectList(wxWindow* parent) :
     Bind(wxEVT_DATAVIEW_SELECTION_CHANGED, [this](wxDataViewEvent& event) {
         // detect the current mouse position here, to pass it to list_manipulation() method
         // if we detect it later, the user may have moved the mouse pointer while calculations are performed, and this would mess-up the HitTest() call performed into list_manipulation()
-        if (!GetScreenRect().Contains(wxGetMousePosition())) {
+        // A finger need not move the X pointer, so a recorded touch press vouches for the change.
+        if (!m_touch_press_item && !GetScreenRect().Contains(wxGetMousePosition())) {
             return;
         }
+        apply_touch_multi_selection();
 #ifndef __WXOSX__
         const wxPoint mouse_pos = this->get_mouse_position_in_control();
 #endif
@@ -331,16 +336,46 @@ ObjectList::ObjectList(wxWindow* parent) :
     });
 #endif //__WXMSW__
 
-    // The native list toggles a row only with Ctrl held; the touch multi-select toggle stands in for it.
-    // GTK sends a double click after the second press, which has already toggled the row back.
-    auto touch_multi_select = [this](bool toggle) {
-        return [this, toggle](wxMouseEvent& event) {
-            if (!touch_multi_select_active() || !toggle_touch_multi_selection(get_mouse_position_in_control(), toggle))
-                event.Skip();
-        };
+    // The native list toggles a row only with Ctrl held. With the touch multi-select toggle on, a press
+    // on a row name remembers the selection, and the plain "only this row" selection the native list
+    // makes from it is turned into a toggle in the wxEVT_DATAVIEW_SELECTION_CHANGED handler.
+#ifdef __WXGTK__
+    // wxGTK binds its mouse events to the GtkScrolledWindow around the GtkTreeView, and the tree view's
+    // own press gesture claims the press first, so a wxEVT_LEFT_DOWN handler never runs. A finger
+    // arrives as a touch event, not a button press, once the tree view selects touch events.
+    GtkWidget* tree = GtkGetTreeView();
+    static const auto on_press = +[](GtkWidget* widget, GdkEvent* event, ObjectList* list) -> gboolean {
+        GtkTreeView* view = GTK_TREE_VIEW(widget);
+        gdouble x = 0., y = 0.;
+        if (gdk_event_get_window(event) != gtk_tree_view_get_bin_window(view) || !gdk_event_get_coords(event, &x, &y))
+            return FALSE;
+        int widget_x = 0, widget_y = 0;
+        gtk_tree_view_convert_bin_window_to_widget_coords(view, int(x), int(y), &widget_x, &widget_y);
+        const bool on_name = list->record_touch_press(wxPoint(int(x), int(y)), widget_x);
+        // The second tap of a double tap would also activate the row.
+        return on_name && (event->type == GDK_2BUTTON_PRESS || event->type == GDK_3BUTTON_PRESS);
     };
-    GetMainWindow()->Bind(wxEVT_LEFT_DOWN, touch_multi_select(true));
-    GetMainWindow()->Bind(wxEVT_LEFT_DCLICK, touch_multi_select(false));
+    static const auto on_release = +[](GtkWidget*, GdkEvent* event, ObjectList* list) -> gboolean {
+        if (event->type == GDK_BUTTON_RELEASE || event->type == GDK_TOUCH_END || event->type == GDK_TOUCH_CANCEL)
+            list->CallAfter([list] { list->m_touch_press_item = wxDataViewItem(); });
+        return FALSE;
+    };
+    g_signal_connect(tree, "button-press-event", G_CALLBACK(on_press), this);
+    g_signal_connect(tree, "touch-event", G_CALLBACK(+[](GtkWidget* widget, GdkEvent* event, ObjectList* list) -> gboolean {
+        return event->type == GDK_TOUCH_BEGIN ? on_press(widget, event, list) : on_release(widget, event, list);
+    }), this);
+    g_signal_connect(tree, "button-release-event", G_CALLBACK(on_release), this);
+#else
+    GetMainWindow()->Bind(wxEVT_LEFT_DOWN, [this](wxMouseEvent& event) {
+        event.Skip();
+        const wxPoint pos = get_mouse_position_in_control();
+        record_touch_press(pos, pos.x);
+    });
+    GetMainWindow()->Bind(wxEVT_LEFT_UP, [this](wxMouseEvent& event) {
+        event.Skip();
+        CallAfter([this] { m_touch_press_item = wxDataViewItem(); });
+    });
+#endif
 
     Bind(wxEVT_DATAVIEW_ITEM_CONTEXT_MENU,  &ObjectList::OnContextMenu,     this);
 
@@ -6774,27 +6809,47 @@ void ObjectList::OnEditingStarted(wxDataViewEvent &event)
 #endif //__WXMSW__
 }
 
-bool ObjectList::toggle_touch_multi_selection(const wxPoint& pos, bool toggle)
+bool ObjectList::record_touch_press(const wxPoint& hit_pos, int widget_x)
 {
+    m_touch_press_item = wxDataViewItem();
+    if (!touch_multi_select_active())
+        return false;
     wxDataViewItem    item;
     wxDataViewColumn* col = nullptr;
-    HitTest(pos, item, col);
+    HitTest(hit_pos, item, col);
     if (!item || col == nullptr || col->GetModelColumn() != colName ||
         !(m_objects_model->GetItemType(item) & (itObject | itVolume | itInstance)))
         return false;
     // Left of the name cell is the expander, which should still fold the row.
-    if (pos.x < GetItemRect(item, col).GetLeft())
+    if (widget_x < GetItemRect(item, col).GetLeft())
         return false;
-    if (!toggle)
-        return true;
-
-    if (IsSelected(item))
-        Unselect(item);
-    else
-        Select(item);
-    m_last_selected_item = item;
-    selection_changed();
+    GetSelections(m_touch_press_selection);
+    m_touch_press_item = item;
     return true;
+}
+
+void ObjectList::apply_touch_multi_selection()
+{
+    const wxDataViewItem item = m_touch_press_item;
+    m_touch_press_item        = wxDataViewItem();
+    if (!item || !touch_multi_select_active())
+        return;
+    wxDataViewItemArray now;
+    GetSelections(now);
+    if (now.size() != 1 || now[0] != item)
+        return;
+
+    wxDataViewItemArray toggled;
+    bool                was_selected = false;
+    for (const wxDataViewItem& selected : m_touch_press_selection) {
+        if (selected == item)
+            was_selected = true;
+        else
+            toggled.Add(selected);
+    }
+    if (!was_selected)
+        toggled.Add(item);
+    SetSelections(toggled);
 }
 
 // Applies the name through the model the way the in-place editor does, so ItemValueChanged() renames

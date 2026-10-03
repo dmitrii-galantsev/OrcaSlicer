@@ -200,6 +200,10 @@ private:
                                                            // because it would turn off the gizmos (mainly a problem for the SLA gizmo)
 
     wxDataViewItem m_last_selected_item {nullptr};
+    // The selection when a row name was pressed with the touch multi-select toggle on, until the
+    // press ends; the native selection change it causes is turned into a toggle of that row.
+    wxDataViewItemArray m_touch_press_selection;
+    wxDataViewItem      m_touch_press_item {nullptr};
 
 #ifdef __WXMSW__
     // Workaround for entering the column editing mode on Windows. Simulate keyboard enter when another column of the active line is selected.
@@ -524,7 +528,8 @@ private:
     void OnStartEditing(wxDataViewEvent &event);
 	void OnEditingStarted(wxDataViewEvent &event);
     void rename_with_touch_keypad(wxDataViewItem item);
-    bool toggle_touch_multi_selection(const wxPoint& pos, bool toggle);
+    bool record_touch_press(const wxPoint& hit_pos, int widget_x);
+    void apply_touch_multi_selection();
     void OnEditingDone(wxDataViewEvent &event);
 
     // apply the instance transform to all volumes and reset instance transform except the offset
