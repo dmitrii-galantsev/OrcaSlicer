@@ -1934,6 +1934,11 @@ void PreferencesDialog::create_items()
     });
     g_sizer->Add(item_shortcuts);
 
+    auto item_touch_input = create_item_checkbox(_L("Touch-friendly input (on-screen keypad)"),
+        _L("Tapping a text or number field opens a large on-screen keypad, for touchscreens without a keyboard such as the Steam Deck."),
+        "touch_input");
+    g_sizer->Add(item_touch_input);
+
     //// CONTROL > Clear my choice on ...
     g_sizer->Add(create_item_title(_L("Clear my choice on...")), 1, wxEXPAND);
 

@@ -16,6 +16,8 @@
 #include <vector>
 #include <stdexcept>
 #include <sstream>
+#include <fstream>
+#include <cstdlib>
 
 #include <boost/filesystem/path.hpp>
 #include <boost/filesystem/operations.hpp>
@@ -108,6 +110,26 @@ void AppConfig::reset()
     set_defaults();
 };
 
+static bool running_on_steam_deck()
+{
+#ifdef __linux__
+    if (const char* env = std::getenv("SteamDeck"); env != nullptr && std::string(env) == "1")
+        return true;
+    auto read_dmi = [](const char* name) {
+        std::ifstream file(std::string("/sys/devices/virtual/dmi/id/") + name);
+        std::string   value;
+        std::getline(file, value);
+        return value;
+    };
+    if (read_dmi("board_vendor") == "Valve")
+        return true;
+    const std::string product = read_dmi("product_name");
+    return product == "Jupiter" || product == "Galileo";
+#else
+    return false;
+#endif
+}
+
 // Override missing or keys with their defaults.
 void AppConfig::set_defaults()
 {
@@ -131,6 +153,9 @@ void AppConfig::set_defaults()
 
         if (get("drop_project_action").empty())
             set_bool("drop_project_action", true);
+
+        if (get("touch_input").empty())
+            set_bool("touch_input", running_on_steam_deck());
 
 #ifdef _WIN32
         if (get("associate_3mf").empty())

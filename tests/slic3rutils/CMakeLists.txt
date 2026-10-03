@@ -34,6 +34,7 @@ add_executable(${_TEST_NAME}_tests
     test_plugin_cloud_metadata.cpp
     test_plugin_audit.cpp
     test_shortcuts.cpp
+    test_touch_keypad.cpp
     test_file_url.cpp
     test_user_manager.cpp
     ../fff_print/test_helpers.cpp

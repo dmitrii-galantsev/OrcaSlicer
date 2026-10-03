@@ -203,6 +203,7 @@
 #include "slic3r/Config/Snapshot.hpp"
 #include "Preferences.hpp"
 #include "Tab.hpp"
+#include "TouchKeypad.hpp"
 #include "UpdateDialogs.hpp"
 #include "Mouse3DController.hpp"
 #include "RemovableDriveManager.hpp"
@@ -2818,6 +2819,11 @@ bool GUI_App::OnInit()
 
 int GUI_App::OnExit()
 {
+    if (m_touch_input_filter) {
+        wxEvtHandler::RemoveFilter(m_touch_input_filter.get());
+        m_touch_input_filter.reset();
+    }
+
     stop_http_server();
     stop_sync_user_preset();
 
@@ -3516,6 +3522,11 @@ bool GUI_App::on_init_inner()
         scrn->SetText(scrn_txt, 70);
         wxYield();
     }
+    if (!m_touch_input_filter) {
+        m_touch_input_filter = std::make_unique<TouchInputFilter>();
+        wxEvtHandler::AddFilter(m_touch_input_filter.get());
+    }
+
     BOOST_LOG_TRIVIAL(info) << "create the main window";
     mainframe = new MainFrame();
     // The first render can happen as soon as the frame is shown, before the queued

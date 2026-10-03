@@ -90,6 +90,7 @@ namespace GUI{
 class RemovableDriveManager;
 class OtherInstanceMessageHandler;
 class ShortcutRegistry;
+class TouchInputFilter;
 enum class ShortcutContext : uint8_t;
 enum class PreferencesTab;
 class MainFrame;
@@ -310,6 +311,7 @@ private:
 
     std::unique_ptr<ImGuiWrapper> m_imgui;
     std::unique_ptr<ShortcutRegistry> m_shortcuts;
+    std::unique_ptr<TouchInputFilter> m_touch_input_filter;
     std::unique_ptr<PrintHostJobQueue> m_printhost_job_queue;
 	std::unique_ptr <OtherInstanceMessageHandler> m_other_instance_message_handler;
     std::unique_ptr <wxSingleInstanceChecker> m_single_instance_checker;
