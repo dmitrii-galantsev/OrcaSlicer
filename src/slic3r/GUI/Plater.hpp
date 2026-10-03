@@ -98,6 +98,7 @@ class ObjectSettings;
 class ObjectLayers;
 class ObjectList;
 class GLCanvas3D;
+enum class AlignOp : int;
 class Mouse3DController;
 class NotificationManager;
 class DailyTipsWindow;
@@ -735,6 +736,8 @@ public:
     //BBS: add clone logic
     void clone_selection();
     void center_selection();
+    bool can_align_distribute_selection(AlignOp op) const;
+    void align_distribute_selection(AlignOp op);
     void drop_selection();
     void search(bool plater_is_active, Preset::Type  type, wxWindow *tag, TextInput *etag, wxWindow *stag);
     void mirror(Axis axis);

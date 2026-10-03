@@ -239,6 +239,7 @@
 #include "MsgDialog.hpp"
 #include "Widgets/MultiNozzleSync.hpp"           // NozzleOption, tryPopUpMultiNozzleDialog, setExtruderNozzleCount
 #include "DeviceCore/DevNozzleSystem.h"          // DevNozzle, GetExtNozzles / GetRackNozzles
+#include "AlignDistribute.hpp"
 #include "ProjectDirtyStateManager.hpp"
 #include "Gizmos/GLGizmoSimplify.hpp" // create suggestion notification
 #include "Gizmos/GLGizmoSVG.hpp" // Drop SVG file
@@ -21579,6 +21580,15 @@ void Plater::suppress_background_process(const bool stop_background_process)
 BackgroundSlicingProcess& Plater::background_process() { return p->background_process; }
 
 void Plater::center_selection()             { p->center_selection(); }
+bool Plater::can_align_distribute_selection(AlignOp op) const
+{
+    return p->is_view3D_shown() && can_align_distribute(*p->view3D->get_canvas3d(), op);
+}
+void Plater::align_distribute_selection(AlignOp op)
+{
+    if (p->is_view3D_shown())
+        align_distribute(*p->view3D->get_canvas3d(), op);
+}
 void Plater::drop_selection()               { p->drop_selection(); }
 void Plater::mirror(Axis axis)              { p->mirror(axis); }
 void Plater::split_object(bool auto_drop)   { p->split_object(auto_drop); }

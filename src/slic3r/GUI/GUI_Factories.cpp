@@ -17,6 +17,7 @@
 #include "format.hpp"
 //BBS: add partplate related logic
 #include "PartPlate.hpp"
+#include "AlignDistribute.hpp"
 #include "Gizmos/GLGizmoEmboss.hpp"
 #include "Gizmos/GLGizmoSVG.hpp"
 
@@ -1670,6 +1671,7 @@ void MenuFactory::create_extra_object_menu()
     append_menu_item_merge_parts_to_single_part(&m_object_menu);
     // Object Center
     append_menu_item_center(&m_object_menu);
+    append_menu_item_align_distribute(&m_object_menu);
     // Object Drop
     append_menu_item_drop(&m_object_menu);
     // Object Split
@@ -2124,6 +2126,7 @@ wxMenu* MenuFactory::multi_selection_menu()
             index++;
         }
         append_menu_item_center(menu);
+        append_menu_item_align_distribute(menu);
         append_menu_item_drop(menu);
         append_menu_item_fix_through_cgal(menu);
         //append_menu_item_simplify(menu);
@@ -2149,6 +2152,7 @@ wxMenu* MenuFactory::multi_selection_menu()
     }
     else {
         append_menu_item_center(menu);
+        append_menu_item_align_distribute(menu);
         append_menu_item_drop(menu);
         append_menu_item_fix_through_cgal(menu);
         //append_menu_item_simplify(menu);
@@ -2292,6 +2296,24 @@ void MenuFactory::append_menu_item_smooth_mesh(wxMenu *menu)
     wxMenuItem *menu_item = append_menu_item(
         menu, wxID_ANY, _L("Subdivision mesh") + _L("(Lost color)"), "", [](wxCommandEvent &) { obj_list()->smooth_mesh(); }, "", menu, []() { return plater()->can_smooth_mesh(); },
         m_parent);
+}
+
+void MenuFactory::append_menu_item_align_distribute(wxMenu* menu)
+{
+    wxMenu* sub_menu = new wxMenu();
+    for (const AlignOpInfo& info : align_ops()) {
+        const AlignOp op = info.op;
+        if (op == AlignOp::XMin || op == AlignOp::YMin || op == AlignOp::ZMin)
+            sub_menu->AppendSeparator();
+        append_menu_item(sub_menu, wxID_ANY, _(info.label) + info.axis_suffix, "",
+            [op](wxCommandEvent&) { plater()->align_distribute_selection(op); }, info.icon, menu,
+            [op]() { return plater()->can_align_distribute_selection(op); }, m_parent);
+    }
+    append_submenu(menu, sub_menu, wxID_ANY, _L("Align/Distribute"), _L("Align and distribute objects"), "",
+        []() {
+            const auto& ops = align_ops();
+            return std::any_of(ops.begin(), ops.end(), [](const AlignOpInfo& info) { return plater()->can_align_distribute_selection(info.op); });
+        }, m_parent);
 }
 
 void MenuFactory::append_menu_item_center(wxMenu* menu)
