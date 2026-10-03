@@ -212,7 +212,7 @@ void commit_spin(wxWindow* target, const wxString& text)
 void place_on_screen(wxDialog* dlg, wxWindow* parent)
 {
     dlg->Layout();
-    dlg->Fit();
+    dlg->GetSizer()->SetSizeHints(dlg);
     if (parent != nullptr)
         dlg->CentreOnParent();
     else
