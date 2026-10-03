@@ -740,6 +740,27 @@ static void push_touch_frame_padding(ImGuiWrapper *imgui_wrapper)
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(style.FramePadding.x, pad_y));
 }
 
+// BBLBeginCombo takes three frame heights off the item width for its arrow, and the touch padding
+// makes the frame as tall as a step button, which would leave room for about two letters.
+static void fit_touch_coordinate_combo(float text_width, float label_max, float &combo_width, float &caption_max)
+{
+    const float arrow = ImGui::GetFrameHeight();
+    combo_width       = text_width + 3.f * arrow + 2.f * ImGui::GetStyle().FramePadding.x;
+    caption_max       = std::max(label_max, combo_width - 2.f * arrow);
+}
+
+// The panel is placed with the width it had in the previous frame, so a new width needs one more
+// frame to land in place; otherwise its first frame sticks out of the canvas until the next event.
+static void store_window_width(GLCanvas3D &canvas, float &last_width)
+{
+    const float width = ImGui::GetWindowWidth();
+    if (std::abs(width - last_width) > 0.5f) {
+        canvas.set_as_dirty();
+        canvas.request_extra_frame();
+    }
+    last_width = width;
+}
+
 float GizmoObjectManipulation::touch_column_width(ImGuiWrapper *imgui_wrapper, float &box_width, float fixed_width) const
 {
     const ImGuiStyle &style     = ImGui::GetStyle();
@@ -831,16 +852,19 @@ void GizmoObjectManipulation::do_render_move_window(ImGuiWrapper *imgui_wrapper,
 
     float space_size    = imgui_wrapper->get_style_scaling() * 8;
     //ORCA
-    float coord_combo_width = std::max({
+    const float coord_text_width = std::max({
         imgui_wrapper->calc_text_size(_L("World")).x,
         imgui_wrapper->calc_text_size(_L("Object")).x,
         imgui_wrapper->calc_text_size(_L("Part")).x
-    }) + imgui_wrapper->calc_text_size("xxx"sv).x + imgui_wrapper->scaled(3.5f);
+    });
+    float coord_combo_width = coord_text_width + imgui_wrapper->calc_text_size("xxx"sv).x + imgui_wrapper->scaled(3.5f);
     float label_max = std::max({
         imgui_wrapper->calc_text_size(_L("Position")).x,
         imgui_wrapper->calc_text_size(_L("Relative")).x
     });
     float caption_max = std::max(label_max, coord_combo_width - 3 * space_size);
+    if (touch)
+        fit_touch_coordinate_combo(coord_text_width, label_max, coord_combo_width, caption_max);
     float end_text_size = imgui_wrapper->calc_text_size(this->m_new_unit_string).x;
 
     // position
@@ -957,7 +981,7 @@ void GizmoObjectManipulation::do_render_move_window(ImGuiWrapper *imgui_wrapper,
     }
 
     m_last_active_item = current_active_id;
-    last_move_input_window_width = ImGui::GetWindowWidth();
+    store_window_width(m_glcanvas, last_move_input_window_width);
     imgui_wrapper->end();
     ImGui::PopStyleVar(2);
     ImGuiWrapper::pop_toolbar_style();
@@ -1164,7 +1188,7 @@ void GizmoObjectManipulation::do_render_rotate_window(ImGuiWrapper *imgui_wrappe
     }
 
     m_last_active_item = current_active_id;
-    last_rotate_input_window_width = ImGui::GetWindowWidth();
+    store_window_width(m_glcanvas, last_rotate_input_window_width);
     imgui_wrapper->end();
 
     // BBS
@@ -1216,16 +1240,19 @@ void GizmoObjectManipulation::do_render_scale_input_window(ImGuiWrapper* imgui_w
 
     float space_size = imgui_wrapper->get_style_scaling() * 8;
     // ORCA
-    float coord_combo_width = std::max({
+    const float coord_text_width = std::max({
         imgui_wrapper->calc_text_size(_L("World")).x,
         imgui_wrapper->calc_text_size(_L("Object")).x,
         imgui_wrapper->calc_text_size(_L("Part")).x
-    }) + imgui_wrapper->calc_text_size("xxx"sv).x + imgui_wrapper->scaled(3.5f);
+    });
+    float coord_combo_width = coord_text_width + imgui_wrapper->calc_text_size("xxx"sv).x + imgui_wrapper->scaled(3.5f);
     float label_max = std::max({
         imgui_wrapper->calc_text_size(_L_CONTEXT("Scale", "Noun")).x,
         imgui_wrapper->calc_text_size(_L("Size")).x
     });
     float caption_max = std::max(label_max, coord_combo_width - 3 * space_size);
+    if (touch)
+        fit_touch_coordinate_combo(coord_text_width, label_max, coord_combo_width, caption_max);
     float end_text_size = imgui_wrapper->calc_text_size(this->m_new_unit_string).x;
     ImGui::AlignTextToFramePadding();
     unsigned int current_active_id = ImGui::GetActiveID();
@@ -1416,7 +1443,7 @@ void GizmoObjectManipulation::do_render_scale_input_window(ImGuiWrapper* imgui_w
 
     m_last_active_item = current_active_id;
 
-    last_scale_input_window_width = ImGui::GetWindowWidth();
+    store_window_width(m_glcanvas, last_scale_input_window_width);
     imgui_wrapper->end();
 
     //BBS
