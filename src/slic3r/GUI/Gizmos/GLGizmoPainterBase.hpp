@@ -305,6 +305,11 @@ protected:
     bool m_vertical_only = false;
     bool m_horizontal_only = false;
 
+    // A touch screen has no Shift key: with this on, the left button erases as Shift+left does.
+    bool m_touch_erase = false;
+    bool touch_erase_active() const;
+    void render_touch_erase_toggle();
+
     // It stores the value of the previous mesh_id to which the seed fill was applied.
     // It is used to detect when the mouse has moved from one volume to another one.
     int      m_seed_fill_last_mesh_id     = -1;

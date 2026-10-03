@@ -92,6 +92,7 @@ Index of this file:
 // Widgets
 static const float          DRAGDROP_HOLD_TO_OPEN_TIMER = 0.70f;    // Time for drag-hold to activate items accepting the ImGuiButtonFlags_PressedOnDragDropHold button behavior.
 static const float          DRAG_MOUSE_THRESHOLD_FACTOR = 0.50f;    // Multiplier for the default value of io.MouseDragThreshold to make DragFloat/DragInt react faster to mouse drags.
+static ImGuiID              GTouchInputCommitId = 0;                // InputTextEx() given keypad text on the previous frame, to be committed as if Enter was pressed.
 
 // Those MIN/MAX values are not define because we need to point to them
 static const signed char    IM_S8_MIN  = -128;
@@ -2964,6 +2965,24 @@ bool ImGui::BBLDragScalar(const char *label, ImGuiDataType data_type, void *p_da
     // Tabbing or CTRL-clicking on Drag turns it into an InputText
     const bool hovered = ItemHoverable(frame_bb, id);
 
+    // With a touch keypad a plain tap asks for it, and the field stays draggable.
+    const bool touch_input = temp_input_allowed && g.IO.TouchInputRequestFn != NULL;
+    bool touch_changed = false;
+    if (temp_input_allowed && g.IO.TouchInputResultFn != NULL && g.ActiveId != id) {
+        if (const char* touch_text = g.IO.TouchInputResultFn(id)) {
+            const size_t             data_type_size = DataTypeGetInfo(data_type)->Size;
+            ImGuiDataTypeTempStorage data_backup;
+            memcpy(&data_backup, p_data, data_type_size);
+            char initial_buf[64];
+            DataTypeFormatString(initial_buf, IM_ARRAYSIZE(initial_buf), data_type, p_data, format);
+            DataTypeApplyOpFromText(touch_text, initial_buf, data_type, p_data, NULL);
+            if ((flags & ImGuiSliderFlags_AlwaysClamp) != 0 && (p_min == NULL || p_max == NULL || DataTypeCompare(data_type, p_min, p_max) < 0))
+                DataTypeClamp(data_type, p_data, p_min, p_max);
+            touch_changed = memcmp(&data_backup, p_data, data_type_size) != 0;
+            if (touch_changed) MarkItemEdited(id);
+        }
+    }
+
     bool temp_input_is_active = temp_input_allowed && TempInputIsActive(id);
     if (!temp_input_is_active) {
         const bool focus_requested = temp_input_allowed && (window->DC.LastItemStatusFlags & ImGuiItemStatusFlags_Focused) != 0;
@@ -2974,11 +2993,20 @@ bool ImGui::BBLDragScalar(const char *label, ImGuiDataType data_type, void *p_da
             SetFocusID(id, window);
             FocusWindow(window);
             g.ActiveIdUsingNavDirMask = (1 << ImGuiDir_Left) | (1 << ImGuiDir_Right);
-            if (temp_input_allowed && (focus_requested || (clicked && g.IO.KeyCtrl) || clicked || g.NavInputId == id)) temp_input_is_active = true;
+            if (temp_input_allowed && (focus_requested || (clicked && g.IO.KeyCtrl) || (clicked && !touch_input) || g.NavInputId == id)) temp_input_is_active = true;
+        }
+        if (touch_input && !temp_input_is_active && g.ActiveId == id && hovered && g.IO.MouseReleased[0] &&
+            !IsMouseDragPastThreshold(0, g.IO.MouseDragThreshold * DRAG_MOUSE_THRESHOLD_FACTOR)) {
+            char fmt_buf[32];
+            char touch_buf[64];
+            DataTypeFormatString(touch_buf, IM_ARRAYSIZE(touch_buf), data_type, p_data, ImParseFormatTrimDecorations(format, fmt_buf, IM_ARRAYSIZE(fmt_buf)));
+            ImStrTrimBlanks(touch_buf);
+            const bool is_float = data_type == ImGuiDataType_Float || data_type == ImGuiDataType_Double;
+            g.IO.TouchInputRequestFn(id, touch_buf, is_float ? ImGuiInputTextFlags_CharsScientific : ImGuiInputTextFlags_CharsDecimal);
         }
         // Experimental: simple click (without moving) turns Drag into an InputText
         // FIXME: Currently polling ImGuiConfigFlags_IsTouchScreen, may either poll an hypothetical ImGuiBackendFlags_HasKeyboard and/or an explicit drag settings.
-        if (g.IO.ConfigDragClickToInputText && temp_input_allowed && !temp_input_is_active)
+        if (g.IO.ConfigDragClickToInputText && temp_input_allowed && !temp_input_is_active && !touch_input)
             if (g.ActiveId == id && hovered && g.IO.MouseReleased[0] && !IsMouseDragPastThreshold(0, g.IO.MouseDragThreshold * DRAG_MOUSE_THRESHOLD_FACTOR)) {
                 g.NavInputId         = id;
                 temp_input_is_active = true;
@@ -2991,7 +3019,7 @@ bool ImGui::BBLDragScalar(const char *label, ImGuiDataType data_type, void *p_da
         ImGui::PushStyleColor(ImGuiCol_Border, GetColorU32(ImGuiCol_BorderActive));
         bool b_input_sclar = TempInputScalar(frame_bb, id, label, data_type, p_data, format, is_clamp_input ? p_min : NULL, is_clamp_input ? p_max : NULL);
         ImGui::PopStyleColor(1);
-        return b_input_sclar;
+        return b_input_sclar || touch_changed;
     }
 
     /* get hover status */
@@ -3020,7 +3048,7 @@ bool ImGui::BBLDragScalar(const char *label, ImGuiDataType data_type, void *p_da
     if (push_color_count) { ImGui::PopStyleColor(1); }
 
     IMGUI_TEST_ENGINE_ITEM_INFO(id, label, window->DC.LastItemStatusFlags);
-    return value_changed;
+    return value_changed || touch_changed;
 }
 
 bool ImGui::DragScalarN(const char* label, ImGuiDataType data_type, void* p_data, int components, float v_speed, const void* p_min, const void* p_max, const char* format, ImGuiSliderFlags flags)
@@ -4857,8 +4885,24 @@ bool ImGui::InputTextEx(const char* label, const char* hint, char* buf, int buf_
 
     float scroll_y = is_multiline ? draw_window->Scroll.y : FLT_MAX;
 
+    // A TempInputText() must take the active id on its first frame, so it is left to its Drag/Slider owner.
+    const char* touch_text = NULL;
+    bool touch_claimed = false;
+    if (!is_readonly && !(flags & ImGuiInputTextFlags_MergedItem))
+    {
+        if (io.TouchInputResultFn != NULL && g.ActiveId != id)
+            touch_text = io.TouchInputResultFn(id);
+        if (touch_text == NULL && user_clicked && io.TouchInputRequestFn != NULL)
+        {
+            const char* current = (g.ActiveId == id && state != NULL && state->TextAIsValid) ? state->TextA.Data : buf;
+            touch_claimed = io.TouchInputRequestFn(id, current, flags);
+            if (touch_claimed && g.ActiveId == id)
+                ClearActiveID();
+        }
+    }
+
     const bool init_changed_specs = (state != NULL && state->Stb.single_line != !is_multiline);
-    const bool init_make_active = (user_clicked || user_scroll_finish || user_nav_input_start || focus_requested_by_code || focus_requested_by_tabbing);
+    const bool init_make_active = ((user_clicked && !touch_claimed) || user_scroll_finish || user_nav_input_start || focus_requested_by_code || focus_requested_by_tabbing || touch_text != NULL);
     const bool init_state = (init_make_active || user_scroll_active);
     if ((init_state && g.ActiveId != id) || init_changed_specs)
     {
@@ -4903,9 +4947,22 @@ bool ImGui::InputTextEx(const char* label, const char* hint, char* buf, int buf_
             select_all = true;
     }
 
+    if (touch_text != NULL)
+    {
+        const int touch_capacity = is_resizable ? ImMax(buf_size, (int)strlen(touch_text) + 1) : buf_size;
+        const char* touch_text_end = NULL;
+        state->TextW.resize(touch_capacity + 1);
+        state->CurLenW = ImTextStrFromUtf8(state->TextW.Data, touch_capacity, touch_text, NULL, &touch_text_end);
+        state->CurLenA = (int)(touch_text_end - touch_text);
+        state->CursorClamp();
+    }
+
     if (g.ActiveId != id && init_make_active)
     {
         IM_ASSERT(state && state->ID == id);
+        // The keypad text is applied on this frame and committed on the next one, so callers that act
+        // when the active id changes see the field become active and then deactivate, as with typing.
+        GTouchInputCommitId = (touch_text != NULL) ? id : 0;
         SetActiveID(id, window);
         SetFocusID(id, window);
         FocusWindow(window);
@@ -4936,6 +4993,11 @@ bool ImGui::InputTextEx(const char* label, const char* hint, char* buf, int buf_
     bool render_selection = state && state->HasSelection() && (RENDER_SELECTION_WHEN_INACTIVE || render_cursor);
     bool value_changed = false;
     bool enter_pressed = false;
+    if (GTouchInputCommitId == id && g.ActiveId == id && !g.ActiveIdIsJustActivated)
+    {
+        GTouchInputCommitId = 0;
+        enter_pressed = clear_active_id = true;
+    }
 
     // When read-only we always use the live data passed to the function
     // FIXME-OPT: Because our selection/cursor code currently needs the wide text we need to convert it when active, which is not ideal :(

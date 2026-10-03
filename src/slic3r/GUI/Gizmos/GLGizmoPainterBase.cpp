@@ -1010,11 +1010,23 @@ bool GLGizmoPainterBase::gizmo_event(SLAGizmoEventType action, const Vec2d& mous
     return false;
 }
 
+bool GLGizmoPainterBase::touch_erase_active() const
+{
+    return m_touch_erase && wxGetApp().app_config->get_bool("touch_input");
+}
+
+void GLGizmoPainterBase::render_touch_erase_toggle()
+{
+    if (wxGetApp().app_config->get_bool("touch_input"))
+        m_imgui->bbl_checkbox(_L("Erase"), m_touch_erase);
+}
+
 bool GLGizmoPainterBase::on_mouse(const wxMouseEvent &mouse_event)
 {
     // wxCoord == int --> wx/types.h
     Vec2i32 mouse_coord(mouse_event.GetX(), mouse_event.GetY());
     Vec2d mouse_pos = mouse_coord.cast<double>();
+    const bool left_erase = mouse_event.ShiftDown() || touch_erase_active();
 
     if (mouse_event.Moving()) {
         gizmo_event(SLAGizmoEventType::Moving, mouse_pos, mouse_event.ShiftDown(), mouse_event.AltDown(), false);
@@ -1030,7 +1042,7 @@ bool GLGizmoPainterBase::on_mouse(const wxMouseEvent &mouse_event)
     int selected_object_idx = selection.get_object_idx();
     if (mouse_event.LeftDown()) {
         if ((!control_down || grabber_contains_mouse) &&            
-            gizmo_event(SLAGizmoEventType::LeftDown, mouse_pos, mouse_event.ShiftDown(), mouse_event.AltDown(), false))
+            gizmo_event(SLAGizmoEventType::LeftDown, mouse_pos, left_erase, mouse_event.AltDown(), false))
             // the gizmo got the event and took some action, there is no need
             // to do anything more
             return true;
@@ -1044,7 +1056,7 @@ bool GLGizmoPainterBase::on_mouse(const wxMouseEvent &mouse_event)
             // don't allow dragging objects with the Sla gizmo on
             return true;
         if (!control_down && gizmo_event(SLAGizmoEventType::Dragging,
-                                         mouse_pos, mouse_event.ShiftDown(),
+                                         mouse_pos, m_button_down == Button::Left ? left_erase : mouse_event.ShiftDown(),
                                          mouse_event.AltDown(), false)) {
             // the gizmo got the event and took some action, no need to do
             // anything more here
@@ -1055,7 +1067,7 @@ bool GLGizmoPainterBase::on_mouse(const wxMouseEvent &mouse_event)
         {
             // CTRL has been pressed while already dragging -> stop current action
             if (mouse_event.LeftIsDown())
-                gizmo_event(SLAGizmoEventType::LeftUp, mouse_pos, mouse_event.ShiftDown(), mouse_event.AltDown(), true);
+                gizmo_event(SLAGizmoEventType::LeftUp, mouse_pos, left_erase, mouse_event.AltDown(), true);
             else if (mouse_event.RightIsDown())
                 gizmo_event(SLAGizmoEventType::RightUp, mouse_pos, mouse_event.ShiftDown(), mouse_event.AltDown(), true);
             return false;
@@ -1065,7 +1077,7 @@ bool GLGizmoPainterBase::on_mouse(const wxMouseEvent &mouse_event)
             // in case SLA/FDM gizmo is selected, we just pass the LeftUp
             // event and stop processing - neither object moving or selecting
             // is suppressed in that case
-            gizmo_event(SLAGizmoEventType::LeftUp, mouse_pos, mouse_event.ShiftDown(), mouse_event.AltDown(), control_down);
+            gizmo_event(SLAGizmoEventType::LeftUp, mouse_pos, left_erase, mouse_event.AltDown(), control_down);
             return true;
         }
     } else if (mouse_event.RightUp()) {

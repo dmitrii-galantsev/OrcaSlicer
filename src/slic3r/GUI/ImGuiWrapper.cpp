@@ -68,6 +68,9 @@
 #include <nanosvg/nanosvgrast.h>
 #include "OpenGLManager.hpp"
 #include "GUI_App.hpp"
+#include "GLCanvas3D.hpp"
+#include "Plater.hpp"
+#include "TouchKeypad.hpp"
 
 namespace Slic3r {
 namespace GUI {
@@ -579,6 +582,10 @@ void ImGuiWrapper::new_frame()
 
     ImGuiIO& io = ImGui::GetIO();
 
+    const bool touch_input = wxGetApp().app_config != nullptr && wxGetApp().app_config->get_bool("touch_input");
+    io.TouchInputRequestFn = touch_input ? &ImGuiWrapper::touch_input_request : nullptr;
+    io.TouchInputResultFn  = touch_input ? &ImGuiWrapper::touch_input_result : nullptr;
+
     ImGui::NewFrame();
     m_new_frame_open = true;
 
@@ -619,7 +626,71 @@ ImDrawData* ImGuiWrapper::end_frame()
 {
     ImGui::Render();
     m_new_frame_open = false;
+
+    if (m_touch_result.id != 0 && --m_touch_result_frames <= 0)
+        m_touch_result.id = 0;
+    // The keypad opens once the finger is lifted: a modal started while the button is down
+    // swallows the release, and the canvas would keep dragging afterwards.
+    if (m_touch_request.id != 0 && !m_touch_keypad_open && !ImGui::GetIO().MouseDown[0]) {
+        m_touch_keypad_open = true;
+        wxGetApp().CallAfter([this]() { open_touch_keypad(); });
+    }
+
     return ImGui::GetDrawData();
+}
+
+bool ImGuiWrapper::touch_input_request(ImGuiID id, const char* text, ImGuiInputTextFlags flags)
+{
+    ImGuiWrapper& self = *wxGetApp().imgui();
+    if (!self.m_touch_keypad_open) {
+        self.m_touch_request.id       = id;
+        self.m_touch_request.text     = text;
+        self.m_touch_request.numeric  = (flags & (ImGuiInputTextFlags_CharsDecimal | ImGuiInputTextFlags_CharsScientific)) != 0;
+        self.m_touch_request.password = (flags & ImGuiInputTextFlags_Password) != 0;
+    }
+    return true;
+}
+
+const char* ImGuiWrapper::touch_input_result(ImGuiID id)
+{
+    ImGuiWrapper& self = *wxGetApp().imgui();
+    if (self.m_touch_result.id == 0 || self.m_touch_result.id != id)
+        return nullptr;
+    self.m_touch_result.id = 0;
+    // The field commits on the frame after it takes the text.
+    self.set_requires_extra_frame();
+    return self.m_touch_result.text.c_str();
+}
+
+void ImGuiWrapper::open_touch_keypad()
+{
+    const TouchEdit request = m_touch_request;
+    m_touch_request.id      = 0;
+    GLCanvas3D* canvas      = wxGetApp().plater() != nullptr ? wxGetApp().plater()->get_current_canvas3D() : nullptr;
+    if (request.id == 0 || canvas == nullptr) {
+        m_touch_keypad_open = false;
+        return;
+    }
+
+    bool     ok = false;
+    wxString value;
+    {
+        TouchKeypad pad(wxGetTopLevelParent(wxGetApp().plater()), from_u8(request.text), request.password, request.numeric);
+        ok = pad.ShowModal() == wxID_OK;
+        if (ok)
+            value = pad.GetValue();
+    }
+    m_touch_keypad_open = false;
+
+    if (ok) {
+        m_touch_result.id     = request.id;
+        m_touch_result.text   = into_u8(value);
+        m_touch_result_frames = 3;
+    }
+    set_requires_extra_frame();
+    canvas->set_as_dirty();
+    canvas->request_extra_frame();
+    wxWakeUpIdle();
 }
 
 void ImGuiWrapper::render(ImDrawData* draw_data)

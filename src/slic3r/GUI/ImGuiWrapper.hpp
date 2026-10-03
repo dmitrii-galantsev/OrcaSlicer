@@ -73,6 +73,18 @@ class ImGuiWrapper
     std::map<wchar_t, int> m_custom_glyph_rects_ids;
     std::string m_clipboard_text;
 
+    struct TouchEdit {
+        ImGuiID     id{ 0 };
+        std::string text;
+        bool        numeric{ false };
+        bool        password{ false };
+    };
+    TouchEdit m_touch_request;
+    TouchEdit m_touch_result;
+    // Frames the result survives without its field being submitted, e.g. when the gizmo was closed meanwhile.
+    int       m_touch_result_frames{ 0 };
+    bool      m_touch_keypad_open{ false };
+
 public:
     struct LastSliderStatus {
         bool hovered { false };
@@ -412,6 +424,10 @@ private:
 
     static const char* clipboard_get(void* user_data);
     static void clipboard_set(void* user_data, const char* text);
+
+    static bool        touch_input_request(ImGuiID id, const char* text, ImGuiInputTextFlags flags);
+    static const char* touch_input_result(ImGuiID id);
+    void               open_touch_keypad();
 
     LastSliderStatus m_last_slider_status;
     ImFont* default_font = nullptr;

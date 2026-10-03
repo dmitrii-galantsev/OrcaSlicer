@@ -234,6 +234,7 @@ void GLGizmoSeam::on_render_input_window(float x, float y, float bottom_limit)
     ImGui::BBLDragFloat("##cursor_radius_input", &m_cursor_radius, 0.05f, 0.0f, 0.0f, "%.2f");
 
     m_imgui->bbl_checkbox(_L("Vertical"), m_vertical_only);
+    render_touch_erase_toggle();
 
     ImGui::Separator();
 

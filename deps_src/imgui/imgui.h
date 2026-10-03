@@ -1860,6 +1860,12 @@ struct ImGuiIO
     void        (*ImeSetInputScreenPosFn)(int x, int y);
     void*       ImeWindowHandle;                // = NULL           // (Windows) Set this to your HWND to get automatic IME cursor positioning.
 
+    // Optional: on-screen keypad for touch screens without a keyboard.
+    // A tap on an editable text field or BBLDragScalar() calls TouchInputRequestFn instead of starting an in-place edit; returning true takes the tap.
+    // TouchInputResultFn is asked whenever such a widget is submitted; text it returns is committed as if typed and confirmed with Enter.
+    bool        (*TouchInputRequestFn)(ImGuiID id, const char* text, ImGuiInputTextFlags flags);
+    const char* (*TouchInputResultFn)(ImGuiID id);
+
     //------------------------------------------------------------------
     // Input - Fill before calling NewFrame()
     //------------------------------------------------------------------

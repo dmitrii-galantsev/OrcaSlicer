@@ -648,6 +648,7 @@ void GLGizmoMmuSegmentation::on_render_input_window(float x, float y, float bott
         }
     }
 
+    render_touch_erase_toggle();
     ImGui::Separator();
 
     render_tooltip_button(x, y);

@@ -450,6 +450,7 @@ void GLGizmoFdmSupports::on_render_input_window(float x, float y, float bottom_l
     ImGui::PushItemWidth(1.5 * slider_icon_width);
     ImGui::BBLDragFloat("##angle_threshold_deg_input", &m_highlight_by_angle_threshold_deg, 0.05f, 0.0f, 0.0f, "%.2f");
 
+    render_touch_erase_toggle();
     ImGui::Separator();
 
     render_tooltip_button(x, y);
