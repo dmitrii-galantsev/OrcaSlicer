@@ -1438,11 +1438,26 @@ void IMSlider::render_go_to_layer_dialog()
         if (ImGui::IsMouseClicked(0)) {
             set_focus = false;
         }
-        if (set_focus && !ImGui::IsAnyItemActive() && !ImGui::IsMouseClicked(0)) {
-            wxGetApp().plater()->get_current_canvas3D()->force_set_focus();
-            ImGui::SetKeyboardFocusHere(0);
+        if (ImGuiWrapper::touch_input()) {
+            if (ImGui::IsWindowAppearing() || strlen(m_layer_number) == 0)
+                snprintf(m_layer_number, sizeof(m_layer_number), "%d", (GetSelection() == ssLower ? GetLowerValue() : GetHigherValue()) + 1);
+            double          layer = std::clamp(atoi(m_layer_number), m_min_value + 1, m_max_value + 1);
+            const TouchStep step { 1., 10., double(m_min_value + 1), double(m_max_value + 1) };
+            const float     gap = ImGui::GetStyle().ItemInnerSpacing.x;
+            imgui.touch_step_button("##input_layer_number", false, layer, step);
+            ImGui::SameLine(0.f, gap);
+            snprintf(m_layer_number, sizeof(m_layer_number), "%d", int(layer));
+            ImGui::InputText("##input_layer_number", m_layer_number, sizeof(m_layer_number), ImGuiInputTextFlags_ReadOnly);
+            ImGui::SameLine(0.f, gap);
+            if (imgui.touch_step_button("##input_layer_number", true, layer, step))
+                snprintf(m_layer_number, sizeof(m_layer_number), "%d", int(layer));
+        } else {
+            if (set_focus && !ImGui::IsAnyItemActive() && !ImGui::IsMouseClicked(0)) {
+                wxGetApp().plater()->get_current_canvas3D()->force_set_focus();
+                ImGui::SetKeyboardFocusHere(0);
+            }
+            ImGui::InputText("##input_layer_number", m_layer_number, sizeof(m_layer_number));
         }
-        ImGui::InputText("##input_layer_number", m_layer_number, sizeof(m_layer_number));
 
         ImGui::NewLine();
         ImGui::SameLine(GImGui->Style.WindowPadding.x * 8);

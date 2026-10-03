@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <array>
 #include <cassert>
+#include <chrono>
 #include <cstdio>
 #include "libslic3r/Technologies.hpp"
 #include <map>
@@ -691,6 +692,31 @@ void ImGuiWrapper::open_touch_keypad()
     canvas->set_as_dirty();
     canvas->request_extra_frame();
     wxWakeUpIdle();
+}
+
+bool ImGuiWrapper::touch_input()
+{
+    return wxGetApp().app_config != nullptr && wxGetApp().app_config->get_bool("touch_input");
+}
+
+bool ImGuiWrapper::touch_step_button(const char* str_id, bool plus, double& value, const TouchStep& step)
+{
+    const double now     = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    bool         held    = false;
+    const bool   changed = Slic3r::GUI::touch_step_button(str_id, plus, value, step, touch_step_button_size(), now, &held);
+    // A held button repeats only while frames keep coming, and panels that commit when the active
+    // item changes see the change one frame after the finger lifts.
+    if (changed || held)
+        set_requires_extra_frame();
+    return changed;
+}
+
+bool ImGuiWrapper::touch_step_button(const char* str_id, bool plus, float& value, const TouchStep& step)
+{
+    double     v   = value;
+    const bool ret = touch_step_button(str_id, plus, v, step);
+    value          = float(v);
+    return ret;
 }
 
 void ImGuiWrapper::render(ImDrawData* draw_data)

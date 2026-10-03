@@ -722,7 +722,17 @@ void GLGizmoCut3D::render_move_center_input(int axis)
     double in_val, value = in_val = move[axis];
     if (m_imperial_units)
         value *= GizmoObjectManipulation::mm_to_in;
-    ImGui::InputDouble(("##move_" + m_axis_names[axis]).c_str(), &value, 0.0, 0.0, "%.2f", ImGuiInputTextFlags_CharsDecimal);
+    const std::string label = "##move_" + m_axis_names[axis];
+    if (ImGuiWrapper::touch_input()) {
+        const TouchStep step { m_imperial_units ? 0.1 : 1., m_imperial_units ? 1. : 10., -1e5, 1e5 };
+        const float     gap = ImGui::GetStyle().ItemInnerSpacing.x;
+        m_imgui->touch_step_button(label.c_str(), false, value, step);
+        ImGui::SameLine(0.f, gap);
+        ImGui::InputDouble(label.c_str(), &value, 0.0, 0.0, "%.2f", ImGuiInputTextFlags_CharsDecimal | ImGuiInputTextFlags_ReadOnly);
+        ImGui::SameLine(0.f, gap);
+        m_imgui->touch_step_button(label.c_str(), true, value, step);
+    } else
+        ImGui::InputDouble(label.c_str(), &value, 0.0, 0.0, "%.2f", ImGuiInputTextFlags_CharsDecimal);
     ImGui::SameLine();
 
     double val = value * (m_imperial_units ? GizmoObjectManipulation::in_to_mm : 1.0);

@@ -16,6 +16,7 @@ namespace GUI {
 
 class Selection;
 class GLCanvas3D;
+struct TouchStep;
 
 class GizmoObjectManipulation
 {
@@ -142,6 +143,10 @@ public:
     bool reset_button(ImGuiWrapper *imgui_wrapper, bool enabled);
     bool reset_zero_button(ImGuiWrapper *imgui_wrapper, bool enabled);
     bool bbl_checkbox(const wxString &label, bool &value);
+    // Touch mode passes a step: the box turns read-only between finger-sized - and + buttons.
+    bool render_value_input(ImGuiWrapper *imgui_wrapper, const char *label, double &value, float box_width, const TouchStep *step);
+    // Narrows box_width so that three [-][box][+] columns fit in the canvas; returns the column width.
+    float touch_column_width(ImGuiWrapper *imgui_wrapper, float &box_width, float fixed_width) const;
 
     void set_init_rotation(const Geometry::Transformation &value);
 

@@ -32,6 +32,7 @@ class ClippingPlane;
 struct Camera;
 class GLGizmoMmuSegmentation;
 class Selection;
+struct TouchStep;
 
 enum class PainterGizmoType {
     FDM_SUPPORTS,
@@ -309,6 +310,10 @@ protected:
     bool m_touch_erase = false;
     bool touch_erase_active() const;
     void render_touch_erase_toggle();
+
+    // A touch screen gets "-" and "+" after a value box instead of typing into it.
+    static int touch_drag_flags();
+    bool       render_touch_steppers(const char* str_id, float& value, const TouchStep& step);
 
     // It stores the value of the previous mesh_id to which the seed fill was applied.
     // It is used to detect when the mouse has moved from one volume to another one.

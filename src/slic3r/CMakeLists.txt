@@ -303,6 +303,7 @@ set(SLIC3R_GUI_SOURCES
     GUI/SyncAmsInfoDialog.cpp
     GUI/SyncAmsInfoDialog.hpp
     GUI/ImGuiWrapper.hpp
+    GUI/ImGuiTouchStep.hpp
     GUI/IMSlider.cpp
     GUI/IMSlider.hpp
     GUI/DeviceErrorDialog.hpp

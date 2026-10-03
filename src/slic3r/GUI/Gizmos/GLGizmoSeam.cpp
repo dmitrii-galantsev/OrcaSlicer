@@ -231,7 +231,8 @@ void GLGizmoSeam::on_render_input_window(float x, float y, float bottom_limit)
     m_imgui->bbl_slider_float_style("##cursor_radius", &m_cursor_radius, CursorRadiusMin, CursorRadiusMax, "%.2f", 1.0f, true);
     ImGui::SameLine(drag_left_width + sliders_left_width);
     ImGui::PushItemWidth(1.5 * slider_icon_width);
-    ImGui::BBLDragFloat("##cursor_radius_input", &m_cursor_radius, 0.05f, 0.0f, 0.0f, "%.2f");
+    ImGui::BBLDragFloat("##cursor_radius_input", &m_cursor_radius, 0.05f, 0.0f, 0.0f, "%.2f", touch_drag_flags());
+    render_touch_steppers("##cursor_radius_input", m_cursor_radius, { 0.5, 2., get_cursor_radius_min(), get_cursor_radius_max(), true });
 
     m_imgui->bbl_checkbox(_L("Vertical"), m_vertical_only);
     render_touch_erase_toggle();

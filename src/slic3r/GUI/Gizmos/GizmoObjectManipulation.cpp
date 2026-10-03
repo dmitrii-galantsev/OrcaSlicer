@@ -733,6 +733,42 @@ bool GizmoObjectManipulation::reset_zero_button(ImGuiWrapper *imgui_wrapper,  bo
      return unit_size + 8.0;
  }
 
+static void push_touch_frame_padding(ImGuiWrapper *imgui_wrapper)
+{
+    const ImGuiStyle &style = ImGui::GetStyle();
+    const float       pad_y = std::max(style.FramePadding.y, 0.5f * (imgui_wrapper->touch_step_button_size() - ImGui::GetFontSize()));
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(style.FramePadding.x, pad_y));
+}
+
+float GizmoObjectManipulation::touch_column_width(ImGuiWrapper *imgui_wrapper, float &box_width, float fixed_width) const
+{
+    const ImGuiStyle &style     = ImGui::GetStyle();
+    const float       buttons   = 2.f * (imgui_wrapper->touch_step_button_size() + style.ItemInnerSpacing.x);
+    const float       available = (float(m_glcanvas.get_canvas_size().get_width()) - fixed_width - imgui_wrapper->scaled(2.f) - 2.f * style.WindowPadding.x) / 3.f - buttons;
+    const float       min_width = imgui_wrapper->calc_text_size("999.9"sv).x + 2.f * style.FramePadding.x;
+    box_width                   = std::max(min_width, std::min(box_width, available));
+    return box_width + buttons;
+}
+
+bool GizmoObjectManipulation::render_value_input(ImGuiWrapper *imgui_wrapper, const char *label, double &value, float box_width, const TouchStep *step)
+{
+    if (step == nullptr) {
+        ImGui::PushItemWidth(box_width);
+        return ImGui::BBLInputDouble(label, &value, 0.0f, 0.0f, "%.2f");
+    }
+
+    const float gap     = ImGui::GetStyle().ItemInnerSpacing.x;
+    bool        changed = imgui_wrapper->touch_step_button(label, false, value, *step);
+    ImGui::SameLine(0.f, gap);
+    ImGui::PushItemWidth(box_width);
+    // Read-only, so a tap on the box neither starts an edit nor opens the touch keypad.
+    ImGui::BBLInputDouble(label, &value, 0.0f, 0.0f, "%.2f", ImGuiInputTextFlags_ReadOnly);
+    ImGui::PopItemWidth();
+    ImGui::SameLine(0.f, gap);
+    changed |= imgui_wrapper->touch_step_button(label, true, value, *step);
+    return changed;
+}
+
  bool GizmoObjectManipulation::bbl_checkbox(const wxString &label, bool &value)
 {
      bool result;
@@ -777,6 +813,9 @@ void GizmoObjectManipulation::do_render_move_window(ImGuiWrapper *imgui_wrapper,
 
     std::string name = this->m_new_title_string + "##" + window_name;
     imgui_wrapper->begin(_L(name), ImGuiWrapper::TOOLBAR_WINDOW_FLAGS);
+    const bool touch = ImGuiWrapper::touch_input();
+    if (touch)
+        push_touch_frame_padding(imgui_wrapper);
 
     auto update = [this](unsigned int active_id, std::string opt_key, Vec3d original_value, Vec3d new_value) -> int {
         for (int i = 0; i < 3; i++) {
@@ -813,7 +852,9 @@ void GizmoObjectManipulation::do_render_move_window(ImGuiWrapper *imgui_wrapper,
     Vec3d display_position = m_buffered_position;
 
     // Rotation
-    float unit_size = imgui_wrapper->calc_text_size(MAX_SIZE).x + space_size;
+    float box_width = imgui_wrapper->calc_text_size(MAX_SIZE).x + space_size;
+    float unit_size = touch ? touch_column_width(imgui_wrapper, box_width, caption_max + 4 * space_size + end_text_size) : box_width;
+    const TouchStep position_step { m_imperial_units ? 0.1 : 1., m_imperial_units ? 1. : 10., -MAX_NUM, MAX_NUM };
     int   index      = 1;
     int   index_unit = 1;
 
@@ -862,14 +903,11 @@ void GizmoObjectManipulation::do_render_move_window(ImGuiWrapper *imgui_wrapper,
     }
 
     ImGui::SameLine(caption_max + index * space_size);
-    ImGui::PushItemWidth(unit_size);
-    ImGui::BBLInputDouble(label_values[0][0], &display_position[0], 0.0f, 0.0f, "%.2f");
+    render_value_input(imgui_wrapper, label_values[0][0], display_position[0], box_width, touch ? &position_step : nullptr);
     ImGui::SameLine(caption_max + unit_size + (++index) * space_size);
-    ImGui::PushItemWidth(unit_size);
-    ImGui::BBLInputDouble(label_values[0][1], &display_position[1], 0.0f, 0.0f, "%.2f");
+    render_value_input(imgui_wrapper, label_values[0][1], display_position[1], box_width, touch ? &position_step : nullptr);
     ImGui::SameLine(caption_max + (++index_unit) * unit_size + (++index) * space_size);
-    ImGui::PushItemWidth(unit_size);
-    ImGui::BBLInputDouble(label_values[0][2], &display_position[2], 0.0f, 0.0f, "%.2f");
+    render_value_input(imgui_wrapper, label_values[0][2], display_position[2], box_width, touch ? &position_step : nullptr);
     ImGui::SameLine(caption_max + (++index_unit) * unit_size + (++index) * space_size);
     imgui_wrapper->text(this->m_new_unit_string);
     bool is_avoid_one_update{false};
@@ -902,6 +940,8 @@ void GizmoObjectManipulation::do_render_move_window(ImGuiWrapper *imgui_wrapper,
     }
     if (!focued_on_text) m_glcanvas.handle_sidebar_focus_event("", false);
 
+    if (touch)
+        ImGui::PopStyleVar();
     ImGui::Spacing();
     ImGui::Separator();
     ImGui::Spacing();
@@ -946,6 +986,9 @@ void GizmoObjectManipulation::do_render_rotate_window(ImGuiWrapper *imgui_wrappe
 
     std::string name = this->m_new_title_string + "##" + window_name;
     imgui_wrapper->begin(_L(name), ImGuiWrapper::TOOLBAR_WINDOW_FLAGS);
+    const bool touch = ImGuiWrapper::touch_input();
+    if (touch)
+        push_touch_frame_padding(imgui_wrapper);
 
     auto update = [this](unsigned int active_id, std::string opt_key, Vec3d original_value, Vec3d new_value) -> int {
         for (int i = 0; i < 3; i++) {
@@ -980,7 +1023,9 @@ void GizmoObjectManipulation::do_render_rotate_window(ImGuiWrapper *imgui_wrappe
     // Rotation
     Vec3d rotation   = this->m_buffered_rotation;
     Vec3d absolute_rotation = this->m_buffered_absolute_rotation;
-    float unit_size = imgui_wrapper->calc_text_size(MAX_SIZE).x + space_size;
+    float box_width = imgui_wrapper->calc_text_size(MAX_SIZE).x + space_size;
+    float unit_size = touch ? touch_column_width(imgui_wrapper, box_width, caption_max + 4 * space_size + end_text_size) : box_width;
+    const TouchStep rotation_step { 15., 90., -360., 360., true };
     int   index      = 1;
     int   index_unit = 1;
 
@@ -1009,18 +1054,15 @@ void GizmoObjectManipulation::do_render_rotate_window(ImGuiWrapper *imgui_wrappe
     ImGui::AlignTextToFramePadding();
     imgui_wrapper->text(_L("Relative")); // ORCA
     ImGui::SameLine(caption_max + index * space_size);
-    ImGui::PushItemWidth(unit_size);
-    if (ImGui::BBLInputDouble(label_values[1][0], &rotation[0], 0.0f, 0.0f, "%.2f")) {
+    if (render_value_input(imgui_wrapper, label_values[1][0], rotation[0], box_width, touch ? &rotation_step : nullptr)) {
         is_relative_input = true;
     }
     ImGui::SameLine(caption_max + unit_size + (++index) * space_size);
-    ImGui::PushItemWidth(unit_size);
-    if (ImGui::BBLInputDouble(label_values[1][1], &rotation[1], 0.0f, 0.0f, "%.2f")) {
+    if (render_value_input(imgui_wrapper, label_values[1][1], rotation[1], box_width, touch ? &rotation_step : nullptr)) {
         is_relative_input = true;
     }
     ImGui::SameLine(caption_max + (++index_unit) * unit_size + (++index) * space_size);
-    ImGui::PushItemWidth(unit_size);
-    if (ImGui::BBLInputDouble(label_values[1][2], &rotation[2], 0.0f, 0.0f, "%.2f")) {
+    if (render_value_input(imgui_wrapper, label_values[1][2], rotation[2], box_width, touch ? &rotation_step : nullptr)) {
         is_relative_input = true;
     }
     ImGui::SameLine(caption_max + (++index_unit) * unit_size + (++index) * space_size);
@@ -1060,19 +1102,16 @@ void GizmoObjectManipulation::do_render_rotate_window(ImGuiWrapper *imgui_wrappe
     ImGui::AlignTextToFramePadding();
     imgui_wrapper->text(_L("Absolute"));
     ImGui::SameLine(caption_max + index * space_size);
-    ImGui::PushItemWidth(unit_size);
     bool is_absolute_input = false;
-    if (ImGui::BBLInputDouble(label_values[2][0], &absolute_rotation[0], 0.0f, 0.0f, "%.2f")) {
+    if (render_value_input(imgui_wrapper, label_values[2][0], absolute_rotation[0], box_width, touch ? &rotation_step : nullptr)) {
         is_absolute_input = true;
     }
     ImGui::SameLine(caption_max + unit_size + (++index) * space_size);
-    ImGui::PushItemWidth(unit_size);
-    if (ImGui::BBLInputDouble(label_values[2][1], &absolute_rotation[1], 0.0f, 0.0f, "%.2f")) {
+    if (render_value_input(imgui_wrapper, label_values[2][1], absolute_rotation[1], box_width, touch ? &rotation_step : nullptr)) {
         is_absolute_input = true;
     }
     ImGui::SameLine(caption_max + (++index_unit) * unit_size + (++index) * space_size);
-    ImGui::PushItemWidth(unit_size);
-    if (ImGui::BBLInputDouble(label_values[2][2], &absolute_rotation[2], 0.0f, 0.0f, "%.2f")) {
+    if (render_value_input(imgui_wrapper, label_values[2][2], absolute_rotation[2], box_width, touch ? &rotation_step : nullptr)) {
         is_absolute_input = true;
     }
     ImGui::SameLine(caption_max + (++index_unit) * unit_size + (++index) * space_size);
@@ -1108,6 +1147,8 @@ void GizmoObjectManipulation::do_render_rotate_window(ImGuiWrapper *imgui_wrappe
     if (!focued_on_text  && !absolute_focued_on_text)
         m_glcanvas.handle_sidebar_focus_event("", false);
 
+    if (touch)
+        ImGui::PopStyleVar();
     ImGui::Spacing(); // needed after Text
     ImGui::Separator();
     ImGui::Spacing();
@@ -1154,6 +1195,9 @@ void GizmoObjectManipulation::do_render_scale_input_window(ImGuiWrapper* imgui_w
 
     std::string name = this->m_new_title_string + "##" + window_name;
     imgui_wrapper->begin(_L(name), ImGuiWrapper::TOOLBAR_WINDOW_FLAGS);
+    const bool touch = ImGuiWrapper::touch_input();
+    if (touch)
+        push_touch_frame_padding(imgui_wrapper);
 
     auto update = [this](unsigned int active_id, std::string opt_key, Vec3d original_value, Vec3d new_value)->int {
         for (int i = 0; i < 3; i++)
@@ -1191,7 +1235,10 @@ void GizmoObjectManipulation::do_render_scale_input_window(ImGuiWrapper* imgui_w
 
     Vec3d display_position = m_buffered_position;
 
-    float unit_size = imgui_wrapper->calc_text_size(MAX_SIZE).x + space_size;
+    float box_width = imgui_wrapper->calc_text_size(MAX_SIZE).x + space_size;
+    float unit_size = touch ? touch_column_width(imgui_wrapper, box_width, caption_max + 4 * space_size + end_text_size) : box_width;
+    const TouchStep scale_step { 5., 25., 1., MAX_NUM, true };
+    const TouchStep size_step { m_imperial_units ? 0.1 : 1., m_imperial_units ? 1. : 10., m_imperial_units ? 0.01 : 0.1, MAX_NUM };
     bool imperial_units = this->m_imperial_units;
 
     int index      = 2;
@@ -1237,14 +1284,11 @@ void GizmoObjectManipulation::do_render_scale_input_window(ImGuiWrapper* imgui_w
     ImGui::AlignTextToFramePadding();
     imgui_wrapper->text(_L_CONTEXT("Scale", "Noun"));
     ImGui::SameLine(caption_max + space_size);
-    ImGui::PushItemWidth(unit_size);
-    ImGui::BBLInputDouble(label_scale_values[0][0], &scale[0], 0.0f, 0.0f, "%.2f");
+    render_value_input(imgui_wrapper, label_scale_values[0][0], scale[0], box_width, touch ? &scale_step : nullptr);
     ImGui::SameLine(caption_max + unit_size + index * space_size);
-    ImGui::PushItemWidth(unit_size);
-    ImGui::BBLInputDouble(label_scale_values[0][1], &scale[1], 0.0f, 0.0f, "%.2f");
+    render_value_input(imgui_wrapper, label_scale_values[0][1], scale[1], box_width, touch ? &scale_step : nullptr);
     ImGui::SameLine(caption_max + (++index_unit) *unit_size + (++index) * space_size);
-    ImGui::PushItemWidth(unit_size);
-    ImGui::BBLInputDouble(label_scale_values[0][2], &scale[2], 0.0f, 0.0f, "%.2f");
+    render_value_input(imgui_wrapper, label_scale_values[0][2], scale[2], box_width, touch ? &scale_step : nullptr);
     ImGui::SameLine(caption_max + (++index_unit) *unit_size + (++index) * space_size);
     imgui_wrapper->text("%");
     if (scale.x() > 0 && scale.y() > 0 && scale.z() > 0) {
@@ -1268,14 +1312,11 @@ void GizmoObjectManipulation::do_render_scale_input_window(ImGuiWrapper* imgui_w
     ImGui::AlignTextToFramePadding();
     imgui_wrapper->text(_L("Size"));
     ImGui::SameLine(caption_max + space_size);
-    ImGui::PushItemWidth(unit_size);
-    ImGui::BBLInputDouble(label_scale_values[1][0], &display_size[0], 0.0f, 0.0f, "%.2f");
+    render_value_input(imgui_wrapper, label_scale_values[1][0], display_size[0], box_width, touch ? &size_step : nullptr);
     ImGui::SameLine(caption_max + unit_size + index * space_size);
-    ImGui::PushItemWidth(unit_size);
-    ImGui::BBLInputDouble(label_scale_values[1][1], &display_size[1], 0.0f, 0.0f, "%.2f");
+    render_value_input(imgui_wrapper, label_scale_values[1][1], display_size[1], box_width, touch ? &size_step : nullptr);
     ImGui::SameLine(caption_max + (++index_unit) *unit_size + (++index) * space_size);
-    ImGui::PushItemWidth(unit_size);
-    ImGui::BBLInputDouble(label_scale_values[1][2], &display_size[2], 0.0f, 0.0f, "%.2f");
+    render_value_input(imgui_wrapper, label_scale_values[1][2], display_size[2], box_width, touch ? &size_step : nullptr);
     ImGui::SameLine(caption_max + (++index_unit) *unit_size + (++index) * space_size);
     imgui_wrapper->text(this->m_new_unit_string);
     for (int i = 0; i < display_size.size(); i++) {
@@ -1302,6 +1343,8 @@ void GizmoObjectManipulation::do_render_scale_input_window(ImGuiWrapper* imgui_w
     if (!is_avoid_one_update) {
         size_sel    = update(current_active_id, "size", original_size, m_buffered_size);
     }
+    if (touch)
+        ImGui::PopStyleVar();
     ImGui::PopStyleVar(1);
     bool uniform_scale = this->m_uniform_scale;
 

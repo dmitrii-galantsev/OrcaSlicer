@@ -12,6 +12,8 @@
 
 #include <imgui/imgui.h>
 
+#include "ImGuiTouchStep.hpp"
+
 #include <wx/colour.h>
 #include <wx/string.h>
 
@@ -349,6 +351,11 @@ public:
     bool requires_extra_frame() const { return m_requires_extra_frame; }
     void set_requires_extra_frame() { m_requires_extra_frame = true; }
     void reset_requires_extra_frame() { m_requires_extra_frame = false; }
+
+    static bool touch_input();
+    float touch_step_button_size() const { return std::max(ImGui::GetFrameHeight(), scaled(2.f)); }
+    bool  touch_step_button(const char* str_id, bool plus, double& value, const TouchStep& step);
+    bool  touch_step_button(const char* str_id, bool plus, float& value, const TouchStep& step);
 
     void disable_background_fadeout_animation();
 

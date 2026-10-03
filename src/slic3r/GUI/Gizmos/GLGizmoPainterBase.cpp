@@ -1021,6 +1021,23 @@ void GLGizmoPainterBase::render_touch_erase_toggle()
         m_imgui->bbl_checkbox(_L("Erase"), m_touch_erase);
 }
 
+int GLGizmoPainterBase::touch_drag_flags()
+{
+    return ImGuiWrapper::touch_input() ? ImGuiSliderFlags_NoInput : 0;
+}
+
+bool GLGizmoPainterBase::render_touch_steppers(const char* str_id, float& value, const TouchStep& step)
+{
+    if (!ImGuiWrapper::touch_input())
+        return false;
+    const float gap = ImGui::GetStyle().ItemInnerSpacing.x;
+    ImGui::SameLine(0.f, gap);
+    bool changed = m_imgui->touch_step_button(str_id, false, value, step);
+    ImGui::SameLine(0.f, gap);
+    changed |= m_imgui->touch_step_button(str_id, true, value, step);
+    return changed;
+}
+
 bool GLGizmoPainterBase::on_mouse(const wxMouseEvent &mouse_event)
 {
     // wxCoord == int --> wx/types.h

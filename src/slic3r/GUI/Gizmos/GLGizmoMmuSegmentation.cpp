@@ -554,7 +554,8 @@ void GLGizmoMmuSegmentation::on_render_input_window(float x, float y, float bott
         m_imgui->bbl_slider_float_style("##cursor_radius", &m_cursor_radius, CursorRadiusMin, CursorRadiusMax, "%.2f", 1.0f, true);
         ImGui::SameLine(drag_left_width + sliders_left_width);
         ImGui::PushItemWidth(1.5 * slider_icon_width);
-        ImGui::BBLDragFloat("##cursor_radius_input", &m_cursor_radius, 0.05f, 0.0f, 0.0f, "%.2f");
+        ImGui::BBLDragFloat("##cursor_radius_input", &m_cursor_radius, 0.05f, 0.0f, 0.0f, "%.2f", touch_drag_flags());
+        render_touch_steppers("##cursor_radius_input", m_cursor_radius, { 0.5, 2., get_cursor_radius_min(), get_cursor_radius_max(), true });
 
         if (m_imgui->bbl_checkbox(_L("Vertical"), m_vertical_only)) {
             if (m_vertical_only) {
@@ -600,7 +601,12 @@ void GLGizmoMmuSegmentation::on_render_input_window(float x, float y, float bott
                 }
             ImGui::SameLine(drag_left_width + sliders_left_width);
             ImGui::PushItemWidth(1.5 * slider_icon_width);
-            ImGui::BBLDragFloat("##smart_fill_angle_input", &m_smart_fill_angle, 0.05f, 0.0f, 0.0f, "%.2f");
+            ImGui::BBLDragFloat("##smart_fill_angle_input", &m_smart_fill_angle, 0.05f, 0.0f, 0.0f, "%.2f", touch_drag_flags());
+            if (render_touch_steppers("##smart_fill_angle_input", m_smart_fill_angle, { 5., 15., SmartFillAngleMin, SmartFillAngleMax, true }))
+                for (auto &triangle_selector : m_triangle_selectors) {
+                    triangle_selector->seed_fill_unselect_all_triangles();
+                    triangle_selector->request_update_render_data();
+                }
         } else {
             // set to negative value to disable edge detection
             m_smart_fill_angle = -1.f;
@@ -619,7 +625,8 @@ void GLGizmoMmuSegmentation::on_render_input_window(float x, float y, float bott
         m_imgui->bbl_slider_float_style("##cursor_height", &m_cursor_height, CursorHeightMin, CursorHeightMax, format_str.data(), 1.0f, true);
         ImGui::SameLine(drag_left_width + sliders_left_width);
         ImGui::PushItemWidth(1.5 * slider_icon_width);
-        ImGui::BBLDragFloat("##cursor_height_input", &m_cursor_height, 0.05f, 0.0f, 0.0f, "%.2f");
+        ImGui::BBLDragFloat("##cursor_height_input", &m_cursor_height, 0.05f, 0.0f, 0.0f, "%.2f", touch_drag_flags());
+        render_touch_steppers("##cursor_height_input", m_cursor_height, { 0.1, 1., get_cursor_height_min(), get_cursor_height_max(), true });
     }
     else if (m_current_tool == ImGui::GapFillIcon) {
         m_tool_type = ToolType::GAP_FILL;
@@ -632,7 +639,8 @@ void GLGizmoMmuSegmentation::on_render_input_window(float x, float y, float bott
         m_imgui->bbl_slider_float_style("##gap_area", &TriangleSelectorPatch::gap_area, TriangleSelectorPatch::GapAreaMin, TriangleSelectorPatch::GapAreaMax, format_str.data(), 1.0f, true);
         ImGui::SameLine(drag_left_width + sliders_left_width);
         ImGui::PushItemWidth(1.5 * slider_icon_width);
-        ImGui::BBLDragFloat("##gap_area_input", &TriangleSelectorPatch::gap_area, 0.05f, 0.0f, 0.0f, "%.2f");
+        ImGui::BBLDragFloat("##gap_area_input", &TriangleSelectorPatch::gap_area, 0.05f, 0.0f, 0.0f, "%.2f", touch_drag_flags());
+        render_touch_steppers("##gap_area_input", TriangleSelectorPatch::gap_area, { 0.1, 1., TriangleSelectorPatch::GapAreaMin, TriangleSelectorPatch::GapAreaMax, true });
 
         // Apply Gap fill button
         if (m_imgui->button(m_desc.at("perform"))) {
